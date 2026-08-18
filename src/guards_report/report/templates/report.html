@@ -5,9 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ bundle.away.abbreviation }} @ {{ bundle.home.abbreviation }} — {{ bundle.game_date }}</title>
 <style>
-  /* Committed light theme. color-scheme pins form controls and scrollbars to
-     light as well, so the report looks the same regardless of the reader's
-     OS setting rather than flipping to dark on them. */
+  /* Committed light theme, pinned so it does not flip with the OS setting. */
   :root {
     color-scheme: light;
     --bg:#fff; --panel:#f7f8fa; --box:#fff; --border:#dfe3e8; --border-hi:#c3cad2;
@@ -26,7 +24,6 @@
   .sub { color:var(--muted); font-size:.85rem; }
   .meta { display:flex; flex-wrap:wrap; gap:1rem; margin-top:.5rem; font-size:.8rem; color:var(--muted); }
 
-  /* tabs */
   nav { position:sticky; top:0; z-index:20; background:var(--bg);
     border-bottom:2px solid var(--border); display:flex; flex-wrap:wrap; gap:.25rem;
     padding:.5rem 0; margin-bottom:1.25rem; }
@@ -35,12 +32,8 @@
     background:var(--panel); color:var(--muted); }
   nav button:hover { border-color:var(--border-hi); color:var(--ink); }
   nav button[aria-selected="true"] { background:var(--accent); border-color:var(--accent); color:#fff; }
-  .page { display:none; }
-  .page.active { display:block; }
+  .page { display:none; } .page.active { display:block; }
 
-  /* Player boxes: always one per row, full window width. Two columns made
-     each box too narrow for the stat table and both heat maps to sit
-     side by side without horizontal scrolling. */
   .boxes { display:flex; flex-direction:column; gap:1rem; }
   .box { width:100%; background:var(--box); border:1px solid var(--border);
     border-radius:10px; padding:.9rem 1rem 1rem; }
@@ -54,6 +47,7 @@
   .tag.warn { background:#a8551a; border-color:#a8551a; color:#fff; }
   .bhead .spacer { margin-left:auto; }
 
+  h2 { margin:.25rem 0 1rem; font-size:1.15rem; }
   h4 { margin:.85rem 0 .35rem; font-size:.72rem; text-transform:uppercase;
     letter-spacing:.05em; color:var(--faint); font-weight:700; }
 
@@ -68,12 +62,21 @@
   .d { font-size:.66rem; margin-left:.22rem; font-weight:600; }
   .d-good { color:var(--good); } .d-bad { color:var(--bad); } .d-even { color:var(--even); }
 
-  /* percentile chips */
+  /* Sample-size reliability. A rate on a thin denominator is dimmed rather
+     than hidden, so the reader can see it and also see not to lean on it. */
+  .rel-thin { opacity:.62; }
+  .rel-noise { opacity:.38; font-style:italic; }
+  .denom { color:var(--faint); font-size:.66rem; }
+
+  .spark { vertical-align:middle; }
+  .tr { font-size:.7rem; font-weight:700; margin-left:.2rem; }
+  .tr-up { color:var(--good); } .tr-down { color:var(--bad); } .tr-flat { color:var(--faint); }
+
   .pcts { display:flex; flex-wrap:wrap; gap:.3rem; }
-  .pchip { flex:1 1 auto; min-width:64px; text-align:center; border-radius:6px;
+  .pchip { flex:1 1 auto; min-width:62px; text-align:center; border-radius:6px;
     padding:.28rem .3rem; border:1px solid var(--border); }
   .pchip .pv { display:block; font-size:.95rem; font-weight:700; line-height:1.1; }
-  .pchip .pl { display:block; font-size:.6rem; text-transform:uppercase;
+  .pchip .pl { display:block; font-size:.58rem; text-transform:uppercase;
     letter-spacing:.04em; color:var(--muted); }
   .pct-great{background:var(--great);color:#fff;} .pct-great .pl{color:rgba(255,255,255,.85);}
   .pct-good{background:var(--gd);color:#fff;} .pct-good .pl{color:rgba(255,255,255,.85);}
@@ -82,43 +85,61 @@
   .pct-bad{background:var(--bad-p);color:#fff;} .pct-bad .pl{color:rgba(255,255,255,.85);}
   .pct-none{background:transparent;color:var(--faint);}
 
-  /* Heat maps, laid out the way MLB and Savant draw them: the four
-     out-of-zone regions fill the surrounding area as quadrants with their
-     value in the outer corner, the 3x3 strike zone sits inset on top, and a
-     home plate outline below fixes the orientation as the catcher's view. */
   .zones { display:flex; gap:1.5rem; flex-wrap:wrap; }
   .zwrap { text-align:center; }
   .zlabel { font-size:.66rem; text-transform:uppercase; letter-spacing:.04em;
     color:var(--faint); font-weight:700; margin-bottom:.3rem; }
-
   .zplot { position:relative; width:206px; height:176px;
     display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr;
     border:1px solid var(--border); border-radius:3px; overflow:hidden; }
   .zq { position:relative; }
   .zq span { position:absolute; font-size:.68rem; font-weight:700;
     font-variant-numeric:tabular-nums; color:#1a1a1a; }
-  /* Value sits in each quadrant's outward corner, away from the strike zone. */
-  .zq-11 span { top:7px; left:9px; }
-  .zq-12 span { top:7px; right:9px; }
-  .zq-13 span { bottom:7px; left:9px; }
-  .zq-14 span { bottom:7px; right:9px; }
-
+  .zq-11 span { top:7px; left:9px; } .zq-12 span { top:7px; right:9px; }
+  .zq-13 span { bottom:7px; left:9px; } .zq-14 span { bottom:7px; right:9px; }
   .zgrid { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
-    display:grid; grid-template-columns:repeat(3,40px);
-    grid-template-rows:repeat(3,34px); gap:2px; background:#f2f4f6;
-    padding:2px; box-shadow:0 0 0 2px #f2f4f6; }
-  .zcell { display:flex; align-items:center; justify-content:center;
-    font-size:.68rem; font-variant-numeric:tabular-nums; font-weight:700;
-    color:#1a1a1a; }
+    display:grid; grid-template-columns:repeat(3,40px); grid-template-rows:repeat(3,34px);
+    gap:2px; background:#f2f4f6; padding:2px; box-shadow:0 0 0 2px #f2f4f6; }
+  .zcell { display:flex; align-items:center; justify-content:center; font-size:.68rem;
+    font-variant-numeric:tabular-nums; font-weight:700; color:#1a1a1a; }
   .zplate { display:block; margin:4px auto 0; }
   .zcap { font-size:.62rem; color:var(--faint); margin-top:.25rem; }
 
-  /* llm slot */
   .llm { margin-top:.85rem; border:1px dashed var(--border-hi); border-radius:8px;
-    padding:.6rem .75rem; background:var(--panel); min-height:60px; }
+    padding:.6rem .75rem; background:var(--panel); min-height:54px; }
   .llm .lt { font-size:.64rem; text-transform:uppercase; letter-spacing:.05em;
     color:var(--faint); font-weight:700; margin-bottom:.25rem; }
   .llm .lp { color:var(--faint); font-size:.78rem; font-style:italic; }
+
+  /* team comparison */
+  .vs { display:grid; grid-template-columns:1fr; gap:1rem; margin-bottom:1.25rem; }
+  @media (min-width:900px) { .vs { grid-template-columns:1fr 1fr; } }
+  .tcard { border:1px solid var(--border); border-radius:10px; padding:1rem 1.1rem; background:var(--box); }
+  .tcard h3 { margin:0 0 .15rem; font-size:1.15rem; letter-spacing:-.01em; }
+  .trec { font-size:1.5rem; font-weight:750; font-variant-numeric:tabular-nums; }
+  .tmeta { color:var(--muted); font-size:.8rem; margin-top:.15rem; }
+  .tstats { display:flex; flex-wrap:wrap; gap:.5rem 1.25rem; margin-top:.7rem;
+    padding-top:.7rem; border-top:1px solid var(--border); font-size:.8rem; }
+  .tstats div span { display:block; color:var(--faint); font-size:.62rem;
+    text-transform:uppercase; letter-spacing:.04em; }
+  .tstats div b { font-size:1rem; font-variant-numeric:tabular-nums; }
+
+  .rank { display:inline-block; min-width:2.4rem; text-align:center; padding:.1rem .3rem;
+    border-radius:4px; font-size:.7rem; font-weight:700; }
+  .rank-great{background:var(--great);color:#fff;} .rank-good{background:var(--gd);color:#fff;}
+  .rank-avg{background:var(--avg);} .rank-poor{background:var(--poor);color:#fff;}
+  .rank-bad{background:var(--bad-p);color:#fff;} .rank-none{color:var(--faint);}
+
+  /* what to watch */
+  .watch { display:grid; grid-template-columns:1fr; gap:.6rem; margin:0 0 1.5rem; }
+  @media (min-width:760px) { .watch { grid-template-columns:1fr 1fr; } }
+  .witem { display:flex; gap:.7rem; align-items:flex-start; border:1px solid var(--border);
+    border-left:4px solid var(--faint); border-radius:0 8px 8px 0; padding:.6rem .8rem; background:var(--box); }
+  .witem.hot { border-left-color:var(--great); } .witem.cold { border-left-color:var(--bad-p); }
+  .witem.edge { border-left-color:var(--good); } .witem.mismatch { border-left-color:var(--bad); }
+  .wval { font-size:1.05rem; font-weight:750; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .whead { font-weight:650; font-size:.88rem; }
+  .wdet { color:var(--muted); font-size:.78rem; }
 
   .note { border-left:3px solid var(--accent-2); background:var(--panel);
     padding:.55rem .8rem; border-radius:0 6px 6px 0; font-size:.82rem;
@@ -139,8 +160,6 @@
   <div class="sub">{{ bundle.game_date }} · {{ bundle.venue_name }} · {{ bundle.status }}
     {% if bundle.game_datetime %} · {{ bundle.game_datetime.strftime('%H:%M UTC') }}{% endif %}</div>
   <div class="meta">
-    <span>{{ bundle.away.abbreviation }} {{ bundle.away.record }}</span>
-    <span>{{ bundle.home.abbreviation }} {{ bundle.home.record }}</span>
     {% if bundle.weather.condition %}<span>{{ bundle.weather.condition }}, {{ bundle.weather.temp }}°F, wind {{ bundle.weather.wind }}</span>{% endif %}
     <span>Lg {{ bundle.league_hitting.get('avg')|rate3 }}/{{ bundle.league_hitting.get('obp')|rate3 }}/{{ bundle.league_hitting.get('slg')|rate3 }}
       · lgERA {{ bundle.league_pitching.get('era')|rate2 }} · cFIP {{ bundle.league.fip_constant|rate2 }}</span>
@@ -148,14 +167,15 @@
 </header>
 
 {% set pages = [
-  (guardians, 'pitching', guardians.abbreviation ~ ' — Pitching'),
-  (guardians, 'batting',  guardians.abbreviation ~ ' — Batting'),
-  (opponent,  'pitching', opponent.abbreviation ~ ' — Pitching'),
-  (opponent,  'batting',  opponent.abbreviation ~ ' — Batting')
+  ('matchup', none, 'Matchup'),
+  ('pitchers', guardians, guardians.abbreviation ~ ' — Pitchers'),
+  ('players',  guardians, guardians.abbreviation ~ ' — Position Players'),
+  ('pitchers', opponent,  opponent.abbreviation ~ ' — Pitchers'),
+  ('players',  opponent,  opponent.abbreviation ~ ' — Position Players')
 ] %}
 
 <nav role="tablist">
-  {% for team, kind, label in pages %}
+  {% for kind, team, label in pages %}
   <button role="tab" data-page="p{{ loop.index }}" aria-selected="{{ 'true' if loop.first else 'false' }}">{{ label }}</button>
   {% endfor %}
 </nav>
@@ -185,8 +205,6 @@
   <div class="zwrap">
     <div class="zlabel">{{ grid.label }}</div>
     <div class="zplot">
-      {# Zones 11-14 are the out-of-zone quadrants: up-and-in, up-and-away,
-         down-and-in, down-and-away, reading from the catcher's view. #}
       {% for code in ['11','12','13','14'] %}
       {% set cell = grid.cells.get(code) %}
       <div class="zq zq-{{ code }}" style="{{ zone_cell_style(grid, cell) if cell else 'background:var(--zone-empty);' }}">
@@ -200,8 +218,7 @@
       </div>
     </div>
     <svg class="zplate" width="62" height="20" viewBox="0 0 62 20" aria-hidden="true">
-      <polygon points="4,1 58,1 58,9 31,19 4,9" fill="none"
-               stroke="#6b7681" stroke-width="1.4" stroke-linejoin="round"/>
+      <polygon points="4,1 58,1 58,9 31,19 4,9" fill="none" stroke="#6b7681" stroke-width="1.4" stroke-linejoin="round"/>
     </svg>
     <div class="zcap">{{ caption }}</div>
   </div>
@@ -211,11 +228,37 @@
 {% endif %}
 {% endmacro %}
 
-{% macro llm_slot() %}
-<div class="llm">
-  <div class="lt">Analysis</div>
-  <div class="lp">Reserved for the Phase 2 written read-out. No text is generated in this build — every figure above is sourced or computed.</div>
+{% macro situational(box, codes, pitching) %}
+{% set present = codes | select('in', box.situational) | list %}
+{% if present %}
+<h4>Situational</h4>
+<div class="scroll">
+  <table>
+    <thead><tr><th class="l">Situation</th>
+      <th>{{ 'BF' if pitching else 'PA' }}</th><th>AVG</th><th>OBP</th><th>SLG</th><th>OPS</th>
+      {% if pitching %}<th>ERA</th>{% endif %}<th>HR</th><th>K</th><th>BB</th></tr></thead>
+    <tbody>
+      {% for code in present %}
+      {% set s = box.situational[code] %}
+      <tr>
+        <td class="l">{{ split_labels.get(code, code) }}</td>
+        <td>{{ s.get('battersFaced') if pitching else s.get('plateAppearances', '–') }}</td>
+        <td>{{ s.get('avg','–') }}</td><td>{{ s.get('obp','–') }}</td>
+        <td>{{ s.get('slg','–') }}</td><td>{{ s.get('ops','–') }}</td>
+        {% if pitching %}<td>{{ s.get('era','–') }}</td>{% endif %}
+        <td>{{ s.get('homeRuns','–') }}</td><td>{{ s.get('strikeOuts','–') }}</td>
+        <td>{{ s.get('baseOnBalls','–') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </div>
+{% endif %}
+{% endmacro %}
+
+{% macro llm_slot() %}
+<div class="llm"><div class="lt">Analysis</div>
+<div class="lp">Reserved for the Phase 2 written read-out. No text is generated in this build — every figure above is sourced or computed.</div></div>
 {% endmacro %}
 
 {#- ===================== pitcher box ===================== -#}
@@ -226,47 +269,47 @@
     {% if box.hand %}<span class="tag">{{ box.hand }}HP</span>{% endif %}
     <span class="tag">{{ box.role }}</span>
     {% if box.is_probable_starter %}<span class="tag hot">Probable starter</span>{% endif %}
+    {{ box.trend|sparkline }}{{ box.trend|trend_arrow }}
     <span class="spacer"></span>
     {% if box.availability %}
       {% if box.availability.back_to_back %}<span class="tag warn">Back-to-back</span>{% endif %}
-      {% if box.availability.days_rest is not none %}
-        <span class="tag">{{ box.availability.days_rest }}d rest</span>
-      {% endif %}
-      {% if box.availability.pitches_last_3 %}
-        <span class="tag">{{ box.availability.pitches_last_3 }}P last 3d</span>
-      {% endif %}
+      {% if box.availability.days_rest is not none %}<span class="tag">{{ box.availability.days_rest }}d rest</span>{% endif %}
+      {% if box.availability.pitches_last_3 %}<span class="tag">{{ box.availability.pitches_last_3 }}P last 3d</span>{% endif %}
     {% endif %}
   </div>
 
   {% if box.percentiles %}
-  {{ percentile_chips(box, [('xera','xERA'),('xwoba','xwOBA'),('k_percent','K%'),
-      ('bb_percent','BB%'),('whiff_percent','Whiff'),('chase_percent','Chase'),
-      ('brl_percent','Barrel'),('hard_hit_percent','HardHit'),('fb_velocity','FB velo')]) }}
+  {{ percentile_chips(box, [('xera','xERA'),('xwoba','xwOBA'),('xba','xBA'),('xslg','xSLG'),
+      ('k_percent','K%'),('bb_percent','BB%'),('whiff_percent','Whiff'),('chase_percent','Chase'),
+      ('brl_percent','Barrel'),('hard_hit_percent','HardHit'),('fb_velocity','FB velo'),
+      ('fb_spin','FB spin'),('curve_spin','CB spin'),('exit_velocity','ExitVelo')]) }}
   {% endif %}
 
   <h4>Season &amp; recent form</h4>
   <div class="scroll">
     <table>
-      <thead><tr><th class="l">Split</th><th>G</th><th>IP</th><th>ERA</th><th>FIP</th><th>WHIP</th>
+      <thead><tr><th class="l">Split</th><th>G</th><th>IP</th><th>BF</th><th>ERA</th><th>FIP</th><th>WHIP</th>
         <th>K%</th><th>BB%</th><th>K-BB%</th><th>HR/9</th></tr></thead>
       <tbody>
+        {% for label, s, d in [('Season', box.season, box.season_deltas)] %}
         <tr>
-          <td class="l"><strong>Season</strong></td>
-          <td>{{ box.season.games }}</td>
-          <td>{{ box.season.inningsPitchedDisplay|innings }}</td>
-          <td>{{ box.season.era|rate2 }}{{ box.season_deltas.era|delta(style='rate2') }}</td>
-          <td>{{ box.season.fip|rate2 }}{{ box.season_deltas.fip|delta(style='rate2') }}</td>
-          <td>{{ box.season.whip|rate2 }}{{ box.season_deltas.whip|delta(style='rate2') }}</td>
-          <td>{{ box.season.kPct|pct1 }}{{ box.season_deltas.kPct|delta(style='pct') }}</td>
-          <td>{{ box.season.bbPct|pct1 }}{{ box.season_deltas.bbPct|delta(style='pct') }}</td>
-          <td>{{ box.season.kMinusBbPct|pct1 }}{{ box.season_deltas.kMinusBbPct|delta(style='pct') }}</td>
-          <td>{{ box.season.hrPer9|rate2 }}{{ box.season_deltas.hrPer9|delta(style='rate2') }}</td>
+          <td class="l"><strong>{{ label }}</strong></td><td>{{ s.games }}</td>
+          <td>{{ s.inningsPitchedDisplay|innings }}</td><td class="denom">{{ s.battersFaced }}</td>
+          <td>{{ s.era|rate2 }}{{ d.era|delta(style='rate2') }}</td>
+          <td>{{ s.fip|rate2 }}{{ d.fip|delta(style='rate2') }}</td>
+          <td>{{ s.whip|rate2 }}{{ d.whip|delta(style='rate2') }}</td>
+          <td>{{ s.kPct|pct1 }}{{ d.kPct|delta(style='pct') }}</td>
+          <td>{{ s.bbPct|pct1 }}{{ d.bbPct|delta(style='pct') }}</td>
+          <td>{{ s.kMinusBbPct|pct1 }}{{ d.kMinusBbPct|delta(style='pct') }}</td>
+          <td>{{ s.hrPer9|rate2 }}{{ d.hrPer9|delta(style='rate2') }}</td>
         </tr>
+        {% endfor %}
         {% for win in box.windows %}
-        <tr>
-          <td class="l">{{ win.label }}</td>
-          <td>{{ win.stats.games }}</td>
+        {% set rel = reliability('era', win.stats.battersFaced or 0, pitching=True) %}
+        <tr class="{{ rel|reliability_class }}">
+          <td class="l">{{ win.label }}</td><td>{{ win.stats.games }}</td>
           <td>{{ win.stats.inningsPitchedDisplay|innings }}</td>
+          <td class="denom">{{ win.stats.battersFaced }}</td>
           <td>{{ win.stats.era|rate2 }}{{ win.deltas.era|delta(style='rate2') }}</td>
           <td>{{ win.stats.fip|rate2 }}{{ win.deltas.fip|delta(style='rate2') }}</td>
           <td>{{ win.stats.whip|rate2 }}{{ win.deltas.whip|delta(style='rate2') }}</td>
@@ -276,13 +319,11 @@
           <td>{{ win.stats.hrPer9|rate2 }}{{ win.deltas.hrPer9|delta(style='rate2') }}</td>
         </tr>
         {% endfor %}
-        <tr class="lg">
-          <td class="l">Lg avg</td><td>–</td><td>–</td>
+        <tr class="lg"><td class="l">Lg avg</td><td>–</td><td>–</td><td>–</td>
           <td>{{ lg.get('era')|rate2 }}</td><td>{{ lg.get('fip')|rate2 }}</td>
           <td>{{ lg.get('whip')|rate2 }}</td><td>{{ lg.get('kPct')|pct1 }}</td>
           <td>{{ lg.get('bbPct')|pct1 }}</td><td>{{ lg.get('kMinusBbPct')|pct1 }}</td>
-          <td>{{ lg.get('hrPer9')|rate2 }}</td>
-        </tr>
+          <td>{{ lg.get('hrPer9')|rate2 }}</td></tr>
       </tbody>
     </table>
   </div>
@@ -295,48 +336,43 @@
         <th>BA</th><th>SLG</th><th>xwOBA</th><th>HardHit</th><th>RV/100</th></tr></thead>
       <tbody>
         {% for p in box.arsenal %}
-        <tr>
-          <td class="l">{{ p.pitch }}</td>
-          <td>{{ p.usage|pct1(already_pct=True) }}</td>
+        <tr><td class="l">{{ p.pitch }}</td><td>{{ p.usage|pct1(already_pct=True) }}</td>
           <td>{{ p.whiff|pct1(already_pct=True) }}{% if p.lg_whiff and p.whiff %}<span class="d {{ 'd-good' if p.whiff > p.lg_whiff else 'd-bad' }}">{{ '%+.1f'|format(p.whiff - p.lg_whiff) }}</span>{% endif %}</td>
-          <td>{{ p.put_away|pct1(already_pct=True) }}</td>
-          <td>{{ p.ba|rate3 }}</td>
-          <td>{{ p.slg|rate3 }}</td>
+          <td>{{ p.put_away|pct1(already_pct=True) }}</td><td>{{ p.ba|rate3 }}</td><td>{{ p.slg|rate3 }}</td>
           <td>{{ p.xwoba|rate3 }}{% if p.lg_xwoba and p.xwoba %}<span class="d {{ 'd-good' if p.xwoba < p.lg_xwoba else 'd-bad' }}">{{ '%+.3f'|format(p.xwoba - p.lg_xwoba) }}</span>{% endif %}</td>
-          <td>{{ p.hard_hit|pct1(already_pct=True) }}</td>
-          <td>{{ p.run_value_per_100|rate2 }}</td>
-        </tr>
+          <td>{{ p.hard_hit|pct1(already_pct=True) }}</td><td>{{ p.run_value_per_100|rate2 }}</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
   {% endif %}
 
+  {{ situational(box, ['vl','vr','risp','lc','2s','pi000','pi760','h','a'], true) }}
   {{ heatmaps(box, [('battingAverage','Opponent AVG by zone'),('onBasePlusSlugging','Opponent OPS by zone')]) }}
   {{ llm_slot() }}
 </div>
 {% endmacro %}
 
-{#- ===================== batter box ===================== -#}
+{#- ===================== position player box ===================== -#}
 {% macro batter_box(box, lg) %}
 <div class="box">
   <div class="bhead">
     <span class="bname">{{ box.name }}</span>
     {% if box.position %}<span class="tag">{{ box.position }}</span>{% endif %}
     {% if box.hand %}<span class="tag">Bats {{ box.hand }}</span>{% endif %}
+    {{ box.trend|sparkline }}{{ box.trend|trend_arrow }}
     <span class="spacer"></span>
-    {% if box.sabermetrics.wRcPlus is defined %}
-      <span class="tag">wRC+ {{ box.sabermetrics.wRcPlus|round|int }}</span>
-    {% endif %}
-    {% if box.vs_hand and box.vs_hand.get('ops') %}
-      <span class="tag hot">{{ box.vs_hand_label }} {{ box.vs_hand.get('ops') }}</span>
-    {% endif %}
+    {% if box.sabermetrics.wRcPlus is defined %}<span class="tag">wRC+ {{ box.sabermetrics.wRcPlus|round|int }}</span>{% endif %}
+    {% if box.running.sprint_speed %}<span class="tag">{{ box.running.sprint_speed }} ft/s</span>{% endif %}
+    {% if box.fielding.outs_above_average is not none %}<span class="tag">{{ box.fielding.outs_above_average|int }} OAA</span>{% endif %}
+    {% if box.vs_hand and box.vs_hand.get('ops') %}<span class="tag hot">{{ box.vs_hand_label }} {{ box.vs_hand.get('ops') }}</span>{% endif %}
   </div>
 
   {% if box.percentiles %}
-  {{ percentile_chips(box, [('xwoba','xwOBA'),('xba','xBA'),('xslg','xSLG'),
-      ('brl_percent','Barrel'),('exit_velocity','ExitVelo'),('hard_hit_percent','HardHit'),
-      ('k_percent','K%'),('bb_percent','BB%'),('whiff_percent','Whiff'),('chase_percent','Chase')]) }}
+  {{ percentile_chips(box, [('xwoba','xwOBA'),('xba','xBA'),('xslg','xSLG'),('xiso','xISO'),('xobp','xOBP'),
+      ('brl_percent','Barrel'),('exit_velocity','ExitVelo'),('max_ev','MaxEV'),('hard_hit_percent','HardHit'),
+      ('k_percent','K%'),('bb_percent','BB%'),('whiff_percent','Whiff'),('chase_percent','Chase'),
+      ('sprint_speed','Speed'),('arm_strength','Arm')]) }}
   {% endif %}
 
   <h4>Season &amp; recent form</h4>
@@ -346,9 +382,8 @@
         <th>OPS</th><th>ISO</th><th>BABIP</th><th>K%</th><th>BB%</th><th>HR</th></tr></thead>
       <tbody>
         <tr>
-          <td class="l"><strong>Season</strong></td>
-          <td>{{ box.season.games }}</td>
-          <td>{{ box.season.plateAppearances }}</td>
+          <td class="l"><strong>Season</strong></td><td>{{ box.season.games }}</td>
+          <td class="denom">{{ box.season.plateAppearances }}</td>
           <td>{{ box.season.avg|rate3 }}{{ box.season_deltas.avg|delta }}</td>
           <td>{{ box.season.obp|rate3 }}{{ box.season_deltas.obp|delta }}</td>
           <td>{{ box.season.slg|rate3 }}{{ box.season_deltas.slg|delta }}</td>
@@ -360,10 +395,10 @@
           <td>{{ box.season.homeRuns }}</td>
         </tr>
         {% for win in box.windows %}
-        <tr>
-          <td class="l">{{ win.label }}</td>
-          <td>{{ win.stats.games }}</td>
-          <td>{{ win.stats.plateAppearances }}</td>
+        {% set rel = reliability('ops', win.stats.plateAppearances or 0) %}
+        <tr class="{{ rel|reliability_class }}">
+          <td class="l">{{ win.label }}</td><td>{{ win.stats.games }}</td>
+          <td class="denom">{{ win.stats.plateAppearances }}</td>
           <td>{{ win.stats.avg|rate3 }}{{ win.deltas.avg|delta }}</td>
           <td>{{ win.stats.obp|rate3 }}{{ win.deltas.obp|delta }}</td>
           <td>{{ win.stats.slg|rate3 }}{{ win.deltas.slg|delta }}</td>
@@ -375,30 +410,66 @@
           <td>{{ win.stats.homeRuns }}</td>
         </tr>
         {% endfor %}
-        {% if box.vs_hand %}
-        <tr>
-          <td class="l">{{ box.vs_hand_label }}</td>
-          <td>{{ box.vs_hand.get('gamesPlayed','–') }}</td>
-          <td>{{ box.vs_hand.get('plateAppearances','–') }}</td>
-          <td>{{ box.vs_hand.get('avg','–') }}</td>
-          <td>{{ box.vs_hand.get('obp','–') }}</td>
-          <td>{{ box.vs_hand.get('slg','–') }}</td>
-          <td>{{ box.vs_hand.get('ops','–') }}</td>
-          <td>–</td><td>{{ box.vs_hand.get('babip','–') }}</td>
-          <td>–</td><td>–</td>
-          <td>{{ box.vs_hand.get('homeRuns','–') }}</td>
-        </tr>
-        {% endif %}
-        <tr class="lg">
-          <td class="l">Lg avg</td><td>–</td><td>–</td>
+        <tr class="lg"><td class="l">Lg avg</td><td>–</td><td>–</td>
           <td>{{ lg.get('avg')|rate3 }}</td><td>{{ lg.get('obp')|rate3 }}</td>
           <td>{{ lg.get('slg')|rate3 }}</td><td>{{ lg.get('ops')|rate3 }}</td>
           <td>{{ lg.get('iso')|rate3 }}</td><td>{{ lg.get('babip')|rate3 }}</td>
-          <td>{{ lg.get('kPct')|pct1 }}</td><td>{{ lg.get('bbPct')|pct1 }}</td><td>–</td>
-        </tr>
+          <td>{{ lg.get('kPct')|pct1 }}</td><td>{{ lg.get('bbPct')|pct1 }}</td><td>–</td></tr>
       </tbody>
     </table>
   </div>
+
+  {% if box.batted_ball %}
+  <h4>Batted ball profile{% if box.batted_ball.bbe %} <span style="text-transform:none;letter-spacing:0;">({{ box.batted_ball.bbe|int }} batted balls)</span>{% endif %}</h4>
+  <div class="scroll">
+    <table>
+      <thead><tr><th class="l">Direction</th><th>Share</th><th>Ground ball</th><th>In air</th>
+        <th class="l">Trajectory</th><th>GB</th><th>LD</th><th>FB</th><th>PU</th></tr></thead>
+      <tbody>
+        <tr><td class="l">Pull</td><td>{{ box.batted_ball.pull_rate|pct1(already_pct=True) }}</td>
+          <td>{{ box.batted_ball.pull_gb_rate|pct1(already_pct=True) }}</td>
+          <td>{{ box.batted_ball.pull_air_rate|pct1(already_pct=True) }}</td>
+          <td class="l">Rate</td>
+          <td>{{ box.batted_ball.gb_rate|pct1(already_pct=True) }}</td>
+          <td>{{ box.batted_ball.ld_rate|pct1(already_pct=True) }}</td>
+          <td>{{ box.batted_ball.fb_rate|pct1(already_pct=True) }}</td>
+          <td>{{ box.batted_ball.pu_rate|pct1(already_pct=True) }}</td></tr>
+        <tr><td class="l">Straightaway</td><td>{{ box.batted_ball.straight_rate|pct1(already_pct=True) }}</td>
+          <td>{{ box.batted_ball.straight_gb_rate|pct1(already_pct=True) }}</td>
+          <td>{{ box.batted_ball.straight_air_rate|pct1(already_pct=True) }}</td>
+          <td class="l" colspan="5"></td></tr>
+        <tr><td class="l">Opposite</td><td>{{ box.batted_ball.oppo_rate|pct1(already_pct=True) }}</td>
+          <td>{{ box.batted_ball.oppo_gb_rate|pct1(already_pct=True) }}</td>
+          <td>{{ box.batted_ball.oppo_air_rate|pct1(already_pct=True) }}</td>
+          <td class="l" colspan="5"></td></tr>
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if box.bat_tracking.avg_bat_speed or box.running.sprint_speed or box.fielding.outs_above_average is not none %}
+  <h4>Swing, glove and legs</h4>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Bat speed</th><th>Swing len</th><th>Hard swing</th><th>Squared up</th><th>Blast</th>
+        <th>Sprint</th><th>HP→1B</th><th>Bolts</th><th>OAA</th><th>Runs saved</th><th>OAA vs R</th><th>OAA vs L</th></tr></thead>
+      <tbody><tr>
+        <td>{{ box.bat_tracking.avg_bat_speed|rate2 }}</td>
+        <td>{{ box.bat_tracking.swing_length|rate2 }}</td>
+        <td>{{ box.bat_tracking.hard_swing_rate|pct1(already_pct=True) }}</td>
+        <td>{{ box.bat_tracking.squared_up_per_swing|pct1(already_pct=True) }}</td>
+        <td>{{ box.bat_tracking.blast_per_swing|pct1(already_pct=True) }}</td>
+        <td>{{ box.running.sprint_speed|rate2 }}</td>
+        <td>{{ box.running.hp_to_1b|rate2 }}</td>
+        <td>{{ box.running.bolts|int if box.running.bolts is not none else '–' }}</td>
+        <td>{{ box.fielding.outs_above_average|int if box.fielding.outs_above_average is not none else '–' }}</td>
+        <td>{{ box.fielding.fielding_runs_prevented|rate2 }}</td>
+        <td>{{ box.fielding.outs_above_average_rhh|int if box.fielding.outs_above_average_rhh is not none else '–' }}</td>
+        <td>{{ box.fielding.outs_above_average_lhh|int if box.fielding.outs_above_average_lhh is not none else '–' }}</td>
+      </tr></tbody>
+    </table>
+  </div>
+  {% endif %}
 
   {% if box.arsenal %}
   <h4>Versus pitch type</h4>
@@ -408,65 +479,142 @@
         <th>wOBA</th><th>xwOBA</th><th>Whiff</th><th>HardHit</th><th>RV/100</th></tr></thead>
       <tbody>
         {% for p in box.arsenal %}
-        <tr>
-          <td class="l">{{ p.pitch }}</td>
-          <td>{{ p.usage|pct1(already_pct=True) }}</td>
-          <td>{{ p.pa|int if p.pa else '–' }}</td>
-          <td>{{ p.ba|rate3 }}</td>
-          <td>{{ p.slg|rate3 }}</td>
+        <tr><td class="l">{{ p.pitch }}</td><td>{{ p.usage|pct1(already_pct=True) }}</td>
+          <td class="denom">{{ p.pa|int if p.pa else '–' }}</td><td>{{ p.ba|rate3 }}</td><td>{{ p.slg|rate3 }}</td>
           <td>{{ p.woba|rate3 }}</td>
           <td>{{ p.xwoba|rate3 }}{% if p.lg_xwoba and p.xwoba %}<span class="d {{ 'd-good' if p.xwoba > p.lg_xwoba else 'd-bad' }}">{{ '%+.3f'|format(p.xwoba - p.lg_xwoba) }}</span>{% endif %}</td>
           <td>{{ p.whiff|pct1(already_pct=True) }}{% if p.lg_whiff and p.whiff %}<span class="d {{ 'd-bad' if p.whiff > p.lg_whiff else 'd-good' }}">{{ '%+.1f'|format(p.whiff - p.lg_whiff) }}</span>{% endif %}</td>
-          <td>{{ p.hard_hit|pct1(already_pct=True) }}</td>
-          <td>{{ p.run_value_per_100|rate2 }}</td>
-        </tr>
+          <td>{{ p.hard_hit|pct1(already_pct=True) }}</td><td>{{ p.run_value_per_100|rate2 }}</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
   {% endif %}
 
+  {{ situational(box, ['vl','vr','risp','risp2','lc','2s','ac','bc','h','a'], false) }}
   {{ heatmaps(box, [('battingAverage','AVG by zone'),('onBasePlusSlugging','OPS by zone')]) }}
   {{ llm_slot() }}
 </div>
 {% endmacro %}
 
-{#- ===================== pages ===================== -#}
-{% for team, kind, label in pages %}
-<section class="page {{ 'active' if loop.first }}" id="p{{ loop.index }}">
-  <h2 style="margin:.25rem 0 1rem;font-size:1.15rem;">{{ label }}
-    <span class="sub" style="font-weight:400;">
-      {% if kind == 'pitching' %}{{ team.pitchers|length }} active pitchers{% else %}{{ team.batters|length }} active position players{% endif %}
-      {% if kind == 'batting' and team.opposing_hand %} · facing {{ 'LHP' if team.opposing_hand == 'L' else 'RHP' }}{% endif %}
-    </span>
-  </h2>
+{#- ===================== page 1: matchup ===================== -#}
+<section class="page active" id="p1">
+  <h2>Matchup</h2>
 
-  {% if kind == 'batting' and team.opposing_hand %}
-  <div class="note">Platoon rows show performance against <strong>{{ 'left-handed' if team.opposing_hand == 'L' else 'right-handed' }}</strong> pitching, the hand today's probable starter throws. Sample sizes on split lines are often small — the PA column is shown so you can judge the weight to give them.</div>
+  {% if bundle.highlights %}
+  <h4>What to watch</h4>
+  <div class="watch">
+    {% for h in bundle.highlights %}
+    <div class="witem {{ h.kind }}">
+      <div class="wval">{{ h.value }}</div>
+      <div><div class="whead">{{ h.headline }}</div><div class="wdet">{{ h.team }} · {{ h.detail }}</div></div>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="note">Every item above is selected by ranking figures that appear elsewhere in this
+    report — largest, smallest, hottest, coldest. Nothing here is written or inferred; the number each
+    was chosen on is shown alongside it.</div>
   {% endif %}
 
+  <div class="vs">
+    {% for team in [bundle.away, bundle.home] %}
+    {% set p = team.profile %}
+    <div class="tcard">
+      <h3>{{ team.name }} <span class="sub">({{ 'away' if not team.is_home else 'home' }})</span></h3>
+      {% if p and p.record %}
+      <div class="trec">{{ p.record.wins }}-{{ p.record.losses }}
+        <span class="sub" style="font-size:.8rem;font-weight:400;">{{ p.record.win_pct }}</span></div>
+      <div class="tmeta">
+        {{ p.record.division_rank }} in division · {{ p.record.games_back }} GB ·
+        WC {{ p.record.wildcard_games_back }} · streak {{ p.record.streak }}
+      </div>
+      <div class="tstats">
+        <div><span>Run diff</span><b>{{ '%+d'|format(p.run_differential) if p.run_differential is not none else '–' }}</b></div>
+        <div><span>Pythagorean</span><b>{{ p.record.pythagorean }}</b></div>
+        <div><span>Luck</span><b>{{ '%+d'|format(p.record.luck) if p.record.luck is not none else '–' }}</b></div>
+        <div><span>Last 10</span><b>{{ p.record.split('lastTen') }}</b></div>
+        <div><span>Home</span><b>{{ p.record.split('home') }}</b></div>
+        <div><span>Away</span><b>{{ p.record.split('away') }}</b></div>
+        <div><span>1-run</span><b>{{ p.record.split('oneRun') }}</b></div>
+        <div><span>Bullpen ready</span><b>{{ p.bullpen_available }}/{{ p.bullpen_total }}</b></div>
+        <div><span>Pen pitches 3d</span><b>{{ p.bullpen_pitches_last_3 }}</b></div>
+        <div><span>Bats L/R/S</span><b>{{ p.lineup_hand_counts.get('L',0) }}/{{ p.lineup_hand_counts.get('R',0) }}/{{ p.lineup_hand_counts.get('S',0) }}</b></div>
+      </div>
+      {% else %}<div class="tmeta">Standings unavailable.</div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="note"><strong>Luck</strong> is actual wins minus MLB's own expected (Pythagorean) wins.
+    A large positive figure means the club has won more games than its run scoring and prevention imply,
+    which usually says its record flatters it.</div>
+
+  {% for group, label in [('hitting','Offense'), ('pitching','Run prevention')] %}
+  <h4>{{ label }} — league rank of 30</h4>
+  <div class="scroll">
+    <table>
+      <thead><tr><th class="l">Metric</th>
+        <th>{{ bundle.away.abbreviation }}</th><th>Rank</th>
+        <th>{{ bundle.home.abbreviation }}</th><th>Rank</th></tr></thead>
+      <tbody>
+        {% set away_stats = bundle.away.profile[group] if bundle.away.profile else [] %}
+        {% set home_stats = bundle.home.profile[group] if bundle.home.profile else [] %}
+        {% for i in range(away_stats|length) %}
+        {% set a = away_stats[i] %}{% set h = home_stats[i] %}
+        <tr>
+          <td class="l">{{ a.label }}</td>
+          <td>{% if a.key in ('kPct','bbPct') %}{{ a.value|pct1 }}{% elif a.key in ('avg','obp','slg','ops','iso') %}{{ a.value|rate3 }}{% else %}{{ a.value|rate2 }}{% endif %}</td>
+          <td><span class="rank {{ a.rank_class }}">{{ a.rank|rank_ordinal }}</span></td>
+          <td>{% if h.key in ('kPct','bbPct') %}{{ h.value|pct1 }}{% elif h.key in ('avg','obp','slg','ops','iso') %}{{ h.value|rate3 }}{% else %}{{ h.value|rate2 }}{% endif %}</td>
+          <td><span class="rank {{ h.rank_class }}">{{ h.rank|rank_ordinal }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endfor %}
+</section>
+
+{#- ===================== pages 2-5: players ===================== -#}
+{% for kind, team, label in pages %}
+{% if team %}
+<section class="page" id="p{{ loop.index }}">
+  <h2>{{ label }}
+    <span class="sub" style="font-weight:400;">
+      {% if kind == 'pitchers' %}{{ team.pitchers|length }} active{% else %}{{ team.batters|length }} active{% endif %}
+      {% if kind == 'players' and team.opposing_hand %} · facing {{ 'LHP' if team.opposing_hand == 'L' else 'RHP' }}{% endif %}
+    </span>
+  </h2>
+  {% if kind == 'players' and team.opposing_hand %}
+  <div class="note">Platoon rows show performance against <strong>{{ 'left-handed' if team.opposing_hand == 'L' else 'right-handed' }}</strong>
+    pitching, the hand today's probable starter throws. Rows on thin samples are dimmed — the PA column
+    shows the denominator so you can judge the weight to give each line.</div>
+  {% endif %}
   <div class="boxes">
-    {% if kind == 'pitching' %}
+    {% if kind == 'pitchers' %}
       {% for box in team.pitchers %}{{ pitcher_box(box, bundle.league_pitching) }}{% endfor %}
     {% else %}
       {% for box in team.batters %}{{ batter_box(box, bundle.league_hitting) }}{% endfor %}
     {% endif %}
   </div>
 </section>
+{% endif %}
 {% endfor %}
 
 {#- ===================== audit ===================== -#}
 <section>
-  <h2 style="margin-top:2.5rem;font-size:1.15rem;border-top:1px solid var(--border);padding-top:1.25rem;">Sources &amp; audit</h2>
-  <p class="sub">Every figure is either reported directly by a source below or computed from one by a tested formula. Nothing was estimated or generated. The {{ bundle.provenance|length }} requests behind this report are listed with the time made and the SHA-256 of the exact bytes returned; bodies are archived locally under the same hashes.</p>
+  <h2 style="margin-top:2.5rem;border-top:1px solid var(--border);padding-top:1.25rem;">Sources &amp; audit</h2>
+  <p class="sub">Every figure is either reported directly by a source below or computed from one by a
+    tested formula. Nothing was estimated or generated. The {{ bundle.provenance|length }} requests behind
+    this report are listed with the time made and the SHA-256 of the exact bytes returned.</p>
   <div class="note">
     Derived pitching metrics use a FIP constant of <strong>{{ bundle.league.fip_constant|rate2 }}</strong>,
     computed from {{ bundle.season }} league totals across {{ bundle.league.totals.team_count }} clubs:
     {{ bundle.league.totals.earned_runs|integer }} ER, {{ bundle.league.totals.outs|integer }} outs,
     {{ bundle.league.totals.home_runs|integer }} HR, {{ bundle.league.totals.walks|integer }} BB,
     {{ bundle.league.totals.hit_by_pitch|integer }} HBP, {{ bundle.league.totals.strikeouts|integer }} K
-    — a league ERA of {{ bundle.league.league_era|rate2 }}. League batting benchmarks are computed the
-    same way, from summed team totals rather than averaged across players.
+    — a league ERA of {{ bundle.league.league_era|rate2 }}. League batting benchmarks and team ranks are
+    computed the same way, from summed team totals rather than averaged across players.
   </div>
   <details>
     <summary>Show all {{ bundle.provenance|length }} source requests</summary>
@@ -493,7 +641,7 @@
 </div>
 <script>
   const tabs = document.querySelectorAll('nav button');
-  const pages = document.querySelectorAll('.page');
+  const pages = document.querySelectorAll('.page[id]');
   tabs.forEach(tab => tab.addEventListener('click', () => {
     tabs.forEach(t => t.setAttribute('aria-selected', String(t === tab)));
     pages.forEach(p => p.classList.toggle('active', p.id === tab.dataset.page));

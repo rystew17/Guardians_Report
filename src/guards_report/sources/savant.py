@@ -25,10 +25,18 @@ from guards_report.sources.http import Archiver, FetchResult, fetch
 
 SOURCE = "baseball_savant"
 
-# Leaderboard identifiers, as they appear in the URL path.
+# Leaderboard identifiers, as they appear in the URL path. Savant is not
+# consistent about hyphens versus underscores here, so these are literal.
 LB_EXPECTED_STATISTICS = "expected_statistics"
 LB_PITCH_ARSENAL = "pitch-arsenal-stats"
 LB_PERCENTILE_RANKINGS = "percentile-rankings"
+LB_BATTED_BALL = "batted-ball"
+LB_BAT_TRACKING = "bat-tracking"
+LB_OAA = "outs_above_average"
+LB_SPRINT_SPEED = "sprint_speed"
+LB_BASESTEALING = "basestealing-run-value"
+LB_BASERUNNING = "baserunning"
+LB_POPTIME = "poptime"
 
 TYPE_BATTER = "batter"
 TYPE_PITCHER = "pitcher"
@@ -185,17 +193,31 @@ def percentile_rankings(
 # Savant identifies players by MLBAM id, the same id the MLB Stats API uses, so
 # the two sources join cleanly with no name matching. Name matching would be a
 # reliability problem: accents, suffixes and duplicate names all break it.
-PLAYER_ID_FIELD = "player_id"
+#
+# The id column is not named consistently across leaderboards: most use
+# player_id, the batted-ball and bat-tracking boards use id, and poptime uses
+# entity_id. We look for each in turn rather than assuming.
+ID_FIELDS = ("player_id", "id", "entity_id", "fielder_id")
+
+
+def _row_player_id(row: dict[str, str]) -> int | None:
+    for field in ID_FIELDS:
+        raw = row.get(field)
+        if raw:
+            try:
+                return int(raw)
+            except ValueError:
+                continue
+    return None
 
 
 def index_by_player(rows: list[dict[str, str]]) -> dict[int, dict[str, str]]:
     """Index leaderboard rows by MLBAM player id, one row per player."""
     indexed: dict[int, dict[str, str]] = {}
     for row in rows:
-        raw_id = row.get(PLAYER_ID_FIELD)
-        if not raw_id:
-            continue
-        indexed[int(raw_id)] = row
+        pid = _row_player_id(row)
+        if pid is not None:
+            indexed[pid] = row
     return indexed
 
 
@@ -207,8 +229,67 @@ def group_by_player(rows: list[dict[str, str]]) -> dict[int, list[dict[str, str]
     """
     grouped: dict[int, list[dict[str, str]]] = {}
     for row in rows:
-        raw_id = row.get(PLAYER_ID_FIELD)
-        if not raw_id:
-            continue
-        grouped.setdefault(int(raw_id), []).append(row)
+        pid = _row_player_id(row)
+        if pid is not None:
+            grouped.setdefault(pid, []).append(row)
     return grouped
+
+
+# ---------------------------------------------------------------------------
+# Batted ball, swing, defense and running
+# ---------------------------------------------------------------------------
+
+
+def batted_ball(archiver: Archiver, *, year: int, minimum: int = 25) -> FetchResult:
+    """Batted-ball profile: trajectory crossed with direction.
+
+    Returns gb/ld/fb/pu rates and pull/straight/oppo rates, plus the cross-tab
+    (pull_gb_rate, oppo_air_rate and so on). The cross-tab is the part that
+    matters: pull-heavy on the ground is a shift candidate, pull-heavy in the
+    air is a home-run profile, and collapsing the two axes loses that
+    distinction entirely.
+    """
+    return _leaderboard(LB_BATTED_BALL, archiver, {"year": year, "min": minimum})
+
+
+def bat_tracking(archiver: Archiver, *, year: int, minimum: int = 25) -> FetchResult:
+    """Swing-level tracking: bat speed, squared-up rate, blast rate.
+
+    The newest Statcast layer, and the one that separates a hitter who is
+    genuinely swinging well from one carried by contact-quality luck. Moves
+    faster than outcome stats, so it reads a slump earlier.
+    """
+    return _leaderboard(LB_BAT_TRACKING, archiver, {"year": year, "min": minimum})
+
+
+def outs_above_average(
+    archiver: Archiver, *, year: int, minimum: int = 1
+) -> FetchResult:
+    """Fielding range value, with directional breakdown and runs prevented."""
+    return _leaderboard(
+        LB_OAA, archiver, {"type": "Fielder", "year": year, "min": minimum}
+    )
+
+
+def sprint_speed(archiver: Archiver, *, year: int, minimum: int = 1) -> FetchResult:
+    """Feet per second on competitive runs, plus home-to-first times."""
+    return _leaderboard(LB_SPRINT_SPEED, archiver, {"year": year, "min": minimum})
+
+
+def basestealing_run_value(archiver: Archiver, *, year: int) -> FetchResult:
+    """Run value added by stealing, with attempt and success counts.
+
+    Paired with the opposing catcher's pop time, this is what turns "he is
+    fast" into "he can run today", which is an actual decision.
+    """
+    return _leaderboard(LB_BASESTEALING, archiver, {"year": year})
+
+
+def baserunning_run_value(archiver: Archiver, *, year: int) -> FetchResult:
+    """Run value from advancing on batted balls, separate from stealing."""
+    return _leaderboard(LB_BASERUNNING, archiver, {"year": year})
+
+
+def pop_time(archiver: Archiver, *, year: int) -> FetchResult:
+    """Catcher pop time to second and third, with exchange times."""
+    return _leaderboard(LB_POPTIME, archiver, {"year": year})

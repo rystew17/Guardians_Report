@@ -349,6 +349,27 @@ def vs_player(
 # ---------------------------------------------------------------------------
 
 
+def standings(
+    archiver: Archiver, *, season: int, league_ids: Sequence[int] = (103, 104)
+) -> FetchResult:
+    """Current standings for both leagues.
+
+    Carries division and league rank, games back, streak, and a set of record
+    splits including home, away, day, night, one-run, extra-inning, last ten,
+    and xWinLoss -- MLB's own Pythagorean record, which is the cleanest answer
+    to "is this team as good as its record".
+    """
+    return _get(
+        "/v1/standings",
+        archiver,
+        {
+            "leagueId": ",".join(str(i) for i in league_ids),
+            "season": season,
+            "standingsTypes": "regularSeason",
+        },
+    )
+
+
 def league_hitting_totals(archiver: Archiver, *, season: int) -> FetchResult:
     """Season hitting totals for every team, summed to give league averages.
 

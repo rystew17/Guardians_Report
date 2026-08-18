@@ -12,10 +12,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from jinja2 import Environment, FileSystemLoader, select_autoescape
+from jinja2 import Environment, FileSystemLoader, Undefined, select_autoescape
 from markupsafe import Markup
 
+from guards_report.config import SPLIT_LABELS
 from guards_report.ingest.preview import ReportBundle
+from guards_report.metrics.trends import reliability as _reliability
 from guards_report.metrics.zones import ZoneCell, ZoneGrid
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -23,16 +25,27 @@ TEMPLATE_DIR = Path(__file__).parent / "templates"
 EMPTY = "–"
 
 
+def _missing(value: Any) -> bool:
+    """True when a value should render as a dash.
+
+    Covers three cases that all mean "we do not have this": an explicit None
+    from a formula whose denominator was zero, a Jinja Undefined from a lookup
+    on a player who has no row in some leaderboard, and an empty string from a
+    blank CSV cell. All three must render as a dash rather than a zero.
+    """
+    return value is None or isinstance(value, Undefined) or value == ""
+
+
 def rate3(value: Any) -> str:
     """Format a rate as MLB does: .305 rather than 0.305."""
-    if value is None:
+    if _missing(value):
         return EMPTY
     text = f"{float(value):.3f}"
     return text[1:] if text.startswith("0.") else text
 
 
 def rate2(value: Any) -> str:
-    if value is None:
+    if _missing(value):
         return EMPTY
     return f"{float(value):.2f}"
 
@@ -44,7 +57,7 @@ def pct1(value: Any, *, already_pct: bool = False) -> str:
     Savant's, which arrive pre-multiplied (0-100). Conflating them would show a
     27% whiff rate as 2700%.
     """
-    if value is None:
+    if _missing(value):
         return EMPTY
     number = float(value)
     if not already_pct:
@@ -53,19 +66,19 @@ def pct1(value: Any, *, already_pct: bool = False) -> str:
 
 
 def integer(value: Any) -> str:
-    if value is None:
+    if _missing(value):
         return EMPTY
     return f"{int(value):,}"
 
 
 def innings(value: Any) -> str:
-    if value is None:
+    if _missing(value):
         return EMPTY
     return f"{float(value):.1f}"
 
 
 def percentile_class(value: Any) -> str:
-    if value is None or value == "":
+    if _missing(value):
         return "pct-none"
     try:
         number = float(value)
@@ -140,6 +153,77 @@ def _opaque(color: str) -> str:
     return f"rgba({parts[0]}, {parts[1]}, {parts[2]}, 0.92)"
 
 
+def sparkline(series: Any, *, width: int = 132, height: int = 26) -> Markup:
+    """Inline SVG sparkline for a rolling trend series.
+
+    Scaled to the series' own range rather than an absolute one: the question
+    is whether this player is trending up or down, and a fixed scale flattens
+    that for anyone whose numbers sit in a narrow band. The final point is
+    emphasised because "where is he now" is what the reader is looking for.
+    """
+    if series is None or not getattr(series, "has_data", False):
+        return Markup("")
+
+    points = series.points
+    low, high = min(points), max(points)
+    span = high - low or 1.0
+    step = width / max(1, len(points) - 1)
+    pad = 3
+
+    coords = [
+        (index * step, pad + (height - 2 * pad) * (1 - (value - low) / span))
+        for index, value in enumerate(points)
+    ]
+    path = " ".join(
+        f"{'M' if i == 0 else 'L'}{x:.1f},{y:.1f}" for i, (x, y) in enumerate(coords)
+    )
+    area = (
+        f"M0,{height} L" + " L".join(f"{x:.1f},{y:.1f}" for x, y in coords)
+        + f" L{coords[-1][0]:.1f},{height} Z"
+    )
+    end_x, end_y = coords[-1]
+    stroke = {"up": "var(--good)", "down": "var(--bad)"}.get(
+        series.direction, "var(--slate)"
+    )
+
+    return Markup(
+        f'<svg class="spark" width="{width}" height="{height}" '
+        f'viewBox="0 0 {width} {height}" role="img" '
+        f'aria-label="{series.label}, trending {series.direction}">'
+        f'<path d="{area}" fill="{stroke}" opacity=".10"/>'
+        f'<path d="{path}" fill="none" stroke="{stroke}" stroke-width="1.6" '
+        f'stroke-linejoin="round" stroke-linecap="round"/>'
+        f'<circle cx="{end_x:.1f}" cy="{end_y:.1f}" r="2.4" fill="{stroke}"/>'
+        f"</svg>"
+    )
+
+
+def trend_arrow(series: Any) -> Markup:
+    if series is None or not getattr(series, "has_data", False):
+        return Markup("")
+    glyph = {"up": "▲", "down": "▼"}.get(series.direction, "—")
+    return Markup(f'<span class="tr tr-{series.direction}">{glyph}</span>')
+
+
+def reliability_class(entry: Any) -> str:
+    """Class marking how much weight a rate deserves given its denominator."""
+    if _missing(entry):
+        return ""
+    return f"rel-{entry.band}"
+
+
+def rank_ordinal(rank: Any) -> str:
+    """Render a 1-30 league rank as 1st, 2nd, 3rd and so on."""
+    if _missing(rank):
+        return EMPTY
+    number = int(rank)
+    if 11 <= number % 100 <= 13:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(number % 10, "th")
+    return f"{number}{suffix}"
+
+
 def build_environment() -> Environment:
     env = Environment(
         loader=FileSystemLoader(TEMPLATE_DIR),
@@ -155,8 +239,16 @@ def build_environment() -> Environment:
         innings=innings,
         percentile_class=percentile_class,
         delta=delta_html,
+        sparkline=sparkline,
+        trend_arrow=trend_arrow,
+        rank_ordinal=rank_ordinal,
+        reliability_class=reliability_class,
     )
-    env.globals.update(zone_cell_style=zone_cell_style)
+    env.globals.update(
+        zone_cell_style=zone_cell_style,
+        reliability=_reliability,
+        split_labels=SPLIT_LABELS,
+    )
     return env
 
 

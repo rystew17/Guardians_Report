@@ -31,12 +31,47 @@ SAVANT_BASE = "https://baseballsavant.mlb.com"
 # date range rather than a game count.
 FORM_WINDOWS = (5, 15, 30)
 
-# Situational split codes understood by statsapi's statSplits endpoint.
+# Situational split codes understood by statsapi's statSplits endpoint. The
+# full catalogue runs to 602 codes; these are the ones that change a decision.
 SPLIT_VS_LHP = "vl"
 SPLIT_VS_RHP = "vr"
 SPLIT_HOME = "h"
 SPLIT_AWAY = "a"
 DEFAULT_SPLIT_CODES = (SPLIT_VS_LHP, SPLIT_VS_RHP, SPLIT_HOME, SPLIT_AWAY)
+
+# For hitters: platoon and venue, then the situations where approach shows --
+# scoring position, late and close, and the count states that separate a hitter
+# who can survive two strikes from one who must do damage early.
+HITTER_SPLIT_CODES = (
+    "vl", "vr", "h", "a",
+    "risp",   # runners in scoring position
+    "risp2",  # scoring position, two out
+    "lc",     # late and close
+    "2s",     # two strikes
+    "ac",     # ahead in count
+    "bc",     # behind in count
+)
+
+# For pitchers the same idea, plus a times-through-the-order proxy: statsapi
+# has no TTO split, but pitch-count buckets stand in for it, and the gap
+# between a starter's first 75 pitches and everything after is where the
+# third-time-through penalty shows up.
+PITCHER_SPLIT_CODES = (
+    "vl", "vr", "h", "a",
+    "risp",
+    "lc",
+    "2s",
+    "pi000",  # first 75 pitches
+    "pi760",  # pitch 76 onward
+)
+
+# Situation codes rendered with a friendly label in the report.
+SPLIT_LABELS = {
+    "vl": "vs LHP", "vr": "vs RHP", "h": "Home", "a": "Away",
+    "risp": "RISP", "risp2": "RISP, 2 out", "lc": "Late & close",
+    "2s": "Two strikes", "ac": "Ahead in count", "bc": "Behind in count",
+    "pi000": "Pitches 1-75", "pi760": "Pitches 76+",
+}
 
 
 # ---------------------------------------------------------------------------
