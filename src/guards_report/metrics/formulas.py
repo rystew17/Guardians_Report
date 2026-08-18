@@ -59,11 +59,20 @@ def outs_to_innings(outs: int) -> float:
     return outs / 3.0
 
 
-def _rate(numerator: float, denominator: float) -> float | None:
-    """Divide, or return None when the rate is undefined."""
+def rate(numerator: float, denominator: float) -> float | None:
+    """Divide, or return None when the rate is undefined.
+
+    The single guard behind every rate in the project: a zero denominator
+    yields None, never 0.0, so "no attempts" stays distinguishable from
+    "attempted and failed every time".
+    """
     if denominator == 0:
         return None
     return numerator / denominator
+
+
+# Retained so existing internal callers keep working.
+_rate = rate
 
 
 # ---------------------------------------------------------------------------

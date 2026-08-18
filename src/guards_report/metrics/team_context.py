@@ -268,6 +268,85 @@ PITCHING_LOWER_BETTER = {
 }
 
 
+@dataclass(frozen=True)
+class SeriesContext:
+    """Where today's game sits in the season series and the current set."""
+
+    games_played: int
+    home_wins: int
+    away_wins: int
+    series_game_number: int | None
+    games_in_series: int | None
+    recent: list[str] = field(default_factory=list)
+
+    def record_for(self, *, home: bool) -> str:
+        wins = self.home_wins if home else self.away_wins
+        losses = self.away_wins if home else self.home_wins
+        return f"{wins}-{losses}"
+
+    @property
+    def leader(self) -> str:
+        if self.home_wins > self.away_wins:
+            return "home"
+        if self.away_wins > self.home_wins:
+            return "away"
+        return "even"
+
+
+def parse_series(
+    payload: dict[str, Any], *, home_team_id: int, today_game_pk: int
+) -> SeriesContext:
+    """Season series record between the two clubs, excluding today's game.
+
+    Only completed games count. A postponed or in-progress game has no winner
+    and would otherwise be silently scored as a loss for somebody.
+    """
+    home_wins = away_wins = 0
+    recent: list[str] = []
+    series_game_number = games_in_series = None
+
+    for day in payload.get("dates", []):
+        for game in day.get("games", []):
+            teams = game.get("teams") or {}
+            if game.get("gamePk") == today_game_pk:
+                series_game_number = game.get("seriesGameNumber")
+                games_in_series = game.get("gamesInSeries")
+                continue
+
+            state = (game.get("status") or {}).get("abstractGameState")
+            if state != "Final":
+                continue
+
+            home, away = teams.get("home") or {}, teams.get("away") or {}
+            home_is_our_home = (home.get("team") or {}).get("id") == home_team_id
+
+            if home.get("isWinner"):
+                winner_is_home_team = home_is_our_home
+            elif away.get("isWinner"):
+                winner_is_home_team = not home_is_our_home
+            else:
+                continue
+
+            if winner_is_home_team:
+                home_wins += 1
+            else:
+                away_wins += 1
+
+            recent.append(
+                f"{game.get('officialDate', '')} "
+                f"{away.get('score', '')}-{home.get('score', '')}"
+            )
+
+    return SeriesContext(
+        games_played=home_wins + away_wins,
+        home_wins=home_wins,
+        away_wins=away_wins,
+        series_game_number=series_game_number,
+        games_in_series=games_in_series,
+        recent=recent[-5:],
+    )
+
+
 @dataclass
 class TeamProfile:
     """Everything the comparison page needs about one club."""

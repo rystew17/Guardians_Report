@@ -31,6 +31,7 @@ from guards_report.config import (
 )
 from guards_report.metrics import highlights as hl
 from guards_report.metrics import league_averages as la
+from guards_report.metrics import statcast as sc
 from guards_report.metrics import league_constants as lc
 from guards_report.metrics import team_context as tc
 from guards_report.metrics import trends as tr
@@ -87,6 +88,14 @@ class PlayerBox:
     vs_hand: dict[str, Any] = field(default_factory=dict)
     vs_hand_label: str = ""
 
+    # Pitch-level derived: {hand: {metric: ZoneChart}} and a spray chart.
+    statcast_zones: dict[str, dict[str, Any]] = field(default_factory=dict)
+    spray: Any = None
+
+    # Lineup position when an official lineup has been posted. Players not in
+    # it keep a None order and sort to the bottom rather than being dropped.
+    batting_order: int | None = None
+
     availability: w.BullpenAvailability | None = None
     role: str = ""
 
@@ -102,6 +111,8 @@ class TeamSection:
     pitchers: list[PlayerBox] = field(default_factory=list)
     opposing_hand: str | None = None
     profile: tc.TeamProfile | None = None
+    lineup_source: str = "none"
+    lineup_note: str = ""
 
 
 @dataclass
@@ -124,6 +135,12 @@ class ReportBundle:
     league_pitching: la.LeaguePitching
     provenance: list[dict[str, Any]]
     highlights: list[hl.Highlight] = field(default_factory=list)
+    series: tc.SeriesContext | None = None
+    # League benchmarks for the Savant blocks, keyed by block name, so every
+    # displayed stat has something to be measured against.
+    savant_benchmarks: dict[str, dict[str, float | None]] = field(
+        default_factory=dict
+    )
 
     @property
     def guardians(self) -> TeamSection:
@@ -228,6 +245,33 @@ def _find_game(payload: dict[str, Any], *, team_id: int) -> dict[str, Any] | Non
             if team_id in ids:
                 return game
     return None
+
+
+def _lineup_order(game: dict[str, Any], side: str) -> tuple[dict[int, int], str, str]:
+    """Batting order by player id, if an official lineup has been posted.
+
+    MLB publishes no projected lineup and the official one appears roughly
+    three hours before first pitch. When it is absent we say so and fall back
+    to sorting by playing time; we never invent an order, and we never drop a
+    player who is not in it -- the bench simply sorts below the nine.
+    """
+    players = (game.get("lineups") or {}).get(
+        "homePlayers" if side == "home" else "awayPlayers"
+    ) or []
+    if not players:
+        return (
+            {},
+            "none",
+            "Official lineup not yet posted — MLB releases it about three hours "
+            "before first pitch. Position players are ordered by playing time; "
+            "no batting order is implied.",
+        )
+    return (
+        {person["id"]: index for index, person in enumerate(players, start=1)},
+        "official",
+        "Official lineup as posted by the club. Players not in the lineup "
+        "follow below, ordered by playing time.",
+    )
 
 
 def _split_roster(payload: dict[str, Any]) -> tuple[list[dict], list[dict]]:
@@ -425,8 +469,35 @@ def _build_pitcher_box(person, entry, *, as_of, fip_constant, league_pitching,
 # ---------------------------------------------------------------------------
 
 
+def _statcast_for(
+    archiver: Archiver, *, player_id: int, season: int, perspective: str, bats: str | None
+) -> tuple[dict[str, Any], Any]:
+    """Fetch and aggregate one player's pitch-level season.
+
+    Returns zone charts and, for hitters, a spray chart. A failure here is not
+    fatal: the rest of the box is still worth showing, so we return empties and
+    let the renderer omit those sections.
+    """
+    try:
+        result = sc.parse_pitches(
+            sv.player_pitches(
+                archiver, player_id=player_id, year=season, perspective=perspective
+            ).text()
+        )
+    except Exception:
+        return {}, None
+
+    zones = sc.build_zone_charts(result, perspective=perspective)
+    spray = sc.build_spray(result, bats=bats) if perspective == "batter" else None
+    return zones, spray
+
+
 def build_preview(
-    settings: Settings, *, on: date, team_id: int = CLEVELAND_GUARDIANS_TEAM_ID
+    settings: Settings,
+    *,
+    on: date,
+    team_id: int = CLEVELAND_GUARDIANS_TEAM_ID,
+    include_statcast: bool = True,
 ) -> ReportBundle:
     archiver = Archiver(root=settings.raw_archive_dir)
     season = on.year
@@ -464,6 +535,13 @@ def build_preview(
     batter_arsenal_rows = sv.parse_csv(sv.pitch_arsenal_stats(
         archiver, year=season, minimum=1, player_type=sv.TYPE_BATTER))
 
+    # Each leaderboard is fetched once, then used twice: indexed by player for
+    # the boxes, and reduced to a league benchmark for the deltas beside them.
+    batted_ball_rows = sv.parse_csv(sv.batted_ball(archiver, year=season, minimum=10))
+    bat_tracking_rows = sv.parse_csv(sv.bat_tracking(archiver, year=season, minimum=10))
+    sprint_rows = sv.parse_csv(sv.sprint_speed(archiver, year=season, minimum=1))
+    fielding_rows = sv.parse_csv(sv.outs_above_average(archiver, year=season, minimum=1))
+
     savant = {
         "pitcher_percentiles": sv.index_by_player(sv.parse_csv(
             sv.percentile_rankings(archiver, year=season, player_type=sv.TYPE_PITCHER))),
@@ -475,14 +553,25 @@ def build_preview(
         "batter_expected": sv.index_by_player(sv.parse_csv(
             sv.expected_statistics(archiver, year=season,
                                    player_type=sv.TYPE_BATTER, minimum=1))),
-        "batted_ball": sv.index_by_player(sv.parse_csv(
-            sv.batted_ball(archiver, year=season, minimum=10))),
-        "bat_tracking": sv.index_by_player(sv.parse_csv(
-            sv.bat_tracking(archiver, year=season, minimum=10))),
-        "fielding": sv.index_by_player(sv.parse_csv(
-            sv.outs_above_average(archiver, year=season, minimum=1))),
-        "running": sv.index_by_player(sv.parse_csv(
-            sv.sprint_speed(archiver, year=season, minimum=1))),
+        "batted_ball": sv.index_by_player(batted_ball_rows),
+        "bat_tracking": sv.index_by_player(bat_tracking_rows),
+        "fielding": sv.index_by_player(fielding_rows),
+        "running": sv.index_by_player(sprint_rows),
+    }
+
+    # Weighted by playing time: an unweighted mean would let a player with
+    # twelve batted balls count as much as a regular with four hundred.
+    savant_benchmarks = {
+        "batted_ball": la.leaderboard_means(
+            batted_ball_rows, BATTED_BALL_FIELDS, weight_field="bbe"
+        ),
+        "bat_tracking": la.leaderboard_means(
+            bat_tracking_rows, BAT_TRACKING_FIELDS, weight_field="swings_competitive"
+        ),
+        "running": la.leaderboard_means(
+            sprint_rows, RUNNING_FIELDS, weight_field="competitive_runs"
+        ),
+        "fielding": la.leaderboard_means(fielding_rows, FIELDING_FIELDS),
     }
 
     pitcher_arsenal = sv.group_by_player(pitcher_arsenal_rows)
@@ -557,7 +646,19 @@ def build_preview(
             )
             for e in batter_entries if e["person"]["id"] in batter_people
         ]
-        batters.sort(key=lambda b: -(b.season.get("plateAppearances") or 0))
+        order_map, lineup_source, lineup_note = _lineup_order(game, side)
+        for box in batters:
+            box.batting_order = order_map.get(box.player_id)
+
+        # Lineup order first when it exists, then everyone else by playing
+        # time. Bench players are pushed down, never removed -- they are the
+        # pinch-hit and defensive-replacement options a manager needs to see.
+        batters.sort(
+            key=lambda b: (
+                b.batting_order if b.batting_order is not None else 99,
+                -(b.season.get("plateAppearances") or 0),
+            )
+        )
 
         pitchers = [
             _build_pitcher_box(
@@ -619,7 +720,23 @@ def build_preview(
             record=f"{record.get('wins', 0)}-{record.get('losses', 0)}",
             is_home=(side == "home"), batters=batters, pitchers=pitchers,
             opposing_hand=hands[opposite], profile=profile,
+            lineup_source=lineup_source, lineup_note=lineup_note,
         )
+
+    # Pitch-level Statcast, per player. This is the slow part of a run -- one
+    # request each -- so it happens last, after everything cheap has succeeded.
+    if include_statcast:
+        for section in sections.values():
+            for box in section.batters:
+                box.statcast_zones, box.spray = _statcast_for(
+                    archiver, player_id=box.player_id, season=season,
+                    perspective="batter", bats=box.hand,
+                )
+            for box in section.pitchers:
+                box.statcast_zones, _ = _statcast_for(
+                    archiver, player_id=box.player_id, season=season,
+                    perspective="pitcher", bats=None,
+                )
 
     weather: dict[str, Any] = {}
     try:
@@ -644,6 +761,15 @@ def build_preview(
         home=sections["home"], away=sections["away"],
         league=league, league_hitting=league_hitting, league_pitching=league_pitching,
         provenance=[r.provenance() for r in archiver.written],
+        savant_benchmarks=savant_benchmarks,
+        series=tc.parse_series(
+            api.head_to_head(
+                archiver, team_id=sections["home"].team_id,
+                opponent_id=sections["away"].team_id, season=season, through=on,
+            ).json(),
+            home_team_id=sections["home"].team_id,
+            today_game_pk=game_pk,
+        ),
     )
     bundle.highlights = hl.build(bundle)
     return bundle

@@ -370,6 +370,29 @@ def standings(
     )
 
 
+def head_to_head(
+    archiver: Archiver, *, team_id: int, opponent_id: int, season: int, through: date
+) -> FetchResult:
+    """Every game between two clubs this season, up to and including today.
+
+    Used for the season series record. `opponentId` does the filtering server
+    side, so this is one request rather than a scan of the full schedule.
+    """
+    return _get(
+        "/v1/schedule",
+        archiver,
+        {
+            "sportId": MLB_SPORT_ID,
+            "teamId": team_id,
+            "opponentId": opponent_id,
+            "season": season,
+            "startDate": f"{season}-01-01",
+            "endDate": through.isoformat(),
+            "hydrate": "team,linescore",
+        },
+    )
+
+
 def league_hitting_totals(archiver: Archiver, *, season: int) -> FetchResult:
     """Season hitting totals for every team, summed to give league averages.
 

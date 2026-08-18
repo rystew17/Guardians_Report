@@ -139,6 +139,58 @@ def pitching_from_payload(
 
 
 # ---------------------------------------------------------------------------
+# Benchmarks for Savant leaderboards
+# ---------------------------------------------------------------------------
+
+
+def leaderboard_means(
+    rows: list[dict[str, str]],
+    fields: tuple[str, ...],
+    *,
+    weight_field: str | None = None,
+) -> dict[str, float | None]:
+    """League benchmark for each column of a Savant leaderboard.
+
+    Weighted by playing time where a sensible weight column exists, because an
+    unweighted mean lets a player with twelve batted balls count as much as a
+    regular with four hundred -- which describes neither the league nor any
+    player in it.
+
+    Rows missing a value are skipped for that column only, so one blank cell
+    does not drop a player out of every benchmark.
+    """
+    totals: dict[str, float] = {}
+    weights: dict[str, float] = {}
+
+    for row in rows:
+        weight = 1.0
+        if weight_field:
+            raw = (row.get(weight_field) or "").strip()
+            try:
+                weight = float(raw)
+            except ValueError:
+                continue
+            if weight <= 0:
+                continue
+
+        for name in fields:
+            raw = (row.get(name) or "").strip()
+            if not raw:
+                continue
+            try:
+                value = float(raw)
+            except ValueError:
+                continue
+            totals[name] = totals.get(name, 0.0) + value * weight
+            weights[name] = weights.get(name, 0.0) + weight
+
+    return {
+        name: (totals[name] / weights[name] if weights.get(name) else None)
+        for name in fields
+    }
+
+
+# ---------------------------------------------------------------------------
 # Delta presentation
 # ---------------------------------------------------------------------------
 

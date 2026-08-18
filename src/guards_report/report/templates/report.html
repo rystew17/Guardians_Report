@@ -5,151 +5,228 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ bundle.away.abbreviation }} @ {{ bundle.home.abbreviation }} — {{ bundle.game_date }}</title>
 <style>
-  /* Committed light theme, pinned so it does not flip with the OS setting. */
+  /* ------------------------------------------------------------------
+     Committed light theme, pinned so it never flips with the OS setting.
+     Neutrals carry a slight cool bias toward the navy accent so they read
+     as chosen rather than inherited.
+     ------------------------------------------------------------------ */
   :root {
     color-scheme: light;
-    --bg:#fff; --panel:#f7f8fa; --box:#fff; --border:#dfe3e8; --border-hi:#c3cad2;
-    --ink:#14171a; --muted:#5b6570; --faint:#8b95a1;
+    --bg:#f4f6f8; --panel:#eaeef2; --box:#fff;
+    --border:#dde3e9; --border-hi:#c2cbd4;
+    --ink:#131922; --muted:#57626e; --faint:#8992a0;
     --accent:#0c2340; --accent-2:#e31937;
-    --good:#0d7a4a; --bad:#c02233; --even:#8b95a1;
+    --good:#0b7a48; --bad:#c02233; --even:#8992a0;
     --zone-empty:#eef1f4;
+    --field:#e8eee6; --field-line:#c3cfc0;
     --great:#d22d49; --gd:#e8896a; --avg:#cbd1d6; --poor:#7aa0c4; --bad-p:#325aa8;
+
+    --sp-1:.25rem; --sp-2:.5rem; --sp-3:.75rem; --sp-4:1rem; --sp-6:1.5rem;
+    --radius:10px;
   }
   * { box-sizing:border-box; }
-  body { margin:0; padding:0 1rem 4rem; background:var(--bg); color:var(--ink);
-    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
-  .wrap { max-width:1400px; margin:0 auto; }
-  header { padding:1.5rem 0 1rem; border-bottom:3px solid var(--accent); }
-  h1 { margin:0 0 .3rem; font-size:1.6rem; letter-spacing:-.02em; }
-  .sub { color:var(--muted); font-size:.85rem; }
-  .meta { display:flex; flex-wrap:wrap; gap:1rem; margin-top:.5rem; font-size:.8rem; color:var(--muted); }
+  html { -webkit-text-size-adjust:100%; }
+  body {
+    margin:0; padding:0 var(--sp-4) 4rem; background:var(--bg); color:var(--ink);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap { max-width:1360px; margin:0 auto; }
 
-  nav { position:sticky; top:0; z-index:20; background:var(--bg);
-    border-bottom:2px solid var(--border); display:flex; flex-wrap:wrap; gap:.25rem;
-    padding:.5rem 0; margin-bottom:1.25rem; }
-  nav button { font:inherit; font-weight:600; font-size:.85rem; cursor:pointer;
-    padding:.5rem .9rem; border:1px solid var(--border); border-radius:7px;
-    background:var(--panel); color:var(--muted); }
+  /* ---------- masthead ---------- */
+  header { padding:var(--sp-6) 0 var(--sp-4); border-bottom:3px solid var(--accent); }
+  h1 { margin:0 0 var(--sp-1); font-size:clamp(1.25rem,4vw,1.7rem);
+       letter-spacing:-.025em; line-height:1.12; text-wrap:balance; }
+  .sub { color:var(--muted); font-size:.85rem; }
+  .meta { display:flex; flex-wrap:wrap; gap:var(--sp-2) var(--sp-4);
+          margin-top:var(--sp-2); font-size:.78rem; color:var(--muted); }
+  .meta b { color:var(--ink); font-weight:650; }
+
+  /* ---------- tabs ---------- */
+  nav { position:sticky; top:0; z-index:30; background:var(--bg);
+        border-bottom:2px solid var(--border); padding:var(--sp-2) 0;
+        margin-bottom:var(--sp-4); display:flex; gap:var(--sp-1);
+        overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
+  nav::-webkit-scrollbar { display:none; }
+  nav button { font:inherit; font-weight:650; font-size:.82rem; cursor:pointer;
+    padding:.5rem .85rem; border:1px solid var(--border); border-radius:7px;
+    background:var(--box); color:var(--muted); white-space:nowrap; flex:0 0 auto; }
   nav button:hover { border-color:var(--border-hi); color:var(--ink); }
   nav button[aria-selected="true"] { background:var(--accent); border-color:var(--accent); color:#fff; }
+  nav button:focus-visible { outline:2px solid var(--accent-2); outline-offset:2px; }
   .page { display:none; } .page.active { display:block; }
 
-  .boxes { display:flex; flex-direction:column; gap:1rem; }
+  h2 { margin:var(--sp-1) 0 var(--sp-4); font-size:1.15rem; letter-spacing:-.015em; }
+  h4 { margin:var(--sp-4) 0 var(--sp-2); font-size:.7rem; text-transform:uppercase;
+       letter-spacing:.06em; color:var(--faint); font-weight:750; }
+
+  /* ---------- player boxes ---------- */
+  .boxes { display:flex; flex-direction:column; gap:var(--sp-4); }
   .box { width:100%; background:var(--box); border:1px solid var(--border);
-    border-radius:10px; padding:.9rem 1rem 1rem; }
+         border-radius:var(--radius); padding:var(--sp-3) var(--sp-4) var(--sp-4); }
   .box.featured { border:2px solid var(--accent-2); }
-  .bhead { display:flex; align-items:baseline; gap:.5rem; flex-wrap:wrap;
-    padding-bottom:.5rem; margin-bottom:.6rem; border-bottom:1px solid var(--border); }
-  .bname { font-size:1.02rem; font-weight:650; letter-spacing:-.01em; }
-  .tag { padding:.08rem .4rem; border-radius:4px; background:var(--panel);
-    border:1px solid var(--border); color:var(--muted); font-size:.68rem; font-weight:600; }
+  .box.bench { opacity:.9; border-style:dashed; }
+  .bhead { display:flex; align-items:center; gap:var(--sp-2); flex-wrap:wrap;
+           padding-bottom:var(--sp-2); margin-bottom:var(--sp-2);
+           border-bottom:1px solid var(--border); }
+  .ord { flex:0 0 auto; width:1.6rem; height:1.6rem; border-radius:50%;
+         background:var(--accent); color:#fff; font-size:.78rem; font-weight:750;
+         display:flex; align-items:center; justify-content:center; }
+  .ord.b { background:var(--panel); color:var(--muted); }
+  .bname { font-size:1.02rem; font-weight:650; letter-spacing:-.012em; }
+  .tag { padding:.1rem .42rem; border-radius:4px; background:var(--panel);
+         border:1px solid var(--border); color:var(--muted);
+         font-size:.66rem; font-weight:650; white-space:nowrap; }
   .tag.hot { background:var(--accent-2); border-color:var(--accent-2); color:#fff; }
   .tag.warn { background:#a8551a; border-color:#a8551a; color:#fff; }
   .bhead .spacer { margin-left:auto; }
 
-  h2 { margin:.25rem 0 1rem; font-size:1.15rem; }
-  h4 { margin:.85rem 0 .35rem; font-size:.72rem; text-transform:uppercase;
-    letter-spacing:.05em; color:var(--faint); font-weight:700; }
-
-  .scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
-  table { border-collapse:collapse; width:100%; font-size:.78rem; }
-  th,td { padding:.28rem .4rem; text-align:right; white-space:nowrap; }
-  th { font-weight:600; color:var(--faint); border-bottom:1px solid var(--border);
-    font-size:.68rem; text-transform:uppercase; letter-spacing:.03em; }
+  /* ---------- tables ---------- */
+  .scroll { overflow-x:auto; -webkit-overflow-scrolling:touch;
+            border:1px solid var(--border); border-radius:6px; }
+  table { border-collapse:collapse; width:100%; font-size:.78rem; min-width:max-content; }
+  th,td { padding:.34rem .5rem; text-align:right; white-space:nowrap; }
+  th { font-weight:650; color:var(--faint); background:var(--panel);
+       border-bottom:1px solid var(--border); font-size:.64rem;
+       text-transform:uppercase; letter-spacing:.04em; position:sticky; top:0; }
   td { border-bottom:1px solid var(--border); font-variant-numeric:tabular-nums; }
+  tbody tr:last-child td { border-bottom:none; }
   th:first-child,td:first-child,.l { text-align:left; }
-  tr.lg td { color:var(--muted); font-style:italic; border-bottom:none; }
-  .d { font-size:.66rem; margin-left:.22rem; font-weight:600; }
+  tbody tr:nth-child(even) { background:rgba(0,0,0,.014); }
+  tr.lg td { color:var(--muted); font-style:italic; background:var(--panel); }
+  .denom { color:var(--faint); font-size:.7rem; }
+
+  /* Benchmark deltas: a stacked pill so the value stays dominant and the
+     comparison sits beneath it rather than competing on the same line. */
+  .v { display:inline-flex; flex-direction:column; align-items:flex-end; line-height:1.15; }
+  .d { font-size:.62rem; font-weight:700; letter-spacing:.01em; }
   .d-good { color:var(--good); } .d-bad { color:var(--bad); } .d-even { color:var(--even); }
 
-  /* Sample-size reliability. A rate on a thin denominator is dimmed rather
-     than hidden, so the reader can see it and also see not to lean on it. */
-  .rel-thin { opacity:.62; }
-  .rel-noise { opacity:.38; font-style:italic; }
-  .denom { color:var(--faint); font-size:.66rem; }
+  .rel-thin { opacity:.66; } .rel-noise { opacity:.42; font-style:italic; }
 
   .spark { vertical-align:middle; }
-  .tr { font-size:.7rem; font-weight:700; margin-left:.2rem; }
+  .tr { font-size:.7rem; font-weight:750; }
   .tr-up { color:var(--good); } .tr-down { color:var(--bad); } .tr-flat { color:var(--faint); }
 
-  .pcts { display:flex; flex-wrap:wrap; gap:.3rem; }
-  .pchip { flex:1 1 auto; min-width:62px; text-align:center; border-radius:6px;
-    padding:.28rem .3rem; border:1px solid var(--border); }
-  .pchip .pv { display:block; font-size:.95rem; font-weight:700; line-height:1.1; }
-  .pchip .pl { display:block; font-size:.58rem; text-transform:uppercase;
-    letter-spacing:.04em; color:var(--muted); }
-  .pct-great{background:var(--great);color:#fff;} .pct-great .pl{color:rgba(255,255,255,.85);}
-  .pct-good{background:var(--gd);color:#fff;} .pct-good .pl{color:rgba(255,255,255,.85);}
+  /* ---------- percentile chips ---------- */
+  .pcts { display:grid; grid-template-columns:repeat(auto-fill,minmax(58px,1fr)); gap:var(--sp-1); }
+  .pchip { text-align:center; border-radius:6px; padding:.3rem .2rem; border:1px solid var(--border); }
+  .pchip .pv { display:block; font-size:.92rem; font-weight:750; line-height:1.1;
+               font-variant-numeric:tabular-nums; }
+  .pchip .pl { display:block; font-size:.56rem; text-transform:uppercase;
+               letter-spacing:.03em; color:var(--muted); margin-top:.05rem; }
+  .pct-great{background:var(--great);color:#fff;} .pct-great .pl{color:rgba(255,255,255,.88);}
+  .pct-good{background:var(--gd);color:#fff;} .pct-good .pl{color:rgba(255,255,255,.88);}
   .pct-avg{background:var(--avg);} .pct-poor{background:var(--poor);color:#fff;}
-  .pct-poor .pl{color:rgba(255,255,255,.85);}
-  .pct-bad{background:var(--bad-p);color:#fff;} .pct-bad .pl{color:rgba(255,255,255,.85);}
+  .pct-poor .pl{color:rgba(255,255,255,.88);}
+  .pct-bad{background:var(--bad-p);color:#fff;} .pct-bad .pl{color:rgba(255,255,255,.88);}
   .pct-none{background:transparent;color:var(--faint);}
 
-  .zones { display:flex; gap:1.5rem; flex-wrap:wrap; }
+  /* ---------- visual row: zones + spray ---------- */
+  .vis { display:flex; gap:var(--sp-6); flex-wrap:wrap; align-items:flex-start; }
   .zwrap { text-align:center; }
-  .zlabel { font-size:.66rem; text-transform:uppercase; letter-spacing:.04em;
-    color:var(--faint); font-weight:700; margin-bottom:.3rem; }
-  .zplot { position:relative; width:206px; height:176px;
-    display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr;
-    border:1px solid var(--border); border-radius:3px; overflow:hidden; }
+  .zlabel { font-size:.64rem; text-transform:uppercase; letter-spacing:.05em;
+            color:var(--faint); font-weight:750; margin-bottom:var(--sp-1); }
+  .zplot { position:relative; width:186px; height:158px; display:grid;
+           grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr;
+           border:1px solid var(--border); border-radius:3px; overflow:hidden; }
   .zq { position:relative; }
-  .zq span { position:absolute; font-size:.68rem; font-weight:700;
-    font-variant-numeric:tabular-nums; color:#1a1a1a; }
-  .zq-11 span { top:7px; left:9px; } .zq-12 span { top:7px; right:9px; }
-  .zq-13 span { bottom:7px; left:9px; } .zq-14 span { bottom:7px; right:9px; }
+  .zq span { position:absolute; font-size:.64rem; font-weight:750;
+             font-variant-numeric:tabular-nums; color:#1a1a1a; }
+  .zq-11 span,.zq-1 span { top:6px; left:8px; } .zq-12 span,.zq-2 span { top:6px; right:8px; }
+  .zq-13 span,.zq-3 span { bottom:6px; left:8px; } .zq-14 span,.zq-4 span { bottom:6px; right:8px; }
   .zgrid { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
-    display:grid; grid-template-columns:repeat(3,40px); grid-template-rows:repeat(3,34px);
-    gap:2px; background:#f2f4f6; padding:2px; box-shadow:0 0 0 2px #f2f4f6; }
-  .zcell { display:flex; align-items:center; justify-content:center; font-size:.68rem;
-    font-variant-numeric:tabular-nums; font-weight:700; color:#1a1a1a; }
-  .zplate { display:block; margin:4px auto 0; }
-  .zcap { font-size:.62rem; color:var(--faint); margin-top:.25rem; }
+           display:grid; grid-template-columns:repeat(3,36px); grid-template-rows:repeat(3,31px);
+           gap:2px; background:#eff2f5; padding:2px; box-shadow:0 0 0 2px #eff2f5; }
+  .zcell { display:flex; align-items:center; justify-content:center; font-size:.64rem;
+           font-variant-numeric:tabular-nums; font-weight:750; color:#1a1a1a; }
+  .zplate { display:block; margin:3px auto 0; }
+  .zcap { font-size:.6rem; color:var(--faint); margin-top:.2rem; }
+  .spray { display:block; }
+  .slegend { display:flex; flex-wrap:wrap; gap:.3rem .7rem; justify-content:center;
+             font-size:.6rem; color:var(--muted); margin-top:.2rem; }
+  .slegend i { width:.5rem; height:.5rem; border-radius:50%; display:inline-block; margin-right:.2rem; }
 
-  .llm { margin-top:.85rem; border:1px dashed var(--border-hi); border-radius:8px;
-    padding:.6rem .75rem; background:var(--panel); min-height:54px; }
-  .llm .lt { font-size:.64rem; text-transform:uppercase; letter-spacing:.05em;
-    color:var(--faint); font-weight:700; margin-bottom:.25rem; }
-  .llm .lp { color:var(--faint); font-size:.78rem; font-style:italic; }
+  /* Handedness switch inside a box */
+  .hsw { display:inline-flex; gap:2px; border:1px solid var(--border);
+         border-radius:6px; overflow:hidden; margin-bottom:var(--sp-2); }
+  .hsw button { font:inherit; font-size:.66rem; font-weight:700; cursor:pointer;
+                border:0; padding:.22rem .55rem; background:var(--box); color:var(--muted); }
+  .hsw button[aria-pressed="true"] { background:var(--accent); color:#fff; }
+  .hgroup[hidden] { display:none; }
 
-  /* team comparison */
-  .vs { display:grid; grid-template-columns:1fr; gap:1rem; margin-bottom:1.25rem; }
-  @media (min-width:900px) { .vs { grid-template-columns:1fr 1fr; } }
-  .tcard { border:1px solid var(--border); border-radius:10px; padding:1rem 1.1rem; background:var(--box); }
-  .tcard h3 { margin:0 0 .15rem; font-size:1.15rem; letter-spacing:-.01em; }
-  .trec { font-size:1.5rem; font-weight:750; font-variant-numeric:tabular-nums; }
-  .tmeta { color:var(--muted); font-size:.8rem; margin-top:.15rem; }
-  .tstats { display:flex; flex-wrap:wrap; gap:.5rem 1.25rem; margin-top:.7rem;
-    padding-top:.7rem; border-top:1px solid var(--border); font-size:.8rem; }
-  .tstats div span { display:block; color:var(--faint); font-size:.62rem;
-    text-transform:uppercase; letter-spacing:.04em; }
+  /* ---------- matchup page ---------- */
+  .vs { display:grid; grid-template-columns:1fr; gap:var(--sp-4); margin-bottom:var(--sp-4); }
+  @media (min-width:880px) { .vs { grid-template-columns:1fr 1fr; } }
+  .tcard { border:1px solid var(--border); border-radius:var(--radius);
+           padding:var(--sp-4); background:var(--box); }
+  .tcard h3 { margin:0 0 .1rem; font-size:1.1rem; letter-spacing:-.015em; }
+  .trec { font-size:1.65rem; font-weight:800; font-variant-numeric:tabular-nums;
+          letter-spacing:-.02em; }
+  .tmeta { color:var(--muted); font-size:.78rem; margin-top:.1rem; }
+  .tstats { display:grid; grid-template-columns:repeat(auto-fill,minmax(84px,1fr));
+            gap:var(--sp-2); margin-top:var(--sp-3); padding-top:var(--sp-3);
+            border-top:1px solid var(--border); }
+  .tstats div span { display:block; color:var(--faint); font-size:.58rem;
+                     text-transform:uppercase; letter-spacing:.04em; }
   .tstats div b { font-size:1rem; font-variant-numeric:tabular-nums; }
-
-  .rank { display:inline-block; min-width:2.4rem; text-align:center; padding:.1rem .3rem;
-    border-radius:4px; font-size:.7rem; font-weight:700; }
+  .rank { display:inline-block; min-width:2.3rem; text-align:center; padding:.12rem .3rem;
+          border-radius:4px; font-size:.68rem; font-weight:750; }
   .rank-great{background:var(--great);color:#fff;} .rank-good{background:var(--gd);color:#fff;}
   .rank-avg{background:var(--avg);} .rank-poor{background:var(--poor);color:#fff;}
   .rank-bad{background:var(--bad-p);color:#fff;} .rank-none{color:var(--faint);}
 
-  /* what to watch */
-  .watch { display:grid; grid-template-columns:1fr; gap:.6rem; margin:0 0 1.5rem; }
-  @media (min-width:760px) { .watch { grid-template-columns:1fr 1fr; } }
-  .witem { display:flex; gap:.7rem; align-items:flex-start; border:1px solid var(--border);
-    border-left:4px solid var(--faint); border-radius:0 8px 8px 0; padding:.6rem .8rem; background:var(--box); }
-  .witem.hot { border-left-color:var(--great); } .witem.cold { border-left-color:var(--bad-p); }
-  .witem.edge { border-left-color:var(--good); } .witem.mismatch { border-left-color:var(--bad); }
-  .wval { font-size:1.05rem; font-weight:750; font-variant-numeric:tabular-nums; white-space:nowrap; }
-  .whead { font-weight:650; font-size:.88rem; }
-  .wdet { color:var(--muted); font-size:.78rem; }
+  .watch { display:grid; grid-template-columns:1fr; gap:var(--sp-2); margin-bottom:var(--sp-4); }
+  @media (min-width:720px) { .watch { grid-template-columns:1fr 1fr; } }
+  .witem { display:flex; gap:var(--sp-3); align-items:flex-start; background:var(--box);
+           border:1px solid var(--border); border-left:4px solid var(--faint);
+           border-radius:0 8px 8px 0; padding:var(--sp-2) var(--sp-3); }
+  .witem.hot{border-left-color:var(--great);} .witem.cold{border-left-color:var(--bad-p);}
+  .witem.edge{border-left-color:var(--good);} .witem.mismatch{border-left-color:var(--bad);}
+  .wval { font-size:1.02rem; font-weight:800; font-variant-numeric:tabular-nums;
+          white-space:nowrap; flex:0 0 auto; min-width:3.2rem; }
+  .whead { font-weight:650; font-size:.86rem; line-height:1.3; }
+  .wdet { color:var(--muted); font-size:.76rem; }
 
   .note { border-left:3px solid var(--accent-2); background:var(--panel);
-    padding:.55rem .8rem; border-radius:0 6px 6px 0; font-size:.82rem;
-    color:var(--muted); margin:.5rem 0 1rem; }
-  footer { margin-top:2.5rem; padding-top:1rem; border-top:1px solid var(--border);
-    font-size:.75rem; color:var(--faint); }
-  details { margin-top:.75rem; } summary { cursor:pointer; color:var(--muted); font-size:.82rem; }
-  .prov { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.66rem; }
+          padding:var(--sp-2) var(--sp-3); border-radius:0 6px 6px 0;
+          font-size:.8rem; color:var(--muted); margin:var(--sp-2) 0 var(--sp-4); }
+  .llm { margin-top:var(--sp-3); border:1px dashed var(--border-hi); border-radius:8px;
+         padding:var(--sp-2) var(--sp-3); background:var(--panel); min-height:50px; }
+  .llm .lt { font-size:.62rem; text-transform:uppercase; letter-spacing:.06em;
+             color:var(--faint); font-weight:750; margin-bottom:.15rem; }
+  .llm .lp { color:var(--faint); font-size:.76rem; font-style:italic; }
+
+  footer { margin-top:2.5rem; padding-top:var(--sp-4); border-top:1px solid var(--border);
+           font-size:.74rem; color:var(--faint); }
+  details { margin-top:var(--sp-3); }
+  summary { cursor:pointer; color:var(--muted); font-size:.8rem; }
+  .prov { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.64rem; }
   .prov td { white-space:normal; word-break:break-all; }
-  @media print { nav{display:none;} .page{display:block!important; break-after:page;} }
+
+  /* ---------- mobile ---------- */
+  @media (max-width:640px) {
+    body { padding:0 .6rem 3rem; font-size:13px; }
+    .box { padding:var(--sp-2) var(--sp-3) var(--sp-3); border-radius:8px; }
+    .bhead { gap:var(--sp-1); }
+    .bname { font-size:.95rem; width:100%; }
+    .bhead .spacer { display:none; }
+    .tag { font-size:.62rem; padding:.08rem .34rem; }
+    table { font-size:.72rem; }
+    th,td { padding:.3rem .4rem; }
+    .vis { gap:var(--sp-3); justify-content:center; }
+    .zplot { width:158px; height:136px; }
+    .zgrid { grid-template-columns:repeat(3,31px); grid-template-rows:repeat(3,27px); }
+    .zcell,.zq span { font-size:.58rem; }
+    .pcts { grid-template-columns:repeat(auto-fill,minmax(52px,1fr)); }
+    .trec { font-size:1.4rem; }
+    .spark { width:96px; }
+  }
+  @media print {
+    nav { display:none; }
+    .page { display:block !important; break-after:page; }
+    body { padding:0; background:#fff; }
+  }
 </style>
 </head>
 <body>
@@ -158,73 +235,127 @@
 <header>
   <h1>{{ bundle.away.name }} at {{ bundle.home.name }}</h1>
   <div class="sub">{{ bundle.game_date }} · {{ bundle.venue_name }} · {{ bundle.status }}
-    {% if bundle.game_datetime %} · {{ bundle.game_datetime.strftime('%H:%M UTC') }}{% endif %}</div>
+    {% if bundle.game_datetime %} · {{ bundle.game_datetime.strftime('%H:%M UTC') }}{% endif %}
+    {% if bundle.series and bundle.series.series_game_number %}
+      · Game {{ bundle.series.series_game_number }} of {{ bundle.series.games_in_series }}
+    {% endif %}
+  </div>
   <div class="meta">
     {% if bundle.weather.condition %}<span>{{ bundle.weather.condition }}, {{ bundle.weather.temp }}°F, wind {{ bundle.weather.wind }}</span>{% endif %}
-    <span>Lg {{ bundle.league_hitting.get('avg')|rate3 }}/{{ bundle.league_hitting.get('obp')|rate3 }}/{{ bundle.league_hitting.get('slg')|rate3 }}
-      · lgERA {{ bundle.league_pitching.get('era')|rate2 }} · cFIP {{ bundle.league.fip_constant|rate2 }}</span>
+    <span>League <b>{{ bundle.league_hitting.get('avg')|rate3 }}/{{ bundle.league_hitting.get('obp')|rate3 }}/{{ bundle.league_hitting.get('slg')|rate3 }}</b></span>
+    <span>lgERA <b>{{ bundle.league_pitching.get('era')|rate2 }}</b></span>
+    <span>cFIP <b>{{ bundle.league.fip_constant|rate2 }}</b></span>
   </div>
 </header>
 
 {% set pages = [
   ('matchup', none, 'Matchup'),
-  ('pitchers', guardians, guardians.abbreviation ~ ' — Pitchers'),
-  ('players',  guardians, guardians.abbreviation ~ ' — Position Players'),
-  ('pitchers', opponent,  opponent.abbreviation ~ ' — Pitchers'),
-  ('players',  opponent,  opponent.abbreviation ~ ' — Position Players')
+  ('pitchers', guardians, guardians.abbreviation ~ ' Pitchers'),
+  ('players',  guardians, guardians.abbreviation ~ ' Position Players'),
+  ('pitchers', opponent,  opponent.abbreviation ~ ' Pitchers'),
+  ('players',  opponent,  opponent.abbreviation ~ ' Position Players')
 ] %}
 
-<nav role="tablist">
+<nav role="tablist" aria-label="Report sections">
   {% for kind, team, label in pages %}
   <button role="tab" data-page="p{{ loop.index }}" aria-selected="{{ 'true' if loop.first else 'false' }}">{{ label }}</button>
   {% endfor %}
 </nav>
 
-{#- ===================== macros ===================== -#}
+{#- ============================ macros ============================ -#}
 
-{% macro percentile_chips(box, keys) %}
+{% macro pchips(box, keys) %}
 <div class="pcts">
   {% for key, label in keys %}
   {% set v = box.percentiles.get(key) %}
   <div class="pchip {{ v|percentile_class }}">
-    <span class="pv">{{ v if v not in (None, '') else '–' }}</span>
-    <span class="pl">{{ label }}</span>
+    <span class="pv">{{ v if v not in (None, '') else '–' }}</span><span class="pl">{{ label }}</span>
   </div>
   {% endfor %}
 </div>
 {% endmacro %}
 
-{% macro heatmaps(box, metrics) %}
-{% set available = metrics | selectattr('0', 'in', box.zone_grids) | list %}
-{% if available %}
-<h4>Strike zone — catcher's view</h4>
-<div class="zones">
-  {% for metric, caption in available %}
-  {% set grid = box.zone_grids[metric] %}
-  {% if grid.has_data %}
-  <div class="zwrap">
-    <div class="zlabel">{{ grid.label }}</div>
-    <div class="zplot">
-      {% for code in ['11','12','13','14'] %}
-      {% set cell = grid.cells.get(code) %}
-      <div class="zq zq-{{ code }}" style="{{ zone_cell_style(grid, cell) if cell else 'background:var(--zone-empty);' }}">
-        <span>{{ cell.raw if cell and cell.raw else '–' }}</span>
-      </div>
-      {% endfor %}
-      <div class="zgrid">
-        {% for cell in grid.in_zone %}
-        <div class="zcell" style="{{ zone_cell_style(grid, cell) }}">{{ cell.raw or '–' }}</div>
-        {% endfor %}
-      </div>
-    </div>
-    <svg class="zplate" width="62" height="20" viewBox="0 0 62 20" aria-hidden="true">
-      <polygon points="4,1 58,1 58,9 31,19 4,9" fill="none" stroke="#6b7681" stroke-width="1.4" stroke-linejoin="round"/>
-    </svg>
-    <div class="zcap">{{ caption }}</div>
-  </div>
+{#- a value with its benchmark delta stacked underneath -#}
+{% macro cell(value, delta_entry, fmt='rate3') %}
+<span class="v">
+  <span>{% if fmt == 'pct' %}{{ value|pct1 }}{% elif fmt == 'rate2' %}{{ value|rate2 }}{% else %}{{ value|rate3 }}{% endif %}</span>
+  {% if delta_entry %}{{ delta_entry|delta(style=('pct' if fmt == 'pct' else fmt)) }}{% endif %}
+</span>
+{% endmacro %}
+
+{#- a raw Savant number benchmarked against the league mean -#}
+{% macro bench(value, league, fmt='pct', lower_better=false) %}
+<span class="v">
+  <span>{% if fmt == 'pct' %}{{ value|pct1(already_pct=True) }}{% else %}{{ value|rate2 }}{% endif %}</span>
+  {% if value is not none and league is not none %}
+    {% set diff = value - league %}
+    {% set good = (diff < 0) if lower_better else (diff > 0) %}
+    <span class="d {{ 'd-good' if good else 'd-bad' }}">{{ '%+.1f'|format(diff) if fmt == 'pct' else '%+.2f'|format(diff) }}</span>
   {% endif %}
+</span>
+{% endmacro %}
+
+{% macro zone_plot(chart, caption) %}
+<div class="zwrap">
+  <div class="zlabel">{{ chart.label }}</div>
+  <div class="zplot">
+    {% for code in ['11','12','13','14'] %}
+    <div class="zq zq-{{ code }}" style="{{ statcast_zone_style(chart, code) }}">
+      <span>{{ zone_value(chart, code) }}</span>
+    </div>
+    {% endfor %}
+    <div class="zgrid">
+      {% for code in ['1','2','3','4','5','6','7','8','9'] %}
+      <div class="zcell" style="{{ statcast_zone_style(chart, code) }}">{{ zone_value(chart, code) }}</div>
+      {% endfor %}
+    </div>
+  </div>
+  <svg class="zplate" width="56" height="18" viewBox="0 0 56 18" aria-hidden="true">
+    <polygon points="4,1 52,1 52,8 28,17 4,8" fill="none" stroke="#8992a0" stroke-width="1.3" stroke-linejoin="round"/>
+  </svg>
+  <div class="zcap">{{ caption }}</div>
+</div>
+{% endmacro %}
+
+{% macro zone_section(box, perspective) %}
+{% if box.statcast_zones %}
+{% set uid = box.player_id %}
+<h4>Zone profile — catcher's view</h4>
+<div class="hsw" role="group" aria-label="Handedness split">
+  {% for hand, label in [('all','All'),('L', 'vs LHP' if perspective=='batter' else 'vs LHB'),('R', 'vs RHP' if perspective=='batter' else 'vs RHB')] %}
+  <button type="button" data-zone="{{ uid }}" data-hand="{{ hand }}" aria-pressed="{{ 'true' if hand=='all' else 'false' }}">{{ label }}</button>
   {% endfor %}
 </div>
+{% for hand in ['all','L','R'] %}
+{% set charts = box.statcast_zones.get(hand, {}) %}
+<div class="hgroup" data-zone-group="{{ uid }}" data-hand="{{ hand }}" {{ 'hidden' if hand != 'all' }}>
+  {% if charts and charts.get('ops') and charts.get('ops').has_data %}
+  <div class="vis">
+    {% for metric in ['ops','avg','xwoba','swing','k'] %}
+    {% if charts.get(metric) %}{{ zone_plot(charts[metric], charts[metric].label) }}{% endif %}
+    {% endfor %}
+    {% if hand == 'all' and box.spray and box.spray.has_data %}
+    <div class="zwrap">
+      <div class="zlabel">Spray</div>
+      {{ box.spray|spray_chart }}
+      <div class="slegend">
+        {% for name, label in [('out','Out'),('single','1B'),('double','2B'),('triple','3B'),('home_run','HR')] %}
+        <span><i style="background:{{ spray_colors[name][0] }}"></i>{{ label }}</span>
+        {% endfor %}
+      </div>
+      <div class="zcap">
+        {{ box.spray.points|length }} batted balls · pull {{ box.spray.pull_pct|pct1(already_pct=True) }}
+        · mid {{ box.spray.straight_pct|pct1(already_pct=True) }}
+        · oppo {{ box.spray.oppo_pct|pct1(already_pct=True) }}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+  {% else %}
+  <p class="sub" style="font-size:.78rem;">Not enough tracked pitches in this split to draw a zone map.</p>
+  {% endif %}
+</div>
+{% endfor %}
 {% endif %}
 {% endmacro %}
 
@@ -234,15 +365,15 @@
 <h4>Situational</h4>
 <div class="scroll">
   <table>
-    <thead><tr><th class="l">Situation</th>
-      <th>{{ 'BF' if pitching else 'PA' }}</th><th>AVG</th><th>OBP</th><th>SLG</th><th>OPS</th>
+    <thead><tr><th class="l">Situation</th><th>{{ 'BF' if pitching else 'PA' }}</th>
+      <th>AVG</th><th>OBP</th><th>SLG</th><th>OPS</th>
       {% if pitching %}<th>ERA</th>{% endif %}<th>HR</th><th>K</th><th>BB</th></tr></thead>
     <tbody>
       {% for code in present %}
       {% set s = box.situational[code] %}
       <tr>
         <td class="l">{{ split_labels.get(code, code) }}</td>
-        <td>{{ s.get('battersFaced') if pitching else s.get('plateAppearances', '–') }}</td>
+        <td class="denom">{{ s.get('battersFaced','–') if pitching else s.get('plateAppearances','–') }}</td>
         <td>{{ s.get('avg','–') }}</td><td>{{ s.get('obp','–') }}</td>
         <td>{{ s.get('slg','–') }}</td><td>{{ s.get('ops','–') }}</td>
         {% if pitching %}<td>{{ s.get('era','–') }}</td>{% endif %}
@@ -250,6 +381,13 @@
         <td>{{ s.get('baseOnBalls','–') }}</td>
       </tr>
       {% endfor %}
+      <tr class="lg"><td class="l">Lg avg</td><td>–</td>
+        <td>{{ (bundle.league_pitching if pitching else bundle.league_hitting).get('avg')|rate3 }}</td>
+        <td>{{ bundle.league_hitting.get('obp')|rate3 }}</td>
+        <td>{{ bundle.league_hitting.get('slg')|rate3 }}</td>
+        <td>{{ bundle.league_hitting.get('ops')|rate3 }}</td>
+        {% if pitching %}<td>{{ bundle.league_pitching.get('era')|rate2 }}</td>{% endif %}
+        <td>–</td><td>–</td><td>–</td></tr>
     </tbody>
   </table>
 </div>
@@ -261,7 +399,7 @@
 <div class="lp">Reserved for the Phase 2 written read-out. No text is generated in this build — every figure above is sourced or computed.</div></div>
 {% endmacro %}
 
-{#- ===================== pitcher box ===================== -#}
+{#- ========================= pitcher box ========================= -#}
 {% macro pitcher_box(box, lg) %}
 <div class="box {{ 'featured' if box.is_probable_starter }}">
   <div class="bhead">
@@ -274,15 +412,15 @@
     {% if box.availability %}
       {% if box.availability.back_to_back %}<span class="tag warn">Back-to-back</span>{% endif %}
       {% if box.availability.days_rest is not none %}<span class="tag">{{ box.availability.days_rest }}d rest</span>{% endif %}
-      {% if box.availability.pitches_last_3 %}<span class="tag">{{ box.availability.pitches_last_3 }}P last 3d</span>{% endif %}
+      {% if box.availability.pitches_last_3 %}<span class="tag">{{ box.availability.pitches_last_3 }}P / 3d</span>{% endif %}
     {% endif %}
   </div>
 
   {% if box.percentiles %}
-  {{ percentile_chips(box, [('xera','xERA'),('xwoba','xwOBA'),('xba','xBA'),('xslg','xSLG'),
+  {{ pchips(box, [('xera','xERA'),('xwoba','xwOBA'),('xba','xBA'),('xslg','xSLG'),
       ('k_percent','K%'),('bb_percent','BB%'),('whiff_percent','Whiff'),('chase_percent','Chase'),
-      ('brl_percent','Barrel'),('hard_hit_percent','HardHit'),('fb_velocity','FB velo'),
-      ('fb_spin','FB spin'),('curve_spin','CB spin'),('exit_velocity','ExitVelo')]) }}
+      ('brl_percent','Barrel'),('hard_hit_percent','HardHit'),('exit_velocity','ExitVelo'),
+      ('fb_velocity','FB velo'),('fb_spin','FB spin'),('curve_spin','CB spin')]) }}
   {% endif %}
 
   <h4>Season &amp; recent form</h4>
@@ -291,32 +429,31 @@
       <thead><tr><th class="l">Split</th><th>G</th><th>IP</th><th>BF</th><th>ERA</th><th>FIP</th><th>WHIP</th>
         <th>K%</th><th>BB%</th><th>K-BB%</th><th>HR/9</th></tr></thead>
       <tbody>
-        {% for label, s, d in [('Season', box.season, box.season_deltas)] %}
         <tr>
-          <td class="l"><strong>{{ label }}</strong></td><td>{{ s.games }}</td>
-          <td>{{ s.inningsPitchedDisplay|innings }}</td><td class="denom">{{ s.battersFaced }}</td>
-          <td>{{ s.era|rate2 }}{{ d.era|delta(style='rate2') }}</td>
-          <td>{{ s.fip|rate2 }}{{ d.fip|delta(style='rate2') }}</td>
-          <td>{{ s.whip|rate2 }}{{ d.whip|delta(style='rate2') }}</td>
-          <td>{{ s.kPct|pct1 }}{{ d.kPct|delta(style='pct') }}</td>
-          <td>{{ s.bbPct|pct1 }}{{ d.bbPct|delta(style='pct') }}</td>
-          <td>{{ s.kMinusBbPct|pct1 }}{{ d.kMinusBbPct|delta(style='pct') }}</td>
-          <td>{{ s.hrPer9|rate2 }}{{ d.hrPer9|delta(style='rate2') }}</td>
+          <td class="l"><strong>Season</strong></td><td>{{ box.season.games }}</td>
+          <td>{{ box.season.inningsPitchedDisplay|innings }}</td>
+          <td class="denom">{{ box.season.battersFaced }}</td>
+          <td>{{ cell(box.season.era, box.season_deltas.era, 'rate2') }}</td>
+          <td>{{ cell(box.season.fip, box.season_deltas.fip, 'rate2') }}</td>
+          <td>{{ cell(box.season.whip, box.season_deltas.whip, 'rate2') }}</td>
+          <td>{{ cell(box.season.kPct, box.season_deltas.kPct, 'pct') }}</td>
+          <td>{{ cell(box.season.bbPct, box.season_deltas.bbPct, 'pct') }}</td>
+          <td>{{ cell(box.season.kMinusBbPct, box.season_deltas.kMinusBbPct, 'pct') }}</td>
+          <td>{{ cell(box.season.hrPer9, box.season_deltas.hrPer9, 'rate2') }}</td>
         </tr>
-        {% endfor %}
         {% for win in box.windows %}
         {% set rel = reliability('era', win.stats.battersFaced or 0, pitching=True) %}
         <tr class="{{ rel|reliability_class }}">
           <td class="l">{{ win.label }}</td><td>{{ win.stats.games }}</td>
           <td>{{ win.stats.inningsPitchedDisplay|innings }}</td>
           <td class="denom">{{ win.stats.battersFaced }}</td>
-          <td>{{ win.stats.era|rate2 }}{{ win.deltas.era|delta(style='rate2') }}</td>
-          <td>{{ win.stats.fip|rate2 }}{{ win.deltas.fip|delta(style='rate2') }}</td>
-          <td>{{ win.stats.whip|rate2 }}{{ win.deltas.whip|delta(style='rate2') }}</td>
-          <td>{{ win.stats.kPct|pct1 }}{{ win.deltas.kPct|delta(style='pct') }}</td>
-          <td>{{ win.stats.bbPct|pct1 }}{{ win.deltas.bbPct|delta(style='pct') }}</td>
-          <td>{{ win.stats.kMinusBbPct|pct1 }}{{ win.deltas.kMinusBbPct|delta(style='pct') }}</td>
-          <td>{{ win.stats.hrPer9|rate2 }}{{ win.deltas.hrPer9|delta(style='rate2') }}</td>
+          <td>{{ cell(win.stats.era, win.deltas.era, 'rate2') }}</td>
+          <td>{{ cell(win.stats.fip, win.deltas.fip, 'rate2') }}</td>
+          <td>{{ cell(win.stats.whip, win.deltas.whip, 'rate2') }}</td>
+          <td>{{ cell(win.stats.kPct, win.deltas.kPct, 'pct') }}</td>
+          <td>{{ cell(win.stats.bbPct, win.deltas.bbPct, 'pct') }}</td>
+          <td>{{ cell(win.stats.kMinusBbPct, win.deltas.kMinusBbPct, 'pct') }}</td>
+          <td>{{ cell(win.stats.hrPer9, win.deltas.hrPer9, 'rate2') }}</td>
         </tr>
         {% endfor %}
         <tr class="lg"><td class="l">Lg avg</td><td>–</td><td>–</td><td>–</td>
@@ -337,9 +474,10 @@
       <tbody>
         {% for p in box.arsenal %}
         <tr><td class="l">{{ p.pitch }}</td><td>{{ p.usage|pct1(already_pct=True) }}</td>
-          <td>{{ p.whiff|pct1(already_pct=True) }}{% if p.lg_whiff and p.whiff %}<span class="d {{ 'd-good' if p.whiff > p.lg_whiff else 'd-bad' }}">{{ '%+.1f'|format(p.whiff - p.lg_whiff) }}</span>{% endif %}</td>
-          <td>{{ p.put_away|pct1(already_pct=True) }}</td><td>{{ p.ba|rate3 }}</td><td>{{ p.slg|rate3 }}</td>
-          <td>{{ p.xwoba|rate3 }}{% if p.lg_xwoba and p.xwoba %}<span class="d {{ 'd-good' if p.xwoba < p.lg_xwoba else 'd-bad' }}">{{ '%+.3f'|format(p.xwoba - p.lg_xwoba) }}</span>{% endif %}</td>
+          <td>{{ bench(p.whiff, p.lg_whiff, 'pct') }}</td>
+          <td>{{ p.put_away|pct1(already_pct=True) }}</td>
+          <td>{{ p.ba|rate3 }}</td><td>{{ p.slg|rate3 }}</td>
+          <td>{{ bench(p.xwoba, p.lg_xwoba, 'rate3', lower_better=true) }}</td>
           <td>{{ p.hard_hit|pct1(already_pct=True) }}</td><td>{{ p.run_value_per_100|rate2 }}</td></tr>
         {% endfor %}
       </tbody>
@@ -348,15 +486,20 @@
   {% endif %}
 
   {{ situational(box, ['vl','vr','risp','lc','2s','pi000','pi760','h','a'], true) }}
-  {{ heatmaps(box, [('battingAverage','Opponent AVG by zone'),('onBasePlusSlugging','Opponent OPS by zone')]) }}
+  {{ zone_section(box, 'pitcher') }}
   {{ llm_slot() }}
 </div>
 {% endmacro %}
 
 {#- ===================== position player box ===================== -#}
-{% macro batter_box(box, lg) %}
-<div class="box">
+{% macro batter_box(box, lg, bm) %}
+<div class="box {{ 'bench' if box.batting_order is none }}">
   <div class="bhead">
+    {% if box.batting_order is not none %}
+    <span class="ord">{{ box.batting_order }}</span>
+    {% else %}
+    <span class="ord b" title="Not in the posted lineup">–</span>
+    {% endif %}
     <span class="bname">{{ box.name }}</span>
     {% if box.position %}<span class="tag">{{ box.position }}</span>{% endif %}
     {% if box.hand %}<span class="tag">Bats {{ box.hand }}</span>{% endif %}
@@ -369,7 +512,7 @@
   </div>
 
   {% if box.percentiles %}
-  {{ percentile_chips(box, [('xwoba','xwOBA'),('xba','xBA'),('xslg','xSLG'),('xiso','xISO'),('xobp','xOBP'),
+  {{ pchips(box, [('xwoba','xwOBA'),('xba','xBA'),('xslg','xSLG'),('xiso','xISO'),('xobp','xOBP'),
       ('brl_percent','Barrel'),('exit_velocity','ExitVelo'),('max_ev','MaxEV'),('hard_hit_percent','HardHit'),
       ('k_percent','K%'),('bb_percent','BB%'),('whiff_percent','Whiff'),('chase_percent','Chase'),
       ('sprint_speed','Speed'),('arm_strength','Arm')]) }}
@@ -384,14 +527,14 @@
         <tr>
           <td class="l"><strong>Season</strong></td><td>{{ box.season.games }}</td>
           <td class="denom">{{ box.season.plateAppearances }}</td>
-          <td>{{ box.season.avg|rate3 }}{{ box.season_deltas.avg|delta }}</td>
-          <td>{{ box.season.obp|rate3 }}{{ box.season_deltas.obp|delta }}</td>
-          <td>{{ box.season.slg|rate3 }}{{ box.season_deltas.slg|delta }}</td>
-          <td>{{ box.season.ops|rate3 }}{{ box.season_deltas.ops|delta }}</td>
-          <td>{{ box.season.iso|rate3 }}{{ box.season_deltas.iso|delta }}</td>
-          <td>{{ box.season.babip|rate3 }}{{ box.season_deltas.babip|delta }}</td>
-          <td>{{ box.season.kPct|pct1 }}{{ box.season_deltas.kPct|delta(style='pct') }}</td>
-          <td>{{ box.season.bbPct|pct1 }}{{ box.season_deltas.bbPct|delta(style='pct') }}</td>
+          <td>{{ cell(box.season.avg, box.season_deltas.avg) }}</td>
+          <td>{{ cell(box.season.obp, box.season_deltas.obp) }}</td>
+          <td>{{ cell(box.season.slg, box.season_deltas.slg) }}</td>
+          <td>{{ cell(box.season.ops, box.season_deltas.ops) }}</td>
+          <td>{{ cell(box.season.iso, box.season_deltas.iso) }}</td>
+          <td>{{ cell(box.season.babip, box.season_deltas.babip) }}</td>
+          <td>{{ cell(box.season.kPct, box.season_deltas.kPct, 'pct') }}</td>
+          <td>{{ cell(box.season.bbPct, box.season_deltas.bbPct, 'pct') }}</td>
           <td>{{ box.season.homeRuns }}</td>
         </tr>
         {% for win in box.windows %}
@@ -399,14 +542,14 @@
         <tr class="{{ rel|reliability_class }}">
           <td class="l">{{ win.label }}</td><td>{{ win.stats.games }}</td>
           <td class="denom">{{ win.stats.plateAppearances }}</td>
-          <td>{{ win.stats.avg|rate3 }}{{ win.deltas.avg|delta }}</td>
-          <td>{{ win.stats.obp|rate3 }}{{ win.deltas.obp|delta }}</td>
-          <td>{{ win.stats.slg|rate3 }}{{ win.deltas.slg|delta }}</td>
-          <td>{{ win.stats.ops|rate3 }}{{ win.deltas.ops|delta }}</td>
-          <td>{{ win.stats.iso|rate3 }}{{ win.deltas.iso|delta }}</td>
-          <td>{{ win.stats.babip|rate3 }}{{ win.deltas.babip|delta }}</td>
-          <td>{{ win.stats.kPct|pct1 }}{{ win.deltas.kPct|delta(style='pct') }}</td>
-          <td>{{ win.stats.bbPct|pct1 }}{{ win.deltas.bbPct|delta(style='pct') }}</td>
+          <td>{{ cell(win.stats.avg, win.deltas.avg) }}</td>
+          <td>{{ cell(win.stats.obp, win.deltas.obp) }}</td>
+          <td>{{ cell(win.stats.slg, win.deltas.slg) }}</td>
+          <td>{{ cell(win.stats.ops, win.deltas.ops) }}</td>
+          <td>{{ cell(win.stats.iso, win.deltas.iso) }}</td>
+          <td>{{ cell(win.stats.babip, win.deltas.babip) }}</td>
+          <td>{{ cell(win.stats.kPct, win.deltas.kPct, 'pct') }}</td>
+          <td>{{ cell(win.stats.bbPct, win.deltas.bbPct, 'pct') }}</td>
           <td>{{ win.stats.homeRuns }}</td>
         </tr>
         {% endfor %}
@@ -419,28 +562,31 @@
     </table>
   </div>
 
-  {% if box.batted_ball %}
-  <h4>Batted ball profile{% if box.batted_ball.bbe %} <span style="text-transform:none;letter-spacing:0;">({{ box.batted_ball.bbe|int }} batted balls)</span>{% endif %}</h4>
+  {% if box.batted_ball.bbe %}
+  <h4>Batted ball profile <span style="text-transform:none;letter-spacing:0;color:var(--faint);">({{ box.batted_ball.bbe|int }} batted balls · deltas vs league)</span></h4>
   <div class="scroll">
     <table>
-      <thead><tr><th class="l">Direction</th><th>Share</th><th>Ground ball</th><th>In air</th>
-        <th class="l">Trajectory</th><th>GB</th><th>LD</th><th>FB</th><th>PU</th></tr></thead>
+      <thead><tr><th class="l">Direction</th><th>Share</th><th>On ground</th><th>In air</th>
+        <th class="l">Trajectory</th><th>Ground</th><th>Line drive</th><th>Fly</th><th>Pop up</th></tr></thead>
       <tbody>
-        <tr><td class="l">Pull</td><td>{{ box.batted_ball.pull_rate|pct1(already_pct=True) }}</td>
-          <td>{{ box.batted_ball.pull_gb_rate|pct1(already_pct=True) }}</td>
-          <td>{{ box.batted_ball.pull_air_rate|pct1(already_pct=True) }}</td>
+        <tr><td class="l">Pull</td>
+          <td>{{ bench(box.batted_ball.pull_rate, bm.batted_ball.pull_rate) }}</td>
+          <td>{{ bench(box.batted_ball.pull_gb_rate, bm.batted_ball.pull_gb_rate) }}</td>
+          <td>{{ bench(box.batted_ball.pull_air_rate, bm.batted_ball.pull_air_rate) }}</td>
           <td class="l">Rate</td>
-          <td>{{ box.batted_ball.gb_rate|pct1(already_pct=True) }}</td>
-          <td>{{ box.batted_ball.ld_rate|pct1(already_pct=True) }}</td>
-          <td>{{ box.batted_ball.fb_rate|pct1(already_pct=True) }}</td>
-          <td>{{ box.batted_ball.pu_rate|pct1(already_pct=True) }}</td></tr>
-        <tr><td class="l">Straightaway</td><td>{{ box.batted_ball.straight_rate|pct1(already_pct=True) }}</td>
-          <td>{{ box.batted_ball.straight_gb_rate|pct1(already_pct=True) }}</td>
-          <td>{{ box.batted_ball.straight_air_rate|pct1(already_pct=True) }}</td>
+          <td>{{ bench(box.batted_ball.gb_rate, bm.batted_ball.gb_rate) }}</td>
+          <td>{{ bench(box.batted_ball.ld_rate, bm.batted_ball.ld_rate) }}</td>
+          <td>{{ bench(box.batted_ball.fb_rate, bm.batted_ball.fb_rate) }}</td>
+          <td>{{ bench(box.batted_ball.pu_rate, bm.batted_ball.pu_rate, lower_better=true) }}</td></tr>
+        <tr><td class="l">Straightaway</td>
+          <td>{{ bench(box.batted_ball.straight_rate, bm.batted_ball.straight_rate) }}</td>
+          <td>{{ bench(box.batted_ball.straight_gb_rate, bm.batted_ball.straight_gb_rate) }}</td>
+          <td>{{ bench(box.batted_ball.straight_air_rate, bm.batted_ball.straight_air_rate) }}</td>
           <td class="l" colspan="5"></td></tr>
-        <tr><td class="l">Opposite</td><td>{{ box.batted_ball.oppo_rate|pct1(already_pct=True) }}</td>
-          <td>{{ box.batted_ball.oppo_gb_rate|pct1(already_pct=True) }}</td>
-          <td>{{ box.batted_ball.oppo_air_rate|pct1(already_pct=True) }}</td>
+        <tr><td class="l">Opposite</td>
+          <td>{{ bench(box.batted_ball.oppo_rate, bm.batted_ball.oppo_rate) }}</td>
+          <td>{{ bench(box.batted_ball.oppo_gb_rate, bm.batted_ball.oppo_gb_rate) }}</td>
+          <td>{{ bench(box.batted_ball.oppo_air_rate, bm.batted_ball.oppo_air_rate) }}</td>
           <td class="l" colspan="5"></td></tr>
       </tbody>
     </table>
@@ -448,19 +594,19 @@
   {% endif %}
 
   {% if box.bat_tracking.avg_bat_speed or box.running.sprint_speed or box.fielding.outs_above_average is not none %}
-  <h4>Swing, glove and legs</h4>
+  <h4>Swing, glove and legs <span style="text-transform:none;letter-spacing:0;color:var(--faint);">(deltas vs league)</span></h4>
   <div class="scroll">
     <table>
       <thead><tr><th>Bat speed</th><th>Swing len</th><th>Hard swing</th><th>Squared up</th><th>Blast</th>
-        <th>Sprint</th><th>HP→1B</th><th>Bolts</th><th>OAA</th><th>Runs saved</th><th>OAA vs R</th><th>OAA vs L</th></tr></thead>
+        <th>Sprint</th><th>HP→1B</th><th>Bolts</th><th>OAA</th><th>Runs saved</th><th>OAA vs RHH</th><th>OAA vs LHH</th></tr></thead>
       <tbody><tr>
-        <td>{{ box.bat_tracking.avg_bat_speed|rate2 }}</td>
-        <td>{{ box.bat_tracking.swing_length|rate2 }}</td>
-        <td>{{ box.bat_tracking.hard_swing_rate|pct1(already_pct=True) }}</td>
-        <td>{{ box.bat_tracking.squared_up_per_swing|pct1(already_pct=True) }}</td>
-        <td>{{ box.bat_tracking.blast_per_swing|pct1(already_pct=True) }}</td>
-        <td>{{ box.running.sprint_speed|rate2 }}</td>
-        <td>{{ box.running.hp_to_1b|rate2 }}</td>
+        <td>{{ bench(box.bat_tracking.avg_bat_speed, bm.bat_tracking.avg_bat_speed, 'rate2') }}</td>
+        <td>{{ bench(box.bat_tracking.swing_length, bm.bat_tracking.swing_length, 'rate2') }}</td>
+        <td>{{ bench(box.bat_tracking.hard_swing_rate, bm.bat_tracking.hard_swing_rate) }}</td>
+        <td>{{ bench(box.bat_tracking.squared_up_per_swing, bm.bat_tracking.squared_up_per_swing) }}</td>
+        <td>{{ bench(box.bat_tracking.blast_per_swing, bm.bat_tracking.blast_per_swing) }}</td>
+        <td>{{ bench(box.running.sprint_speed, bm.running.sprint_speed, 'rate2') }}</td>
+        <td>{{ bench(box.running.hp_to_1b, bm.running.hp_to_1b, 'rate2', lower_better=true) }}</td>
         <td>{{ box.running.bolts|int if box.running.bolts is not none else '–' }}</td>
         <td>{{ box.fielding.outs_above_average|int if box.fielding.outs_above_average is not none else '–' }}</td>
         <td>{{ box.fielding.fielding_runs_prevented|rate2 }}</td>
@@ -480,10 +626,10 @@
       <tbody>
         {% for p in box.arsenal %}
         <tr><td class="l">{{ p.pitch }}</td><td>{{ p.usage|pct1(already_pct=True) }}</td>
-          <td class="denom">{{ p.pa|int if p.pa else '–' }}</td><td>{{ p.ba|rate3 }}</td><td>{{ p.slg|rate3 }}</td>
-          <td>{{ p.woba|rate3 }}</td>
-          <td>{{ p.xwoba|rate3 }}{% if p.lg_xwoba and p.xwoba %}<span class="d {{ 'd-good' if p.xwoba > p.lg_xwoba else 'd-bad' }}">{{ '%+.3f'|format(p.xwoba - p.lg_xwoba) }}</span>{% endif %}</td>
-          <td>{{ p.whiff|pct1(already_pct=True) }}{% if p.lg_whiff and p.whiff %}<span class="d {{ 'd-bad' if p.whiff > p.lg_whiff else 'd-good' }}">{{ '%+.1f'|format(p.whiff - p.lg_whiff) }}</span>{% endif %}</td>
+          <td class="denom">{{ p.pa|int if p.pa else '–' }}</td><td>{{ p.ba|rate3 }}</td>
+          <td>{{ p.slg|rate3 }}</td><td>{{ p.woba|rate3 }}</td>
+          <td>{{ bench(p.xwoba, p.lg_xwoba, 'rate3') }}</td>
+          <td>{{ bench(p.whiff, p.lg_whiff, 'pct', lower_better=true) }}</td>
           <td>{{ p.hard_hit|pct1(already_pct=True) }}</td><td>{{ p.run_value_per_100|rate2 }}</td></tr>
         {% endfor %}
       </tbody>
@@ -492,12 +638,12 @@
   {% endif %}
 
   {{ situational(box, ['vl','vr','risp','risp2','lc','2s','ac','bc','h','a'], false) }}
-  {{ heatmaps(box, [('battingAverage','AVG by zone'),('onBasePlusSlugging','OPS by zone')]) }}
+  {{ zone_section(box, 'batter') }}
   {{ llm_slot() }}
 </div>
 {% endmacro %}
 
-{#- ===================== page 1: matchup ===================== -#}
+{#- ======================= page 1: matchup ======================= -#}
 <section class="page active" id="p1">
   <h2>Matchup</h2>
 
@@ -511,23 +657,36 @@
     </div>
     {% endfor %}
   </div>
-  <div class="note">Every item above is selected by ranking figures that appear elsewhere in this
-    report — largest, smallest, hottest, coldest. Nothing here is written or inferred; the number each
-    was chosen on is shown alongside it.</div>
+  <div class="note">Every item is selected by ranking figures that appear elsewhere in this report —
+    largest, smallest, hottest, coldest. Nothing here is written or inferred; the number each was
+    chosen on is shown beside it.</div>
+  {% endif %}
+
+  {% if bundle.series and bundle.series.games_played %}
+  <h4>Season series</h4>
+  <div class="note" style="border-left-color:var(--accent);">
+    <strong>{{ bundle.home.abbreviation }} {{ bundle.series.record_for(home=True) }}
+    {{ bundle.away.abbreviation }}</strong> in {{ bundle.series.games_played }} meetings this season.
+    {% if bundle.series.series_game_number %}
+      Today is game {{ bundle.series.series_game_number }} of {{ bundle.series.games_in_series }}
+      in the current set.
+    {% endif %}
+    {% if bundle.series.recent %}
+      Recent: {{ bundle.series.recent|join(' · ') }} (away–home).
+    {% endif %}
+  </div>
   {% endif %}
 
   <div class="vs">
     {% for team in [bundle.away, bundle.home] %}
     {% set p = team.profile %}
     <div class="tcard">
-      <h3>{{ team.name }} <span class="sub">({{ 'away' if not team.is_home else 'home' }})</span></h3>
+      <h3>{{ team.name }} <span class="sub" style="font-weight:400;">({{ 'home' if team.is_home else 'away' }})</span></h3>
       {% if p and p.record %}
       <div class="trec">{{ p.record.wins }}-{{ p.record.losses }}
-        <span class="sub" style="font-size:.8rem;font-weight:400;">{{ p.record.win_pct }}</span></div>
-      <div class="tmeta">
-        {{ p.record.division_rank }} in division · {{ p.record.games_back }} GB ·
-        WC {{ p.record.wildcard_games_back }} · streak {{ p.record.streak }}
-      </div>
+        <span class="sub" style="font-size:.78rem;font-weight:400;">{{ p.record.win_pct }}</span></div>
+      <div class="tmeta">{{ p.record.division_rank }} in division · {{ p.record.games_back }} GB ·
+        WC {{ p.record.wildcard_games_back }} · streak {{ p.record.streak }}</div>
       <div class="tstats">
         <div><span>Run diff</span><b>{{ '%+d'|format(p.run_differential) if p.run_differential is not none else '–' }}</b></div>
         <div><span>Pythagorean</span><b>{{ p.record.pythagorean }}</b></div>
@@ -536,7 +695,10 @@
         <div><span>Home</span><b>{{ p.record.split('home') }}</b></div>
         <div><span>Away</span><b>{{ p.record.split('away') }}</b></div>
         <div><span>1-run</span><b>{{ p.record.split('oneRun') }}</b></div>
-        <div><span>Bullpen ready</span><b>{{ p.bullpen_available }}/{{ p.bullpen_total }}</b></div>
+        {% if bundle.series and bundle.series.games_played %}
+        <div><span>Season series</span><b>{{ bundle.series.record_for(home=team.is_home) }}</b></div>
+        {% endif %}
+        <div><span>Pen ready</span><b>{{ p.bullpen_available }}/{{ p.bullpen_total }}</b></div>
         <div><span>Pen pitches 3d</span><b>{{ p.bullpen_pitches_last_3 }}</b></div>
         <div><span>Bats L/R/S</span><b>{{ p.lineup_hand_counts.get('L',0) }}/{{ p.lineup_hand_counts.get('R',0) }}/{{ p.lineup_hand_counts.get('S',0) }}</b></div>
       </div>
@@ -546,15 +708,14 @@
   </div>
 
   <div class="note"><strong>Luck</strong> is actual wins minus MLB's own expected (Pythagorean) wins.
-    A large positive figure means the club has won more games than its run scoring and prevention imply,
+    A large positive figure means the club has won more than its run scoring and prevention imply,
     which usually says its record flatters it.</div>
 
   {% for group, label in [('hitting','Offense'), ('pitching','Run prevention')] %}
   <h4>{{ label }} — league rank of 30</h4>
   <div class="scroll">
     <table>
-      <thead><tr><th class="l">Metric</th>
-        <th>{{ bundle.away.abbreviation }}</th><th>Rank</th>
+      <thead><tr><th class="l">Metric</th><th>{{ bundle.away.abbreviation }}</th><th>Rank</th>
         <th>{{ bundle.home.abbreviation }}</th><th>Rank</th></tr></thead>
       <tbody>
         {% set away_stats = bundle.away.profile[group] if bundle.away.profile else [] %}
@@ -585,36 +746,39 @@
       {% if kind == 'players' and team.opposing_hand %} · facing {{ 'LHP' if team.opposing_hand == 'L' else 'RHP' }}{% endif %}
     </span>
   </h2>
-  {% if kind == 'players' and team.opposing_hand %}
-  <div class="note">Platoon rows show performance against <strong>{{ 'left-handed' if team.opposing_hand == 'L' else 'right-handed' }}</strong>
-    pitching, the hand today's probable starter throws. Rows on thin samples are dimmed — the PA column
-    shows the denominator so you can judge the weight to give each line.</div>
+  {% if kind == 'players' %}
+  <div class="note">{{ team.lineup_note }}
+    {% if team.opposing_hand %} Platoon rows show performance against
+    <strong>{{ 'left-handed' if team.opposing_hand == 'L' else 'right-handed' }}</strong> pitching,
+    the hand today's probable starter throws.{% endif %}
+    Rows on thin samples are dimmed; the PA column shows the denominator behind each.</div>
   {% endif %}
   <div class="boxes">
     {% if kind == 'pitchers' %}
       {% for box in team.pitchers %}{{ pitcher_box(box, bundle.league_pitching) }}{% endfor %}
     {% else %}
-      {% for box in team.batters %}{{ batter_box(box, bundle.league_hitting) }}{% endfor %}
+      {% for box in team.batters %}{{ batter_box(box, bundle.league_hitting, bundle.savant_benchmarks) }}{% endfor %}
     {% endif %}
   </div>
 </section>
 {% endif %}
 {% endfor %}
 
-{#- ===================== audit ===================== -#}
+{#- ========================== audit ========================== -#}
 <section>
-  <h2 style="margin-top:2.5rem;border-top:1px solid var(--border);padding-top:1.25rem;">Sources &amp; audit</h2>
+  <h2 style="margin-top:2.5rem;border-top:1px solid var(--border);padding-top:var(--sp-4);">Sources &amp; audit</h2>
   <p class="sub">Every figure is either reported directly by a source below or computed from one by a
-    tested formula. Nothing was estimated or generated. The {{ bundle.provenance|length }} requests behind
-    this report are listed with the time made and the SHA-256 of the exact bytes returned.</p>
+    tested formula. Nothing was estimated or generated. The {{ bundle.provenance|length }} requests
+    behind this report are listed with the time made and the SHA-256 of the exact bytes returned.</p>
   <div class="note">
     Derived pitching metrics use a FIP constant of <strong>{{ bundle.league.fip_constant|rate2 }}</strong>,
     computed from {{ bundle.season }} league totals across {{ bundle.league.totals.team_count }} clubs:
     {{ bundle.league.totals.earned_runs|integer }} ER, {{ bundle.league.totals.outs|integer }} outs,
     {{ bundle.league.totals.home_runs|integer }} HR, {{ bundle.league.totals.walks|integer }} BB,
     {{ bundle.league.totals.hit_by_pitch|integer }} HBP, {{ bundle.league.totals.strikeouts|integer }} K
-    — a league ERA of {{ bundle.league.league_era|rate2 }}. League batting benchmarks and team ranks are
-    computed the same way, from summed team totals rather than averaged across players.
+    — a league ERA of {{ bundle.league.league_era|rate2 }}. Team ranks and batting benchmarks come from
+    summed team totals; Statcast benchmarks are weighted by playing time. Zone maps and spray charts are
+    aggregated from pitch-level Statcast for the players in this game only.
   </div>
   <details>
     <summary>Show all {{ bundle.provenance|length }} source requests</summary>
@@ -647,6 +811,17 @@
     pages.forEach(p => p.classList.toggle('active', p.id === tab.dataset.page));
     window.scrollTo({ top: 0 });
   }));
+
+  // Per-box handedness switch for the zone maps.
+  document.querySelectorAll('.hsw button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.zone, hand = btn.dataset.hand;
+      document.querySelectorAll(`.hsw button[data-zone="${id}"]`).forEach(b =>
+        b.setAttribute('aria-pressed', String(b === btn)));
+      document.querySelectorAll(`[data-zone-group="${id}"]`).forEach(g =>
+        g.hidden = (g.dataset.hand !== hand));
+    });
+  });
 </script>
 </body>
 </html>

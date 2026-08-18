@@ -224,6 +224,104 @@ def rank_ordinal(rank: Any) -> str:
     return f"{number}{suffix}"
 
 
+def statcast_zone_style(chart: Any, code: str) -> str:
+    """Shading for a pitch-level zone cell, on a blue-to-red diverging scale.
+
+    Scaled to the player's own range so the map answers "where is he strong
+    relative to himself". Cells with almost no sample behind them stay neutral
+    rather than being painted a confident colour on three plate appearances.
+
+    Swing and strikeout rates are inverted: a high chase rate is a weakness,
+    and colouring it red would tell the reader the opposite of the truth.
+    """
+    value = chart.value(code)
+    if value is None or chart.sample(code) < 4:
+        return "background: var(--zone-empty); color: var(--faint);"
+
+    intensity = chart.intensity(code)
+    if chart.metric in ("k", "whiff", "swing"):
+        intensity = 1.0 - intensity
+
+    if intensity >= 0.5:
+        weight = (intensity - 0.5) * 2
+        return f"background: rgba(210, 45, 73, {0.10 + weight * 0.72:.2f});"
+    weight = (0.5 - intensity) * 2
+    return f"background: rgba(50, 90, 168, {0.10 + weight * 0.72:.2f});"
+
+
+def zone_value(chart: Any, code: str) -> str:
+    """Format a zone cell according to its metric."""
+    value = chart.value(code)
+    if value is None or chart.sample(code) < 4:
+        return EMPTY
+    if chart.metric in ("swing", "k", "whiff"):
+        return f"{value * 100:.0f}%"
+    return rate3(value)
+
+
+# Outcome colours for the spray chart. Outs stay quiet so hits carry the eye.
+SPRAY_COLORS = {
+    "out": ("#9aa4af", 2.3),
+    "single": ("#2f7d4f", 3.4),
+    "double": ("#1f6fb8", 3.9),
+    "triple": ("#8b45b5", 4.4),
+    "home_run": ("#d22d49", 5.0),
+}
+
+
+def spray_chart(chart: Any, *, width: int = 290, height: int = 258) -> Markup:
+    """Inline SVG spray chart: batted balls plotted on a field outline.
+
+    Left-handed hitters are mirrored upstream so pull is always the same side
+    of the image, which is what lets two hitters be compared at a glance.
+    """
+    if chart is None or not getattr(chart, "has_data", False):
+        return Markup("")
+
+    max_feet = 430.0
+    cx, cy = width / 2, height - 16
+    scale = min((width / 2 - 6) / (max_feet * 0.72), (height - 26) / max_feet)
+
+    def project(x: float, y: float) -> tuple[float, float]:
+        return cx + x * scale, cy - y * scale
+
+    corner = 0.7071
+    lf = project(-330 * corner, 330 * corner)
+    rf = project(330 * corner, 330 * corner)
+    arc_r = 405 * scale
+    b2 = project(0, 127.3)
+    b1 = project(90 * corner, 90 * corner)
+    b3 = project(-90 * corner, 90 * corner)
+
+    parts = [
+        f'<svg class="spray" width="{width}" height="{height}" '
+        f'viewBox="0 0 {width} {height}" role="img" '
+        f'aria-label="Spray chart of {len(chart.points)} batted balls">',
+        f'<path d="M{cx:.1f},{cy:.1f} L{lf[0]:.1f},{lf[1]:.1f} '
+        f'A{arc_r:.1f},{arc_r:.1f} 0 0,1 {rf[0]:.1f},{rf[1]:.1f} Z" '
+        f'fill="var(--field)" stroke="var(--field-line)" stroke-width="1"/>',
+        f'<path d="M{cx:.1f},{cy:.1f} L{b3[0]:.1f},{b3[1]:.1f} '
+        f'L{b2[0]:.1f},{b2[1]:.1f} L{b1[0]:.1f},{b1[1]:.1f} Z" '
+        f'fill="none" stroke="var(--field-line)" stroke-width="1"/>',
+    ]
+
+    # Outs first, so hits are never buried underneath them.
+    ordered = sorted(chart.points, key=lambda p: list(SPRAY_COLORS).index(p.outcome))
+    for point in ordered:
+        color, radius = SPRAY_COLORS.get(point.outcome, ("#9aa4af", 2.3))
+        px, py = project(point.x, point.y)
+        if not (-4 <= px <= width + 4 and -4 <= py <= height + 4):
+            continue
+        opacity = "0.45" if point.outcome == "out" else "0.9"
+        parts.append(
+            f'<circle cx="{px:.1f}" cy="{py:.1f}" r="{radius}" fill="{color}" '
+            f'opacity="{opacity}"/>'
+        )
+
+    parts.append("</svg>")
+    return Markup("".join(parts))
+
+
 def build_environment() -> Environment:
     env = Environment(
         loader=FileSystemLoader(TEMPLATE_DIR),
@@ -243,11 +341,15 @@ def build_environment() -> Environment:
         trend_arrow=trend_arrow,
         rank_ordinal=rank_ordinal,
         reliability_class=reliability_class,
+        spray_chart=spray_chart,
     )
     env.globals.update(
         zone_cell_style=zone_cell_style,
+        statcast_zone_style=statcast_zone_style,
+        zone_value=zone_value,
         reliability=_reliability,
         split_labels=SPLIT_LABELS,
+        spray_colors=SPRAY_COLORS,
     )
     return env
 

@@ -33,7 +33,7 @@ def cmd_build(args: argparse.Namespace) -> int:
 
     print(f"Building preview for {on.isoformat()} ...", file=sys.stderr)
     try:
-        bundle = build_preview(settings, on=on, team_id=args.team)
+        bundle = build_preview(settings, on=on, team_id=args.team, include_statcast=not args.no_statcast)
     except LookupError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -131,6 +131,15 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument("--team", type=int, default=CLEVELAND_GUARDIANS_TEAM_ID)
     build.add_argument(
         "--no-store", action="store_true", help="skip BigQuery persistence"
+    )
+    build.add_argument(
+        "--no-statcast",
+        action="store_true",
+        help=(
+            "skip per-player pitch-level fetches. Drops the handedness-split "
+            "zone maps and spray charts, but cuts a run from minutes to seconds "
+            "-- useful when iterating on layout."
+        ),
     )
     build.set_defaults(func=cmd_build)
 

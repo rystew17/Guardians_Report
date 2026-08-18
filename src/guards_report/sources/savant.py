@@ -293,3 +293,37 @@ def baserunning_run_value(archiver: Archiver, *, year: int) -> FetchResult:
 def pop_time(archiver: Archiver, *, year: int) -> FetchResult:
     """Catcher pop time to second and third, with exchange times."""
     return _leaderboard(LB_POPTIME, archiver, {"year": year})
+
+
+# ---------------------------------------------------------------------------
+# Pitch-level Statcast
+# ---------------------------------------------------------------------------
+
+
+def player_pitches(
+    archiver: Archiver, *, player_id: int, year: int, perspective: str
+) -> FetchResult:
+    """Every tracked pitch for one player this season.
+
+    The only pitch-level fetch in the project, and it is scoped to the ~50
+    people in today's game rather than the league. It is what makes two things
+    possible that no aggregate endpoint provides: zone grids split by opposing
+    handedness, and a spray chart from real batted-ball coordinates.
+
+    Roughly 1-2 MB and under two thousand rows for a regular; a reliever is a
+    fraction of that. Archived like every other payload, but never loaded into
+    the warehouse -- only the aggregates computed from it are displayed.
+    """
+    key = "batters_lookup[]" if perspective == "batter" else "pitchers_lookup[]"
+    return fetch(
+        f"{SAVANT_BASE}/statcast_search/csv",
+        source=SOURCE,
+        archiver=archiver,
+        params={
+            "all": "true",
+            "hfSea": f"{year}|",
+            "player_type": perspective,
+            key: player_id,
+            "type": "details",
+        },
+    )
