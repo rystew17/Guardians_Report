@@ -598,14 +598,30 @@ def build_preview(
             for entry in pitcher_entries
             if entry["person"]["id"] in pitcher_people
         ]
-        # Probable starter first, then the most rested arms.
-        pitchers.sort(
-            key=lambda p: (
-                not p.is_probable_starter,
-                -(p.availability.days_rest if p.availability
-                  and p.availability.days_rest is not None else 99),
+        # Today's probable starter first, then the bullpen ordered by how
+        # rested it is, then the rest of the rotation last.
+        #
+        # Sorting purely by days rest would float the other starters to the
+        # top -- a man who threw four days ago looks maximally available by
+        # that measure -- when they are in fact the least likely arms to
+        # appear today. Rotation members other than today's starter are
+        # therefore pushed below the relievers.
+        def _pitcher_order(box: PlayerBox) -> tuple[int, int, int]:
+            if box.is_probable_starter:
+                group = 0
+            elif box.role == "SP":
+                group = 2
+            else:
+                group = 1
+
+            rest = (
+                box.availability.days_rest
+                if box.availability and box.availability.days_rest is not None
+                else 99
             )
-        )
+            return (group, -rest, -(box.season.get("outs") or 0))
+
+        pitchers.sort(key=_pitcher_order)
 
         sections[side] = TeamSection(
             team_id=team_info["id"],
