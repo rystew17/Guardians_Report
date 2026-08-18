@@ -107,10 +107,16 @@ def delta_html(entry: dict[str, Any] | None, *, style: str = "rate3") -> Markup:
 def zone_cell_style(grid: ZoneGrid, cell: ZoneCell) -> str:
     """Background shading for one heat-map cell.
 
-    Shaded on a blue-to-red scale against the player's own range, which is what
-    makes a heat map answer "where is this hitter strong relative to himself"
-    rather than washing out for anyone uniformly good or uniformly bad.
+    Prefers the colour MLB supplies with the zone, so the map matches what the
+    same player looks like on MLB and Savant and the shading stays a sourced
+    value. Falls back to a blue-to-red scale over the player's own range only
+    when the source omits a colour.
     """
+    if cell.color:
+        # MLB sends these at .55 alpha for overlay on a white field; opaque
+        # here since we paint them directly onto the cell.
+        return f"background: {_opaque(cell.color)};"
+
     if cell.value is None:
         return "background: var(--zone-empty);"
 
@@ -120,6 +126,18 @@ def zone_cell_style(grid: ZoneGrid, cell: ZoneCell) -> str:
         return f"background: rgba(210, 45, 73, {0.12 + weight * 0.68:.2f});"
     weight = (0.5 - intensity) * 2
     return f"background: rgba(50, 90, 168, {0.12 + weight * 0.68:.2f});"
+
+
+def _opaque(color: str) -> str:
+    """Raise an rgba() colour's alpha so it reads clearly as a filled cell."""
+    text = color.strip()
+    if not text.startswith("rgba"):
+        return text
+    inside = text[text.find("(") + 1 : text.rfind(")")]
+    parts = [p.strip() for p in inside.split(",")]
+    if len(parts) != 4:
+        return text
+    return f"rgba({parts[0]}, {parts[1]}, {parts[2]}, 0.92)"
 
 
 def build_environment() -> Environment:

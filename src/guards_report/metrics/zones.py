@@ -46,6 +46,11 @@ class ZoneCell:
     raw: str
     value: float | None
     temp: str
+    # MLB ships a colour with every zone, already on its own hot/cold scale.
+    # Using it rather than a scale of our own keeps the map identical to what
+    # the same player looks like on MLB and Savant, and keeps the shading a
+    # sourced value rather than an invented one.
+    color: str = ""
 
 
 @dataclass
@@ -137,6 +142,7 @@ def parse_zones(person: dict[str, Any]) -> dict[str, ZoneGrid]:
                     raw=zone.get("value", ""),
                     value=_parse_value(zone.get("value")),
                     temp=zone.get("temp", ""),
+                    color=zone.get("color", ""),
                 )
             if grid.cells:
                 grids[metric] = grid

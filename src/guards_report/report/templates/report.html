@@ -5,21 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ bundle.away.abbreviation }} @ {{ bundle.home.abbreviation }} — {{ bundle.game_date }}</title>
 <style>
+  /* Committed light theme. color-scheme pins form controls and scrollbars to
+     light as well, so the report looks the same regardless of the reader's
+     OS setting rather than flipping to dark on them. */
   :root {
+    color-scheme: light;
     --bg:#fff; --panel:#f7f8fa; --box:#fff; --border:#dfe3e8; --border-hi:#c3cad2;
     --ink:#14171a; --muted:#5b6570; --faint:#8b95a1;
     --accent:#0c2340; --accent-2:#e31937;
     --good:#0d7a4a; --bad:#c02233; --even:#8b95a1;
     --zone-empty:#eef1f4;
     --great:#d22d49; --gd:#e8896a; --avg:#cbd1d6; --poor:#7aa0c4; --bad-p:#325aa8;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg:#0f1216; --panel:#171b20; --box:#1a1f25; --border:#2a3138; --border-hi:#3a434c;
-      --ink:#e8eaed; --muted:#9aa4af; --faint:#6b7681;
-      --accent:#6f9ad4; --accent-2:#ff5a72;
-      --good:#3fbb7d; --bad:#ff6b7d; --zone-empty:#1f252b; --avg:#3a4149;
-    }
   }
   * { box-sizing:border-box; }
   body { margin:0; padding:0 1rem 4rem; background:var(--bg); color:var(--ink);
@@ -42,11 +38,12 @@
   .page { display:none; }
   .page.active { display:block; }
 
-  /* player boxes */
-  .boxes { display:grid; grid-template-columns:1fr; gap:1rem; }
-  @media (min-width:1050px) { .boxes { grid-template-columns:1fr 1fr; } }
-  .box { background:var(--box); border:1px solid var(--border); border-radius:10px;
-    padding:.9rem 1rem 1rem; }
+  /* Player boxes: always one per row, full window width. Two columns made
+     each box too narrow for the stat table and both heat maps to sit
+     side by side without horizontal scrolling. */
+  .boxes { display:flex; flex-direction:column; gap:1rem; }
+  .box { width:100%; background:var(--box); border:1px solid var(--border);
+    border-radius:10px; padding:.9rem 1rem 1rem; }
   .box.featured { border:2px solid var(--accent-2); }
   .bhead { display:flex; align-items:baseline; gap:.5rem; flex-wrap:wrap;
     padding-bottom:.5rem; margin-bottom:.6rem; border-bottom:1px solid var(--border); }
@@ -85,18 +82,36 @@
   .pct-bad{background:var(--bad-p);color:#fff;} .pct-bad .pl{color:rgba(255,255,255,.85);}
   .pct-none{background:transparent;color:var(--faint);}
 
-  /* heat maps */
-  .zones { display:flex; gap:1rem; flex-wrap:wrap; }
+  /* Heat maps, laid out the way MLB and Savant draw them: the four
+     out-of-zone regions fill the surrounding area as quadrants with their
+     value in the outer corner, the 3x3 strike zone sits inset on top, and a
+     home plate outline below fixes the orientation as the catcher's view. */
+  .zones { display:flex; gap:1.5rem; flex-wrap:wrap; }
   .zwrap { text-align:center; }
-  .zlabel { font-size:.64rem; text-transform:uppercase; letter-spacing:.04em;
-    color:var(--faint); font-weight:700; margin-bottom:.25rem; }
-  .zgrid { display:grid; grid-template-columns:repeat(3,minmax(38px,1fr));
-    gap:2px; padding:6px; border:2px dashed var(--border-hi); border-radius:4px; }
-  .zcell { padding:.3rem .1rem; border-radius:3px; font-size:.68rem;
-    font-variant-numeric:tabular-nums; font-weight:600; }
-  .zout { display:grid; grid-template-columns:1fr 1fr; gap:2px; margin-top:3px; }
-  .zout .zcell { font-size:.62rem; opacity:.85; }
-  .zcap { font-size:.6rem; color:var(--faint); margin-top:.2rem; }
+  .zlabel { font-size:.66rem; text-transform:uppercase; letter-spacing:.04em;
+    color:var(--faint); font-weight:700; margin-bottom:.3rem; }
+
+  .zplot { position:relative; width:206px; height:176px;
+    display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr;
+    border:1px solid var(--border); border-radius:3px; overflow:hidden; }
+  .zq { position:relative; }
+  .zq span { position:absolute; font-size:.68rem; font-weight:700;
+    font-variant-numeric:tabular-nums; color:#1a1a1a; }
+  /* Value sits in each quadrant's outward corner, away from the strike zone. */
+  .zq-11 span { top:7px; left:9px; }
+  .zq-12 span { top:7px; right:9px; }
+  .zq-13 span { bottom:7px; left:9px; }
+  .zq-14 span { bottom:7px; right:9px; }
+
+  .zgrid { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    display:grid; grid-template-columns:repeat(3,40px);
+    grid-template-rows:repeat(3,34px); gap:2px; background:#f2f4f6;
+    padding:2px; box-shadow:0 0 0 2px #f2f4f6; }
+  .zcell { display:flex; align-items:center; justify-content:center;
+    font-size:.68rem; font-variant-numeric:tabular-nums; font-weight:700;
+    color:#1a1a1a; }
+  .zplate { display:block; margin:4px auto 0; }
+  .zcap { font-size:.62rem; color:var(--faint); margin-top:.25rem; }
 
   /* llm slot */
   .llm { margin-top:.85rem; border:1px dashed var(--border-hi); border-radius:8px;
@@ -169,18 +184,25 @@
   {% if grid.has_data %}
   <div class="zwrap">
     <div class="zlabel">{{ grid.label }}</div>
-    <div class="zgrid">
-      {% for cell in grid.in_zone %}
-      <div class="zcell" style="{{ zone_cell_style(grid, cell) }}">{{ cell.raw or '–' }}</div>
+    <div class="zplot">
+      {# Zones 11-14 are the out-of-zone quadrants: up-and-in, up-and-away,
+         down-and-in, down-and-away, reading from the catcher's view. #}
+      {% for code in ['11','12','13','14'] %}
+      {% set cell = grid.cells.get(code) %}
+      <div class="zq zq-{{ code }}" style="{{ zone_cell_style(grid, cell) if cell else 'background:var(--zone-empty);' }}">
+        <span>{{ cell.raw if cell and cell.raw else '–' }}</span>
+      </div>
       {% endfor %}
+      <div class="zgrid">
+        {% for cell in grid.in_zone %}
+        <div class="zcell" style="{{ zone_cell_style(grid, cell) }}">{{ cell.raw or '–' }}</div>
+        {% endfor %}
+      </div>
     </div>
-    {% if grid.out_zone %}
-    <div class="zout">
-      {% for cell in grid.out_zone %}
-      <div class="zcell" style="{{ zone_cell_style(grid, cell) }}">{{ cell.raw or '–' }}</div>
-      {% endfor %}
-    </div>
-    {% endif %}
+    <svg class="zplate" width="62" height="20" viewBox="0 0 62 20" aria-hidden="true">
+      <polygon points="4,1 58,1 58,9 31,19 4,9" fill="none"
+               stroke="#6b7681" stroke-width="1.4" stroke-linejoin="round"/>
+    </svg>
     <div class="zcap">{{ caption }}</div>
   </div>
   {% endif %}
