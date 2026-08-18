@@ -370,6 +370,29 @@ def standings(
     )
 
 
+def season_schedule(
+    archiver: Archiver, *, team_id: int, season: int, through: date
+) -> FetchResult:
+    """A club's whole season to date, for grouping games into series.
+
+    Carries `seriesGameNumber`, which resets at the start of each set and is
+    what makes series boundaries identifiable without inferring them from
+    dates and opponents.
+    """
+    return _get(
+        "/v1/schedule",
+        archiver,
+        {
+            "sportId": MLB_SPORT_ID,
+            "teamId": team_id,
+            "season": season,
+            "startDate": f"{season}-01-01",
+            "endDate": through.isoformat(),
+            "hydrate": "team",
+        },
+    )
+
+
 def head_to_head(
     archiver: Archiver, *, team_id: int, opponent_id: int, season: int, through: date
 ) -> FetchResult:

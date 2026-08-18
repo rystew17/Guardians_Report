@@ -128,8 +128,12 @@
   .pct-bad{background:var(--bad-p);color:#fff;} .pct-bad .pl{color:rgba(255,255,255,.88);}
   .pct-none{background:transparent;color:var(--faint);}
 
-  /* ---------- visual row: zones + spray ---------- */
-  .vis { display:flex; gap:var(--sp-6); flex-wrap:wrap; align-items:flex-start; }
+  /* ---------- visual row: spray leads, zones follow ---------- */
+  .vis { display:flex; gap:var(--sp-4); flex-wrap:wrap; align-items:flex-start; }
+  /* The handedness groups are flex children so their plots share the row with
+     the spray chart rather than starting a block of their own. */
+  .hgroup { display:flex; gap:var(--sp-4); flex-wrap:wrap; align-items:flex-start; }
+  .spraywrap { flex:0 0 auto; }
   .zwrap { text-align:center; }
   .zlabel { font-size:.64rem; text-transform:uppercase; letter-spacing:.05em;
             color:var(--faint); font-weight:750; margin-bottom:var(--sp-1); }
@@ -161,7 +165,34 @@
   .hsw button { font:inherit; font-size:.66rem; font-weight:700; cursor:pointer;
                 border:0; padding:.22rem .55rem; background:var(--box); color:var(--muted); }
   .hsw button[aria-pressed="true"] { background:var(--accent); color:#fff; }
-  .hgroup[hidden] { display:none; }
+  /* Must outrank .hgroup{display:flex} above, or a hidden handedness group
+     would still lay out. */
+  .hgroup[hidden] { display:none !important; }
+
+  /* ---------- collapsible detail ---------- */
+  /* Boxes open collapsed: name, trend, percentiles and the analysis slot are
+     the at-a-glance layer, and everything else is one click away. With ~51
+     boxes per report this is the difference between a scannable page and a
+     wall of tables. */
+  details.more { margin-top:var(--sp-2); }
+  details.more > summary {
+    list-style:none; cursor:pointer; user-select:none;
+    display:flex; align-items:center; gap:.4rem;
+    padding:.34rem .6rem; border:1px solid var(--border); border-radius:6px;
+    background:var(--panel); color:var(--muted);
+    font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em;
+  }
+  details.more > summary::-webkit-details-marker { display:none; }
+  details.more > summary::before {
+    content:"▸"; font-size:.7rem; transition:transform .12s ease; display:inline-block;
+  }
+  details.more[open] > summary::before { transform:rotate(90deg); }
+  details.more > summary:hover { border-color:var(--border-hi); color:var(--ink); }
+  details.more > summary:focus-visible { outline:2px solid var(--accent-2); outline-offset:2px; }
+  details.more[open] > summary { margin-bottom:var(--sp-1); }
+  @media (prefers-reduced-motion: reduce) {
+    details.more > summary::before { transition:none; }
+  }
 
   /* ---------- matchup page ---------- */
   .vs { display:grid; grid-template-columns:1fr; gap:var(--sp-4); margin-bottom:var(--sp-4); }
@@ -326,44 +357,48 @@
 {% endmacro %}
 
 {% macro zone_section(box, perspective) %}
-{% if box.statcast_zones %}
+{% if box.statcast_zones or (box.spray and box.spray.has_data) %}
 {% set uid = box.player_id %}
-<h4>Zone profile — catcher's view</h4>
+<h4>Zone profile &amp; spray — catcher's view</h4>
+{% if box.statcast_zones %}
 <div class="hsw" role="group" aria-label="Handedness split">
   {% for hand, label in [('all','All'),('L', 'vs LHP' if perspective=='batter' else 'vs LHB'),('R', 'vs RHP' if perspective=='batter' else 'vs RHB')] %}
   <button type="button" data-zone="{{ uid }}" data-hand="{{ hand }}" aria-pressed="{{ 'true' if hand=='all' else 'false' }}">{{ label }}</button>
   {% endfor %}
 </div>
-{% for hand in ['all','L','R'] %}
-{% set charts = box.statcast_zones.get(hand, {}) %}
-<div class="hgroup" data-zone-group="{{ uid }}" data-hand="{{ hand }}" {{ 'hidden' if hand != 'all' }}>
-  {% if charts and charts.get('ops') and charts.get('ops').has_data %}
-  <div class="vis">
+{% endif %}
+{# The spray chart is not handedness-split, so it sits outside the switchable
+   groups and leads the row -- it stays put while the zone maps change. #}
+<div class="vis">
+  {% if box.spray and box.spray.has_data %}
+  <div class="zwrap spraywrap">
+    <div class="zlabel">Spray</div>
+    {{ box.spray|spray_chart }}
+    <div class="slegend">
+      {% for name, label in [('out','Out'),('single','1B'),('double','2B'),('triple','3B'),('home_run','HR')] %}
+      <span><i style="background:{{ spray_colors[name][0] }}"></i>{{ label }}</span>
+      {% endfor %}
+    </div>
+    <div class="zcap">{{ box.spray.points|length }} batted balls ·
+      pull {{ box.spray.pull_pct|pct1(already_pct=True) }} ·
+      mid {{ box.spray.straight_pct|pct1(already_pct=True) }} ·
+      oppo {{ box.spray.oppo_pct|pct1(already_pct=True) }}</div>
+  </div>
+  {% endif %}
+
+  {% for hand in ['all','L','R'] %}
+  {% set charts = box.statcast_zones.get(hand, {}) %}
+  <div class="hgroup" data-zone-group="{{ uid }}" data-hand="{{ hand }}" {{ 'hidden' if hand != 'all' }}>
+    {% if charts and charts.get('ops') and charts.get('ops').has_data %}
     {% for metric in ['ops','avg','xwoba','swing','k'] %}
     {% if charts.get(metric) %}{{ zone_plot(charts[metric], charts[metric].label) }}{% endif %}
     {% endfor %}
-    {% if hand == 'all' and box.spray and box.spray.has_data %}
-    <div class="zwrap">
-      <div class="zlabel">Spray</div>
-      {{ box.spray|spray_chart }}
-      <div class="slegend">
-        {% for name, label in [('out','Out'),('single','1B'),('double','2B'),('triple','3B'),('home_run','HR')] %}
-        <span><i style="background:{{ spray_colors[name][0] }}"></i>{{ label }}</span>
-        {% endfor %}
-      </div>
-      <div class="zcap">
-        {{ box.spray.points|length }} batted balls · pull {{ box.spray.pull_pct|pct1(already_pct=True) }}
-        · mid {{ box.spray.straight_pct|pct1(already_pct=True) }}
-        · oppo {{ box.spray.oppo_pct|pct1(already_pct=True) }}
-      </div>
-    </div>
+    {% else %}
+    <p class="sub" style="font-size:.78rem;">Not enough tracked pitches in this split to draw a zone map.</p>
     {% endif %}
   </div>
-  {% else %}
-  <p class="sub" style="font-size:.78rem;">Not enough tracked pitches in this split to draw a zone map.</p>
-  {% endif %}
+  {% endfor %}
 </div>
-{% endfor %}
 {% endif %}
 {% endmacro %}
 
@@ -431,6 +466,9 @@
       ('fb_velocity','FB velo'),('fb_spin','FB spin'),('curve_spin','CB spin')]) }}
   {% endif %}
 
+  <details class="more">
+    <summary>Full stat view</summary>
+
   <h4>Season &amp; recent form</h4>
   <div class="scroll">
     <table>
@@ -495,6 +533,8 @@
 
   {{ situational(box, ['vl','vr','risp','lc','2s','pi000','pi760','h','a'], true) }}
   {{ zone_section(box, 'pitcher') }}
+  </details>
+
   {{ llm_slot() }}
 </div>
 {% endmacro %}
@@ -525,6 +565,9 @@
       ('k_percent','K%'),('bb_percent','BB%'),('whiff_percent','Whiff'),('chase_percent','Chase'),
       ('sprint_speed','Speed'),('arm_strength','Arm')]) }}
   {% endif %}
+
+  <details class="more">
+    <summary>Full stat view</summary>
 
   <h4>Season &amp; recent form</h4>
   <div class="scroll">
@@ -647,6 +690,8 @@
 
   {{ situational(box, ['vl','vr','risp','risp2','lc','2s','ac','bc','h','a'], false) }}
   {{ zone_section(box, 'batter') }}
+  </details>
+
   {{ llm_slot() }}
 </div>
 {% endmacro %}
@@ -704,7 +749,11 @@
         <div><span>Away</span><b>{{ p.record.split('away') }}</b></div>
         <div><span>1-run</span><b>{{ p.record.split('oneRun') }}</b></div>
         {% if bundle.series and bundle.series.games_played %}
-        <div><span>Season series</span><b>{{ bundle.series.record_for(home=team.is_home) }}</b></div>
+        <div><span>Head to head</span><b>{{ bundle.series.record_for(home=team.is_home) }}</b></div>
+        {% endif %}
+        {% if p.series_record and p.series_record.completed %}
+        <div><span>Series record</span><b>{{ p.series_record.record }}</b></div>
+        <div><span>Sweeps</span><b>{{ p.series_record.sweeps_for }}–{{ p.series_record.sweeps_against }}</b></div>
         {% endif %}
         <div><span>Pen ready</span><b>{{ p.bullpen_available }}/{{ p.bullpen_total }}</b></div>
         <div><span>Pen pitches 3d</span><b>{{ p.bullpen_pitches_last_3 }}</b></div>
@@ -714,6 +763,32 @@
     </div>
     {% endfor %}
   </div>
+
+  {% if bundle.away.profile and bundle.away.profile.series_record and bundle.away.profile.series_record.completed %}
+  <h4>Series results</h4>
+  <div class="scroll">
+    <table>
+      <thead><tr><th class="l">Club</th><th>Series W-L-Split</th><th>Series won %</th>
+        <th>Completed</th><th>Sweeps</th><th>Swept</th></tr></thead>
+      <tbody>
+        {% for team in [bundle.away, bundle.home] %}
+        {% set sr = team.profile.series_record %}
+        <tr>
+          <td class="l">{{ team.name }}</td>
+          <td>{{ sr.record }}</td>
+          <td>{{ sr.win_pct|rate3 }}</td>
+          <td>{{ sr.completed }}</td>
+          <td>{{ sr.sweeps_for }}</td>
+          <td>{{ sr.sweeps_against }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="note">A series counts as won when a club takes more games than it drops; equal splits are
+    tracked separately and excluded from the win percentage. Sweeps require at least two games, so a
+    single make-up game cannot be one. Series still in progress — including today's — are not counted.</div>
+  {% endif %}
 
   <div class="note"><strong>Luck</strong> is actual wins minus MLB's own expected (Pythagorean) wins.
     A large positive figure means the club has won more than its run scoring and prevention imply,

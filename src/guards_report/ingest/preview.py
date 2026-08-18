@@ -712,6 +712,12 @@ def build_preview(
                 hand: sum(1 for b in batters[:13] if b.hand == hand)
                 for hand in ("L", "R", "S")
             },
+            series_record=tc.parse_series_records(
+                api.season_schedule(
+                    archiver, team_id=tid, season=season, through=on
+                ).json(),
+                team_id=tid,
+            ),
         )
 
         sections[side] = TeamSection(

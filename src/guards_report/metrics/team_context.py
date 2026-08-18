@@ -347,6 +347,119 @@ def parse_series(
     )
 
 
+@dataclass(frozen=True)
+class SeriesRecord:
+    """How a club has fared across whole series, not individual games.
+
+    A team can be under .500 in games and still win most of its series, or the
+    reverse. Series outcomes are how a season is actually experienced, and they
+    are not derivable from the standings.
+    """
+
+    won: int = 0
+    lost: int = 0
+    split: int = 0
+    sweeps_for: int = 0
+    sweeps_against: int = 0
+    completed: int = 0
+
+    @property
+    def record(self) -> str:
+        return f"{self.won}-{self.lost}" + (f"-{self.split}" if self.split else "")
+
+    @property
+    def win_pct(self) -> float | None:
+        decided = self.won + self.lost
+        return f.rate(self.won, decided) if decided else None
+
+
+def parse_series_records(
+    payload: dict[str, Any], *, team_id: int
+) -> SeriesRecord:
+    """Group a season's games into series and score each one.
+
+    Series boundaries come from the source's own `seriesGameNumber`, which
+    resets to 1 at the start of each set. Only regular-season games count, and
+    the final group is dropped when it is still in progress -- a club leading
+    2-0 in a three-game set has not won it yet.
+
+    A sweep requires at least two games, so a one-game make-up set cannot be
+    counted as one.
+    """
+    games: list[tuple[str, int, bool | None]] = []
+
+    for day in payload.get("dates", []):
+        for game in day.get("games", []):
+            if game.get("gameType") != "R":
+                continue
+
+            teams = game.get("teams") or {}
+            side = next(
+                (
+                    s for s in ("home", "away")
+                    if ((teams.get(s) or {}).get("team") or {}).get("id") == team_id
+                ),
+                None,
+            )
+            if side is None:
+                continue
+
+            final = (game.get("status") or {}).get("abstractGameState") == "Final"
+            won: bool | None = None
+            if final:
+                other = "away" if side == "home" else "home"
+                if (teams[side] or {}).get("isWinner"):
+                    won = True
+                elif (teams.get(other) or {}).get("isWinner"):
+                    won = False
+                else:
+                    continue
+
+            games.append((
+                game.get("officialDate", ""),
+                int(game.get("seriesGameNumber") or 1),
+                won,
+            ))
+
+    games.sort(key=lambda g: (g[0], g[1]))
+
+    # Split into series wherever the source's game number restarts.
+    series: list[list[bool | None]] = []
+    for _, number, won in games:
+        if number == 1 or not series:
+            series.append([])
+        series[-1].append(won)
+
+    record = SeriesRecord()
+    counted = []
+    for group in series:
+        # Skip any set with a game still unplayed -- including today's.
+        if any(result is None for result in group):
+            continue
+        counted.append(group)
+
+    won = lost = split = sweeps_for = sweeps_against = 0
+    for group in counted:
+        wins = sum(1 for result in group if result)
+        losses = len(group) - wins
+        if wins > losses:
+            won += 1
+            if losses == 0 and len(group) >= 2:
+                sweeps_for += 1
+        elif losses > wins:
+            lost += 1
+            if wins == 0 and len(group) >= 2:
+                sweeps_against += 1
+        else:
+            split += 1
+
+    return SeriesRecord(
+        won=won, lost=lost, split=split,
+        sweeps_for=sweeps_for, sweeps_against=sweeps_against,
+        completed=len(counted),
+    )
+
+
 @dataclass
 class TeamProfile:
     """Everything the comparison page needs about one club."""
@@ -362,6 +475,7 @@ class TeamProfile:
     bullpen_available: int = 0
     bullpen_total: int = 0
     lineup_hand_counts: dict[str, int] = field(default_factory=dict)
+    series_record: SeriesRecord | None = None
 
 
 HITTING_DISPLAY = [
