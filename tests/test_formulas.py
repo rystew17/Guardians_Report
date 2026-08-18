@@ -255,3 +255,14 @@ def test_game_score_v2_average_start_lands_near_50():
     )
     # 40 + 36 + 5 - 4 - 12 - 9 - 6
     assert score == 50
+
+
+def test_published_ops_uses_sum_of_rounded_components():
+    """Regression: MLB adds rounded OBP and SLG rather than rounding the sum.
+
+    Elly De La Cruz's 2026 line as of 2026-08-17: OBP 162/473, SLG 196/416.
+    Full precision sums to .813649 (rounds to .814); MLB publishes .813.
+    """
+    obp, slg = 162 / 473, 196 / 416
+    assert round(f.ops(obp, slg), 3) == 0.814
+    assert round(f.published_ops(obp, slg), 3) == 0.813

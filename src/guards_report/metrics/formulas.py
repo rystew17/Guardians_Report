@@ -127,9 +127,27 @@ def on_base_pct(
 
 
 def ops(obp: float | None, slg: float | None) -> float | None:
+    """OPS at full precision. Use this for any further arithmetic."""
     if obp is None or slg is None:
         return None
     return obp + slg
+
+
+def published_ops(obp: float | None, slg: float | None) -> float | None:
+    """OPS as MLB publishes it: the sum of the *rounded* components.
+
+    MLB rounds OBP and SLG to three places and then adds, which can differ by
+    a point from rounding the full-precision sum. Elly De La Cruz on
+    2026-08-17 is a worked example: OBP .342495 and SLG .471154 sum to .813649,
+    which rounds to .814, but MLB publishes .813 because it adds .342 + .471.
+
+    Neither is wrong; they are different conventions. The report displays this
+    one so that every figure matches what the reader sees on mlb.com when they
+    go to check it, which is the whole point of the verifiability rule.
+    """
+    if obp is None or slg is None:
+        return None
+    return round(obp, 3) + round(slg, 3)
 
 
 def iso(slg: float | None, avg: float | None) -> float | None:

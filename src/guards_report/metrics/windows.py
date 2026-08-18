@@ -83,6 +83,10 @@ class GameLogRow:
     is_home: bool
     opponent_team_id: int | None
     stat: dict[str, Any]
+    # Position in the source payload, which the API returns in chronological
+    # order. This is the authoritative tiebreaker for two games on the same
+    # date -- see parse_game_logs for why gamePk is not.
+    sequence: int = 0
 
 
 def _to_int(value: Any) -> int:
@@ -100,6 +104,15 @@ def _to_int(value: Any) -> int:
 def parse_game_logs(payload: dict[str, Any]) -> list[GameLogRow]:
     """Turn a statsapi gameLog response into rows, newest first.
 
+    Doubleheaders are the subtle case. Two games share a date, and gamePk is
+    *not* reliably chronological within that date -- observed on 2026-07-28,
+    where the API lists gamePk 824490 before 824489, making the higher id the
+    earlier game. Sorting ties by gamePk therefore picks the wrong game at a
+    window boundary and silently shifts every rate in that window.
+
+    The payload's own ordering is chronological and authoritative, so we record
+    each row's position and use that as the tiebreaker.
+
     An empty splits array is a legitimate answer, not an error -- it is what
     the API returns for a pitcher asked for hitting stats, or for a player who
     has not yet appeared.
@@ -109,7 +122,7 @@ def parse_game_logs(payload: dict[str, Any]) -> list[GameLogRow]:
         return []
 
     rows: list[GameLogRow] = []
-    for split in blocks[0].get("splits") or []:
+    for index, split in enumerate(blocks[0].get("splits") or []):
         raw_date = split.get("date")
         if not raw_date:
             continue
@@ -122,10 +135,11 @@ def parse_game_logs(payload: dict[str, Any]) -> list[GameLogRow]:
                 is_home=bool(split.get("isHome", False)),
                 opponent_team_id=opponent.get("id"),
                 stat=split.get("stat") or {},
+                sequence=index,
             )
         )
 
-    rows.sort(key=lambda r: (r.game_date, r.game_pk), reverse=True)
+    rows.sort(key=lambda r: (r.game_date, r.sequence), reverse=True)
     return rows
 
 

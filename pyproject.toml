@@ -29,3 +29,9 @@ guards_report = ["report/templates/*.html", "report/assets/*", "store/views/*.sq
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+# Network tests are excluded by default so the offline suite stays fast and
+# deterministic. Run them explicitly with: pytest -m network
+addopts = "-m 'not network'"
+markers = [
+    "network: hits live source APIs; validates our math against published values",
+]
