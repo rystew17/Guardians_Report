@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ bundle.away.abbreviation }} @ {{ bundle.home.abbreviation }} — {{ bundle.game_date }}</title>
+<style>
+  :root {
+    --bg: #ffffff; --panel: #f7f8fa; --border: #dfe3e8;
+    --ink: #14171a; --muted: #5b6570; --faint: #8b95a1;
+    --accent: #0c2340;      /* Guardians navy */
+    --accent-2: #e31937;    /* Guardians red */
+    --great: #d22d49; --good: #e8896a; --avg: #cbd1d6;
+    --poor: #7aa0c4; --bad: #325aa8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171a; --panel: #1c2126; --border: #2c333a;
+      --ink: #e8eaed; --muted: #9aa4af; --faint: #6b7681;
+      --accent: #6f9ad4; --accent-2: #ff5a72;
+      --avg: #3a4149;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0 1rem 4rem;
+    background: var(--bg); color: var(--ink);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+  header {
+    padding: 1.75rem 0 1.25rem; border-bottom: 3px solid var(--accent);
+    margin-bottom: 1.5rem;
+  }
+  h1 { margin: 0 0 .35rem; font-size: 1.85rem; letter-spacing: -0.02em; }
+  h2 {
+    margin: 2.25rem 0 .75rem; font-size: 1.15rem; letter-spacing: -0.01em;
+    padding-bottom: .35rem; border-bottom: 2px solid var(--border);
+  }
+  h3 { margin: 1.5rem 0 .5rem; font-size: 1rem; }
+  .sub { color: var(--muted); font-size: .9rem; }
+  .meta { display: flex; flex-wrap: wrap; gap: 1.25rem; margin-top: .6rem; font-size: .85rem; color: var(--muted); }
+  .scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table { border-collapse: collapse; width: 100%; font-size: .85rem; }
+  th, td { padding: .4rem .55rem; text-align: right; white-space: nowrap; }
+  th { font-weight: 600; color: var(--muted); border-bottom: 2px solid var(--border); font-size: .75rem; text-transform: uppercase; letter-spacing: .03em; }
+  td { border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+  th:first-child, td:first-child, .l { text-align: left; }
+  tbody tr:hover { background: var(--panel); }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 1rem 1.15rem; margin-bottom: 1rem; }
+  .cols { display: grid; grid-template-columns: 1fr; gap: 1.25rem; }
+  @media (min-width: 900px) { .cols { grid-template-columns: 1fr 1fr; } }
+  .name { font-weight: 600; }
+  .tag { display: inline-block; padding: .1rem .45rem; border-radius: 4px; background: var(--border); color: var(--muted); font-size: .7rem; margin-left: .35rem; vertical-align: middle; }
+  .note { border-left: 3px solid var(--accent-2); background: var(--panel); padding: .6rem .85rem; border-radius: 0 6px 6px 0; font-size: .85rem; color: var(--muted); margin: .5rem 0 1rem; }
+  .pct { display: inline-block; min-width: 2.1rem; padding: .12rem .3rem; border-radius: 4px; text-align: center; font-size: .78rem; font-weight: 600; color: #fff; }
+  .pct-great { background: var(--great); } .pct-good { background: var(--good); }
+  .pct-avg { background: var(--avg); color: var(--ink); } .pct-poor { background: var(--poor); }
+  .pct-bad { background: var(--bad); } .pct-none { background: transparent; color: var(--faint); }
+  .win { color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .03em; }
+  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border); font-size: .78rem; color: var(--faint); }
+  details { margin-top: .75rem; }
+  summary { cursor: pointer; color: var(--muted); font-size: .85rem; }
+  .prov { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .7rem; }
+  .prov td { white-space: normal; word-break: break-all; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>{{ bundle.away.name }} at {{ bundle.home.name }}</h1>
+  <div class="sub">
+    {{ bundle.game_date }} · {{ bundle.venue_name }} · {{ bundle.status }}
+    {% if bundle.game_datetime %} · {{ bundle.game_datetime.strftime('%H:%M UTC') }}{% endif %}
+  </div>
+  <div class="meta">
+    <span>{{ bundle.away.abbreviation }} {{ bundle.away.record }}</span>
+    <span>{{ bundle.home.abbreviation }} {{ bundle.home.record }}</span>
+    {% if bundle.weather.condition %}
+    <span>{{ bundle.weather.condition }}, {{ bundle.weather.temp }}°F, wind {{ bundle.weather.wind }}</span>
+    {% endif %}
+    <span>FIP constant {{ bundle.league.fip_constant|rate2 }} (lgERA {{ bundle.league.league_era|rate2 }})</span>
+  </div>
+</header>
+
+{# ---------------------------------------------------------------- starters #}
+<h2>Probable starters</h2>
+<div class="cols">
+{% for team in [bundle.away, bundle.home] %}
+  <div class="card">
+    <h3>
+      {{ team.abbreviation }} —
+      {% if team.starter %}
+        {{ team.starter.name }}
+        {% if team.starter.throws %}<span class="tag">{{ team.starter.throws }}HP</span>{% endif %}
+      {% else %}
+        <span class="sub">starter not announced</span>
+      {% endif %}
+    </h3>
+
+    {% if team.starter %}
+    {% set s = team.starter %}
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th class="l">Window</th><th>G</th><th>IP</th><th>ERA</th><th>FIP</th>
+            <th>WHIP</th><th>K%</th><th>BB%</th><th>K-BB%</th><th>HR/9</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="l"><strong>Season</strong></td>
+            <td>{{ s.season.games }}</td>
+            <td>{{ s.season.inningsPitchedDisplay|innings }}</td>
+            <td>{{ s.season.era|rate2 }}</td>
+            <td>{{ s.season.fip|rate2 }}</td>
+            <td>{{ s.season.whip|rate2 }}</td>
+            <td>{{ s.season.kPct|pct1 }}</td>
+            <td>{{ s.season.bbPct|pct1 }}</td>
+            <td>{{ s.season.kMinusBbPct|pct1 }}</td>
+            <td>{{ s.season.hrPer9|rate2 }}</td>
+          </tr>
+          {% for win in s.windows %}
+          <tr>
+            <td class="l win">{{ win.label }}</td>
+            <td>{{ win.stats.games }}</td>
+            <td>{{ win.stats.inningsPitchedDisplay|innings }}</td>
+            <td>{{ win.stats.era|rate2 }}</td>
+            <td>{{ win.stats.fip|rate2 }}</td>
+            <td>{{ win.stats.whip|rate2 }}</td>
+            <td>{{ win.stats.kPct|pct1 }}</td>
+            <td>{{ win.stats.bbPct|pct1 }}</td>
+            <td>{{ win.stats.kMinusBbPct|pct1 }}</td>
+            <td>{{ win.stats.hrPer9|rate2 }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if s.percentiles %}
+    <h3>Statcast percentiles</h3>
+    <div class="scroll">
+      <table>
+        <thead><tr><th class="l">Metric</th><th>xERA</th><th>xwOBA</th><th>K%</th><th>BB%</th><th>Whiff%</th><th>Chase%</th><th>Barrel%</th><th>Hard hit%</th></tr></thead>
+        <tbody><tr>
+          <td class="l">Percentile</td>
+          {% for key in ['xera','xwoba','k_percent','bb_percent','whiff_percent','chase_percent','brl_percent','hard_hit_percent'] %}
+          <td><span class="pct {{ s.percentiles.get(key)|percentile_class }}">{{ s.percentiles.get(key) or '–' }}</span></td>
+          {% endfor %}
+        </tr></tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    {% if s.arsenal %}
+    <h3>Pitch arsenal</h3>
+    <div class="scroll">
+      <table>
+        <thead><tr><th class="l">Pitch</th><th>Usage</th><th>Whiff%</th><th>PutAway%</th><th>BA</th><th>SLG</th><th>xwOBA</th><th>HardHit%</th><th>RV/100</th></tr></thead>
+        <tbody>
+          {% for p in s.arsenal %}
+          <tr>
+            <td class="l">{{ p.pitch }}</td>
+            <td>{{ p.usage|pct1(already_pct=True) }}</td>
+            <td>{{ p.whiff|pct1(already_pct=True) }}</td>
+            <td>{{ p.put_away|pct1(already_pct=True) }}</td>
+            <td>{{ p.ba|rate3 }}</td>
+            <td>{{ p.slg|rate3 }}</td>
+            <td>{{ p.xwoba|rate3 }}</td>
+            <td>{{ p.hard_hit|pct1(already_pct=True) }}</td>
+            <td>{{ p.run_value_per_100|rate2 }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+    {% endif %}
+  </div>
+{% endfor %}
+</div>
+
+{# ----------------------------------------------------------------- lineups #}
+{% for team in [bundle.away, bundle.home] %}
+<h2>{{ team.name }} lineup</h2>
+{% if team.lineup_source != 'official' %}
+<div class="note"><strong>Not the official lineup.</strong> {{ team.lineup_source_note }}</div>
+{% endif %}
+
+{% if team.lineup %}
+<div class="scroll">
+  <table>
+    <thead>
+      <tr>
+        <th class="l">#</th><th class="l">Batter</th><th class="l">Pos</th><th>B</th>
+        <th>PA</th><th>AVG</th><th>OBP</th><th>SLG</th><th>OPS</th><th>ISO</th>
+        <th>K%</th><th>BB%</th><th>wRC+</th>
+        {% for win in team.lineup[0].windows %}<th>{{ win.label }} OPS</th>{% endfor %}
+        <th>Split</th><th>Split OPS</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for b in team.lineup %}
+      <tr>
+        <td class="l">{{ b.batting_order }}</td>
+        <td class="l name">{{ b.name }}</td>
+        <td class="l">{{ b.position or '–' }}</td>
+        <td>{{ b.bats or '–' }}</td>
+        <td>{{ b.season.plateAppearances }}</td>
+        <td>{{ b.season.avg|rate3 }}</td>
+        <td>{{ b.season.obp|rate3 }}</td>
+        <td>{{ b.season.slg|rate3 }}</td>
+        <td>{{ b.season.ops|rate3 }}</td>
+        <td>{{ b.season.iso|rate3 }}</td>
+        <td>{{ b.season.kPct|pct1 }}</td>
+        <td>{{ b.season.bbPct|pct1 }}</td>
+        <td>{% if b.sabermetrics.wRcPlus is defined %}{{ b.sabermetrics.wRcPlus|round|int }}{% else %}–{% endif %}</td>
+        {% for win in b.windows %}
+        <td>{{ win.stats.ops|rate3 }}</td>
+        {% endfor %}
+        <td class="l">{{ b.vs_hand_label or '–' }}</td>
+        <td>{{ b.vs_hand.get('ops') or '–' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="sub">No lineup available.</p>
+{% endif %}
+{% endfor %}
+
+{# --------------------------------------------------------- sources & audit #}
+<h2>Sources &amp; audit</h2>
+<p class="sub">
+  Every figure above is either reported directly by a source below or computed
+  from one by a tested formula. Nothing here was estimated or generated. The
+  {{ bundle.provenance|length }} requests behind this report are listed with the
+  time they were made and the SHA-256 of the exact bytes returned; the response
+  bodies are archived locally under the same hashes.
+</p>
+<div class="note">
+  Derived metrics use a FIP constant of <strong>{{ bundle.league.fip_constant|rate2 }}</strong>,
+  computed from {{ bundle.season if bundle.season is defined else bundle.game_date.year }} league totals
+  ({{ bundle.league.totals.team_count }} clubs): {{ bundle.league.totals.earned_runs|integer }} ER,
+  {{ bundle.league.totals.outs|integer }} outs, {{ bundle.league.totals.home_runs|integer }} HR,
+  {{ bundle.league.totals.walks|integer }} BB, {{ bundle.league.totals.hit_by_pitch|integer }} HBP,
+  {{ bundle.league.totals.strikeouts|integer }} K — giving a league ERA of
+  {{ bundle.league.league_era|rate2 }}.
+</div>
+
+<details>
+  <summary>Show all {{ bundle.provenance|length }} source requests</summary>
+  <div class="scroll">
+    <table class="prov">
+      <thead><tr><th class="l">Fetched (UTC)</th><th class="l">Source</th><th class="l">URL</th><th>Status</th><th>Bytes</th><th class="l">SHA-256</th></tr></thead>
+      <tbody>
+        {% for p in bundle.provenance %}
+        <tr>
+          <td class="l">{{ p.fetched_at }}</td>
+          <td class="l">{{ p.source }}</td>
+          <td class="l">{{ p.url }}</td>
+          <td>{{ p.http_status }}</td>
+          <td>{{ p.byte_count|integer }}</td>
+          <td class="l">{{ p.sha256[:16] }}…</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</details>
+
+<footer>
+  Generated {{ generated }} · run {{ bundle.run_id }}
+  {% if bundle.git_sha %} · code {{ bundle.git_sha }}{% endif %} ·
+  data from MLB Stats API and Baseball Savant ·
+  all calculations performed in code, not generated
+</footer>
+
+</div>
+</body>
+</html>
