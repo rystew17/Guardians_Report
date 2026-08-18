@@ -1,151 +1,119 @@
 # Resume notes
 
-State of the build as of 2026-08-17. Written so a fresh session can pick up
-without re-deriving anything.
+State as of 2026-08-17. Written so a fresh session can pick up without
+re-deriving anything.
 
-## What this project is
+## What this is
 
 A daily Scouting Report / Game Preview for each Cleveland Guardians game,
-covering both starting pitchers, available relievers, and batters, with season
-and recent-form numbers. Two hard rules:
+aimed at everyone from a casual fan to a front office. Two hard rules:
 
-1. Every number is traceable to a source endpoint and fetch timestamp.
+1. Every number traces to a source endpoint and fetch timestamp.
 2. All math is hard-coded in tested pure functions. No LLM computes anything.
 
-The full plan lives at:
-`C:\Users\ryste\.claude\plans\i-am-enlisting-your-silly-yeti.md`
+Roadmap and gap analysis:
+https://claude.ai/code/artifact/1d78bd05-f562-4e9f-9e57-e30273dad345
 
-## Where we stopped, and why
-
-Blocked on installing Python. The python.org MSI fails with error 2203 /
-`ERROR_PATH_NOT_FOUND` because Windows has a **pending update reboot**
-(`RebootPending`, `RebootRequired`, and `PendingFileRenameOperations` are all
-set). Windows Installer cannot complete a multi-package transaction in that
-state, so `core.msi` never lands in the Package Cache. This is unrelated to
-Python or to the sandbox -- it failed identically with the sandbox disabled.
-
-**Next step: reboot Windows, then re-run the installer.** It is already
-downloaded, no need to fetch it again:
+## Run it
 
 ```
-C:\Users\ryste\AppData\Local\Temp\claude\installers\python-3.13.15-amd64.exe
+cd C:\dev\guards-report
+.venv\Scripts\python.exe -m guards_report.cli build --date 2026-08-18 --no-store
 ```
 
-Install per-user, quiet, added to PATH:
+`--date` accepts `today`, `tomorrow`, `yesterday`, or `YYYY-MM-DD`. Drop
+`--no-store` once BigQuery is authenticated. Output lands in `out/`.
 
-```powershell
-Start-Process -FilePath "C:\Users\ryste\AppData\Local\Temp\claude\installers\python-3.13.15-amd64.exe" -ArgumentList "/quiet","InstallAllUsers=0","PrependPath=1","Include_test=0" -Wait -PassThru
-```
+Tests: `.venv\Scripts\python.exe -m pytest -q` (70 offline).
+Network tests, which validate our math against MLB's published values:
+`pytest -m network` (6).
 
-Note: Python 3.12 is now security-only and has no Windows installer past
-3.12.10, which is why this is 3.13.15.
+## Current state
 
-## Verified research findings (do not re-litigate)
+Five tabs, ~51 player boxes, 29 source requests, ~737 KB of self-contained HTML.
 
-Checked against live endpoints on 2026-08-17.
+* **Matchup** (landing) — standings, run differential, Pythagorean record and
+  the luck gap, form, bullpen readiness, lineup handedness, both clubs ranked
+  1-30 on offense and run prevention, and a "what to watch" block that ranks
+  extremes already in the data.
+* **CLE / OPP Pitchers** — 13 active arms each, probable starter pinned first,
+  then bullpen by rest, then the rest of the rotation last.
+* **CLE / OPP Position Players** — 13 each, sorted by plate appearances.
 
-**Usable:**
-- **MLB Stats API** (`statsapi.mlb.com`), free and unauthenticated. Confirmed
-  working: `schedule` with `hydrate=probablePitcher,lineups,venue`;
-  `teams/114/roster/active`; `people?personIds=a,b,c` (batch lookup);
-  `people/{id}/stats` with `stats=gameLog`, `lastXGames&limit=N`,
-  `byDateRange`, `statSplits&sitCodes=vl,vr,h,a`, `vsPlayer`, and
-  `sabermetrics` (returns wOBA, wRC+, WAR, wRAA, RAR directly);
-  `v1.1/game/{pk}/feed/live` for weather and umpires; `v1/teams/stats` for the
-  30 team season lines.
-- **Baseball Savant**, free and unauthenticated. Confirmed working:
-  `leaderboard/expected_statistics?csv=true`,
-  `leaderboard/pitch-arsenal-stats?csv=true`,
-  `leaderboard/percentile-rankings`, `player-services/statcast-pitches-breakdown`.
+Every player box carries: Savant percentile chips, Season + L5/L15/L30 with
+league deltas and a league-average row, pitch arsenal (for hitters, performance
+against each pitch type), situational splits, two MLB zone heat maps, a trend
+sparkline, and a reserved Phase 2 analysis slot. Position players additionally
+carry batted-ball profile, bat tracking, OAA and sprint speed.
 
-**Not usable programmatically:**
-- **FanGraphs** returns a Cloudflare interstitial (HTTP 403) even with a
-  browser User-Agent. `pybaseball` dropped FanGraphs support entirely.
-- **Baseball-Reference / Stathead** have no API. Terms of Use prohibit
-  automated access, enforced at 10 req/min (Stathead) and 20 req/min (BRef)
-  with day-long bans. `pybaseball` has disabled its BRef modules. A Stathead
-  subscription grants manual CSV/Excel export, not API rights.
+## Verified data sources (do not re-litigate)
 
-Decision: build on MLB Stats API + Savant, and hard-code the derived metrics
-(FIP, xFIP, SIERA, K%, BB%, Game Score). Computing these from audited raw
-inputs is *better* for verifiability than scraping someone else's derived
-number.
+Checked against live endpoints 2026-08-17.
 
-## Useful constants already confirmed against live data
+**Usable:** MLB Stats API (`statsapi.mlb.com`) and Baseball Savant, both free
+and unauthenticated.
 
-- Cleveland Guardians `teamId` = **114**; Progressive Field `venueId` = 5.
-- 2026 league pitching totals (summed across all 30 clubs, from
-  `v1/teams/stats`, as of 2026-08-17): ER 15381, outs 99712, HR 4326,
-  BB 12642, HBP 1616, K 31341.
-- Those give league ERA **4.1649** and a derived **FIP constant of 3.0718**,
-  which is right in the historically normal band. `league_constants.py`
-  validates against a 2.5-3.7 range and this passes comfortably.
+**Not usable:** FanGraphs returns a Cloudflare interstitial (HTTP 403).
+Baseball-Reference and Stathead have no API, prohibit automated access, and
+enforce 10-20 requests/minute with day-long bans. `pybaseball` has disabled
+both. A Stathead subscription grants manual CSV export, not API rights.
 
-## What is built
+Key endpoint facts:
 
-```
-src/guards_report/
-  config.py                    settings, team ids, table names, rate limits
-  sources/http.py              THE choke point for all outbound requests:
-                               rate limiting, retry/backoff, content-addressed
-                               gzip archive + sha256 provenance
-  sources/mlb_statsapi.py      typed client for every endpoint listed above
-  metrics/formulas.py          all hard-coded math, pure functions
-  metrics/league_constants.py  derives the FIP constant from league totals
-  metrics/windows.py           L5/L15/L30 aggregation + bullpen availability
-tests/test_formulas.py         formula tests
-```
+* `stats(...)` hydrate accepts a type list, a sitCodes list, and a personIds
+  list **simultaneously** — this is what keeps a 52-player report at ~29
+  requests instead of ~200. Game logs use a smaller batch (~130 KB/player).
+* `statsapi/situationCodes` returns **602** split codes. We use ten per role.
+  Groups: Count (19), Runners (15), Pitch Type (15), Inning (15), Position
+  (14), Pitch Count (13), Month (12), At-Bat (10), Order (9).
+* `hotColdZones` gives MLB's 13-cell zone grid **with its own colours**, which
+  we use directly so maps match Savant.
+* Savant leaderboards all accept `csv=true`. Id column is inconsistent:
+  `player_id` on most, `id` on batted-ball and bat-tracking, `entity_id` on
+  poptime.
+* Standings carries `xWinLoss` — MLB's own Pythagorean record.
 
-Design decisions worth not re-deriving:
+## Design decisions worth not re-deriving
 
-- **Innings-pitched notation.** `"5.1"` means five and one third, not 5.1.
-  Everything works in whole outs internally (`ip_to_outs`). Game-log
-  aggregation sums the API's `outs` field directly and never parses the
-  innings string.
-- **Undefined rates return `None`, never 0.0.** A 0.000 ERA and an undefined
-  ERA are different claims and the report must not conflate them.
-- **Sum counting stats over a window, then compute rates.** Averaging per-game
-  rates is a different and wrong number.
-- **Windows differ by role.** Hitters get L5/L15/L30 games. A starter's "last
-  30 games" would span two seasons, so starters get day-based windows
-  (15/30/60 days). Relievers get a mix. See `windows.py`. **Worth confirming
-  with the user** -- the original ask said L5/L15/L30 games for everyone.
-- **`sabermetrics` values are taken from the source, not derived.** wOBA and
-  wRC+ need season-specific linear weights and park factors that MLB computes
-  internally; reconstructing them would mean guessing at inputs.
+* **Innings notation.** `"5.1"` is five and one third. Everything works in
+  whole outs; game-log aggregation sums the API's `outs` field directly.
+* **Undefined rates return `None`, never 0.0.** The renderer's `_missing()`
+  covers None, Jinja `Undefined`, and blank CSV cells alike.
+* **Sum counting stats over a window, then compute rates.** Never average
+  rates.
+* **Doubleheaders:** `gamePk` is *not* chronological within a date (observed
+  2026-07-28, where the higher id was game one). Rows tie-break on payload
+  order, which is authoritative.
+* **OPS:** MLB publishes the sum of *rounded* OBP and SLG. `published_ops()`
+  matches their convention for display; `ops()` keeps full precision.
+* **League averages** come from summed team totals, never averaged across
+  players.
+* **FIP constant is derived per season** from league totals, validated to a
+  2.5-3.7 band. 2026 derives to ~3.074 against a league ERA of ~4.17.
+  League FIP equals league ERA by construction — a useful self-check.
+* **Two-way players deliberately appear on both pages.**
+* **Light theme is pinned** with `color-scheme: light`; do not add a dark mode.
+* **Boxes are one per row, full width.** Two columns was too narrow.
 
-## Storage design (the cost question, already settled)
+## Outstanding
 
-Governing principle: **store the atom, derive the rest.** Game logs are
-immutable once a game is final and everything else (season, L5, L15, L30) is a
-deterministic aggregation of them. So game logs persist; windows are
-zero-storage SQL views.
+1. **BigQuery is not authenticated.** The ADC flow ran, opened a browser, but
+   never wrote `application_default_credentials.json`. Everything works with
+   `--no-store`. To finish:
+   ```
+   "C:\Users\ryste\AppData\Local\Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd" auth application-default login
+   ```
+   The terminal process must stay alive until the browser redirect completes.
+   Then `guards-report setup-bq`, and add the $5 budget alert.
+   GCP project is `ham-and-frank-67`; `.env` is already written and gitignored.
 
-Sized from measured payloads: **~40 MB per full season, league-wide**, against
-BigQuery's 10 GiB free storage tier. Cut from the original scope:
-league-wide pitch-level Statcast (~500 MB/season, replaced by Savant's
-pre-aggregated leaderboards) and raw JSON blobs in BQ (~2 GB/season, replaced
-by gzipped local files plus metadata rows).
+2. **Stage 6 of the roadmap**, not yet started: home plate umpire zone
+   tendency (we fetch the umpire from the live feed and discard it), park
+   factors, and transactions / injured-list movement.
 
-Guardrails: `maximum_bytes_billed` on every query, `require_partition_filter`
-on fact tables, no `SELECT *`, batch loads only (never the streaming API,
-which is the path that actually costs money), and a $5/month budget alert.
+3. **Phase 2** (LLM read-out into the reserved slots) and **Phase 3** (own
+   projections) remain untouched by design.
 
-## Still to build
-
-- `sources/savant.py` -- CSV/JSON client for the Savant leaderboards
-- `ingest/` -- schedule, rosters, game logs (incremental), splits
-- `store/` -- BQ schemas with partitioning, client with byte caps, window views
-- `report/` -- ReportBundle assembly, Jinja2 HTML renderer with provenance and
-  a Sources & Audit appendix
-- `cli.py` -- `build | backfill | cost`
-- `tests/test_source_agreement.py` -- asserts our formulas reproduce the
-  source API's own published AVG/OBP/SLG/ERA/WHIP from its own counting stats.
-  This is the strongest verification available and needs network.
-
-## Open questions for the user
-
-1. **GCP project ID** is still needed for `.env` (`GCP_PROJECT`). Run
-   `gcloud projects list` after installing the SDK.
-2. **Pitcher recent-form windows**: confirm day-based windows for starters
-   instead of literal L5/L15/L30 games.
+4. Batter-vs-pitcher history (`stats=vsPlayer`) is built but not rendered.
+   If restored, show raw counts only — rendering "3 for 8" as .375 implies a
+   signal eleven plate appearances cannot carry.
