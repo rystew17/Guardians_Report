@@ -62,8 +62,14 @@
 
   /* ---------- player boxes ---------- */
   .boxes { display:flex; flex-direction:column; gap:var(--sp-4); }
+  /* A full report carries roughly 46,000 elements, most of them zone-map
+     cells. content-visibility lets the browser skip layout and paint for
+     boxes that are off screen, which is what keeps scrolling smooth on a
+     phone; contain-intrinsic-size gives it a height to reserve so the
+     scrollbar does not jump as boxes are realised. */
   .box { width:100%; background:var(--box); border:1px solid var(--border);
-         border-radius:var(--radius); padding:var(--sp-3) var(--sp-4) var(--sp-4); }
+         border-radius:var(--radius); padding:var(--sp-3) var(--sp-4) var(--sp-4);
+         content-visibility:auto; contain-intrinsic-size:auto 900px; }
   .box.featured { border:2px solid var(--accent-2); }
   .box.bench { opacity:.9; border-style:dashed; }
   .bhead { display:flex; align-items:center; gap:var(--sp-2); flex-wrap:wrap;
