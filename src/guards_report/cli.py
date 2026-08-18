@@ -46,15 +46,22 @@ def cmd_build(args: argparse.Namespace) -> int:
         file=sys.stderr,
     )
     for team in (bundle.away, bundle.home):
-        starter = team.starter.name if team.starter else "TBD"
+        starter = next(
+            (p.name for p in team.pitchers if p.is_probable_starter), "TBD"
+        )
+        with_zones = sum(1 for p in team.batters if p.zone_grids)
         print(
             f"  {team.abbreviation}: {starter}"
-            f" · lineup {team.lineup_source} ({len(team.lineup)} batters)",
+            f" · {len(team.pitchers)} pitchers, {len(team.batters)} batters"
+            f" ({with_zones} with zone data)",
             file=sys.stderr,
         )
     print(
         f"  {len(bundle.provenance)} source requests"
-        f" · FIP constant {bundle.league.fip_constant:.4f}",
+        f" · FIP constant {bundle.league.fip_constant:.4f}"
+        f" · lg {bundle.league_hitting.get('avg'):.3f}"
+        f"/{bundle.league_hitting.get('obp'):.3f}"
+        f"/{bundle.league_hitting.get('slg'):.3f}",
         file=sys.stderr,
     )
 

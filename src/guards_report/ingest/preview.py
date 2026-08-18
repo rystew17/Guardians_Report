@@ -1,17 +1,23 @@
-"""Assemble a game preview: fetch, compute, and return a typed bundle.
+"""Assemble a four-page game preview: fetch, compute, and return a typed bundle.
 
-This is the orchestration layer. It fetches from the source clients, runs the
-numbers through metrics/, and returns a ReportBundle that the renderer turns
-into HTML. It performs no arithmetic of its own -- every derived figure comes
-from metrics/formulas.py -- and it writes nothing to BigQuery, so a report can
-be produced with no cloud dependency at all.
+Structure is four pages -- each team's pitching and batting -- with one box per
+player carrying that player's full stat view.
+
+Fetching is aggressively batched. The statsapi `stats(...)` hydrate accepts a
+list of stat types and a list of personIds at once, so season lines,
+sabermetrics, platoon splits and zone data for 52 players collapse into a
+handful of requests rather than one per player per stat type. That takes a full
+preview from roughly 200 calls to about two dozen.
+
+This layer orchestrates only. Every derived number comes from metrics/, and
+nothing is written to BigQuery here, so a report can be produced with no cloud
+dependency at all.
 """
 
 from __future__ import annotations
 
 import subprocess
 import uuid
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from typing import Any
@@ -22,12 +28,15 @@ from guards_report.config import (
     REPO_ROOT,
     Settings,
 )
-from guards_report.metrics import formulas as f
+from guards_report.metrics import league_averages as la
 from guards_report.metrics import league_constants as lc
 from guards_report.metrics import windows as w
+from guards_report.metrics import zones as zn
 from guards_report.sources import mlb_statsapi as api
 from guards_report.sources import savant as sv
 from guards_report.sources.http import Archiver
+
+POSITION_PLAYER_TYPES = {"Catcher", "Infielder", "Outfielder", "Two-Way Player"}
 
 
 # ---------------------------------------------------------------------------
@@ -37,52 +46,51 @@ from guards_report.sources.http import Archiver
 
 @dataclass
 class WindowLine:
-    """One recent-form window's aggregated line."""
-
     label: str
     stats: dict[str, Any]
+    deltas: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
-class PitcherProfile:
+class PlayerBox:
+    """One player's complete stat view -- the unit the report is built from."""
+
     player_id: int
     name: str
-    throws: str | None
-    season: dict[str, Any]
-    windows: list[WindowLine]
-    arsenal: list[dict[str, Any]] = field(default_factory=list)
-    percentiles: dict[str, Any] = field(default_factory=dict)
-    expected: dict[str, Any] = field(default_factory=dict)
-    sabermetrics: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class BatterProfile:
-    player_id: int
-    name: str
-    bats: str | None
+    hand: str | None          # bats, for hitters; throws, for pitchers
     position: str | None
-    batting_order: int | None
-    season: dict[str, Any]
-    windows: list[WindowLine]
+    jersey: str | None
+    is_probable_starter: bool = False
+
+    season: dict[str, Any] = field(default_factory=dict)
+    season_deltas: dict[str, Any] = field(default_factory=dict)
+    windows: list[WindowLine] = field(default_factory=list)
+
+    percentiles: dict[str, str] = field(default_factory=dict)
+    expected: dict[str, str] = field(default_factory=dict)
+    sabermetrics: dict[str, Any] = field(default_factory=dict)
+    arsenal: list[dict[str, Any]] = field(default_factory=list)
+    zone_grids: dict[str, zn.ZoneGrid] = field(default_factory=dict)
+
+    # Hitters only: performance against the handedness they will face today.
     vs_hand: dict[str, Any] = field(default_factory=dict)
     vs_hand_label: str = ""
-    expected: dict[str, Any] = field(default_factory=dict)
-    percentiles: dict[str, Any] = field(default_factory=dict)
-    sabermetrics: dict[str, Any] = field(default_factory=dict)
+
+    # Pitchers only.
+    availability: w.BullpenAvailability | None = None
+    role: str = ""
 
 
 @dataclass
-class TeamPreview:
+class TeamSection:
     team_id: int
     name: str
     abbreviation: str
     record: str
     is_home: bool
-    starter: PitcherProfile | None
-    lineup: list[BatterProfile]
-    lineup_source: str
-    lineup_source_note: str
+    batters: list[PlayerBox] = field(default_factory=list)
+    pitchers: list[PlayerBox] = field(default_factory=list)
+    opposing_hand: str | None = None
 
 
 @dataclass
@@ -97,13 +105,16 @@ class ReportBundle:
     venue_name: str
     status: str
     weather: dict[str, Any]
-    home: TeamPreview
-    away: TeamPreview
+    season: int
+    home: TeamSection
+    away: TeamSection
     league: lc.LeagueConstants
+    league_hitting: la.LeagueHitting
+    league_pitching: la.LeaguePitching
     provenance: list[dict[str, Any]]
 
     @property
-    def guardians(self) -> TeamPreview:
+    def guardians(self) -> TeamSection:
         return (
             self.home
             if self.home.team_id == CLEVELAND_GUARDIANS_TEAM_ID
@@ -111,7 +122,7 @@ class ReportBundle:
         )
 
     @property
-    def opponent(self) -> TeamPreview:
+    def opponent(self) -> TeamSection:
         return (
             self.away
             if self.home.team_id == CLEVELAND_GUARDIANS_TEAM_ID
@@ -120,13 +131,11 @@ class ReportBundle:
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Payload helpers
 # ---------------------------------------------------------------------------
 
 
 def _git_sha() -> str | None:
-    """Short commit sha, recorded so a report can be tied to the code that
-    produced it. Returns None outside a git checkout rather than failing."""
     try:
         return subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -138,16 +147,43 @@ def _git_sha() -> str | None:
         return None
 
 
-def _first_split_stat(payload: dict[str, Any]) -> dict[str, Any]:
-    blocks = payload.get("stats") or []
-    if not blocks:
-        return {}
-    splits = blocks[0].get("splits") or []
+def _stat_block(person: dict[str, Any], type_name: str) -> list[dict[str, Any]]:
+    """All splits for one stat type from a hydrated person object."""
+    for block in person.get("stats") or []:
+        if (block.get("type") or {}).get("displayName") == type_name:
+            return block.get("splits") or []
+    return []
+
+
+def _first_stat(person: dict[str, Any], type_name: str) -> dict[str, Any]:
+    splits = _stat_block(person, type_name)
     return splits[0].get("stat", {}) if splits else {}
 
 
-def _find_game(schedule_payload: dict[str, Any], *, team_id: int) -> dict[str, Any] | None:
-    for day in schedule_payload.get("dates", []):
+def _merge_people(results: list[Any]) -> dict[int, dict[str, Any]]:
+    """Merge batched people payloads, combining each person's stats blocks.
+
+    A player appears once per batched request, so the stats blocks from
+    separate hydrates (light stats and game logs) have to be concatenated
+    rather than overwriting one another.
+    """
+    merged: dict[int, dict[str, Any]] = {}
+    for result in results:
+        for person in result.json().get("people", []):
+            pid = person.get("id")
+            if pid is None:
+                continue
+            if pid in merged:
+                merged[pid].setdefault("stats", [])
+                merged[pid]["stats"].extend(person.get("stats") or [])
+            else:
+                merged[pid] = dict(person)
+                merged[pid].setdefault("stats", [])
+    return merged
+
+
+def _find_game(payload: dict[str, Any], *, team_id: int) -> dict[str, Any] | None:
+    for day in payload.get("dates", []):
         for game in day.get("games", []):
             teams = game.get("teams", {})
             ids = {
@@ -159,211 +195,211 @@ def _find_game(schedule_payload: dict[str, Any], *, team_id: int) -> dict[str, A
     return None
 
 
-# ---------------------------------------------------------------------------
-# Lineups
-# ---------------------------------------------------------------------------
+def _split_roster(payload: dict[str, Any]) -> tuple[list[dict], list[dict]]:
+    """Separate an active roster into position players and pitchers.
 
-
-def _resolve_lineup(
-    archiver: Archiver,
-    game: dict[str, Any],
-    *,
-    side: str,
-    team_id: int,
-    season: int,
-    as_of: date,
-) -> tuple[list[dict[str, Any]], str, str]:
-    """Return (players, source, note).
-
-    MLB publishes no projected lineup. The official one appears via
-    `hydrate=lineups` roughly three hours before first pitch. Before that we
-    fall back to the most recent game's batting order and say so explicitly --
-    a preview that silently presents a stale lineup as today's is worse than
-    one that admits what it is showing.
+    A 26-man active roster is 13 and 13 in the current era, which is exactly
+    the split the report wants. Two-way players are counted as hitters here and
+    appear again among the pitchers if they are listed as such.
     """
-    key = "homePlayers" if side == "home" else "awayPlayers"
-    posted = (game.get("lineups") or {}).get(key) or []
-    if posted:
-        return posted, "official", "Official lineup as posted by the club."
-
-    # Fall back to the batting order from the team's most recent completed game.
-    recent = api.schedule_range(
-        archiver,
-        start=date.fromordinal(as_of.toordinal() - 10),
-        end=date.fromordinal(as_of.toordinal() - 1),
-        team_id=team_id,
-        hydrate="lineups,team",
-    ).json()
-
-    latest: tuple[date, list[dict[str, Any]]] | None = None
-    for day in recent.get("dates", []):
-        for past in day.get("games", []):
-            teams = past.get("teams", {})
-            for past_side in ("home", "away"):
-                if teams.get(past_side, {}).get("team", {}).get("id") != team_id:
-                    continue
-                players = (past.get("lineups") or {}).get(
-                    "homePlayers" if past_side == "home" else "awayPlayers"
-                ) or []
-                if not players:
-                    continue
-                game_day = date.fromisoformat(past["officialDate"])
-                if latest is None or game_day > latest[0]:
-                    latest = (game_day, players)
-
-    if latest:
-        return (
-            latest[1],
-            "fallback",
-            f"Official lineup not yet posted. Showing the batting order from "
-            f"the most recent game with a posted lineup ({latest[0].isoformat()}). "
-            f"Today's order will differ.",
-        )
-
-    return [], "unavailable", "No lineup available for this game yet."
+    batters, pitchers = [], []
+    for entry in payload.get("roster", []):
+        position_type = (entry.get("position") or {}).get("type")
+        if position_type == "Pitcher":
+            pitchers.append(entry)
+        elif position_type in POSITION_PLAYER_TYPES:
+            batters.append(entry)
+    return batters, pitchers
 
 
 # ---------------------------------------------------------------------------
-# Profiles
+# Box construction
 # ---------------------------------------------------------------------------
 
+HITTER_DELTA_KEYS = ("avg", "obp", "slg", "ops", "iso", "babip", "kPct", "bbPct")
+PITCHER_DELTA_KEYS = (
+    "era", "whip", "fip", "kPer9", "bbPer9", "hrPer9", "kPct", "bbPct",
+    "kMinusBbPct",
+)
 
-def _build_pitcher(
-    archiver: Archiver,
-    *,
-    player_id: int,
-    name: str,
-    throws: str | None,
-    season: int,
-    as_of: date,
-    fip_constant: float,
-    arsenal_by_player: dict[int, list[dict[str, str]]],
-    percentiles_by_player: dict[int, dict[str, str]],
-    expected_by_player: dict[int, dict[str, str]],
-) -> PitcherProfile:
-    log_payload = api.game_log(
-        archiver, person_id=player_id, season=season, group=api.GROUP_PITCHING
-    ).json()
-    rows = w.parse_game_logs(log_payload)
+# Stats where a lower value is the better outcome, per role.
+HITTER_LOWER_BETTER = frozenset({"kPct"})
+PITCHER_LOWER_BETTER = frozenset(
+    {"era", "whip", "fip", "bbPer9", "hrPer9", "bbPct"}
+)
 
-    season_stats = w.aggregate_pitching(
-        [r for r in rows if r.game_date < as_of], fip_constant=fip_constant
-    )
 
-    is_starter = season_stats.get("gamesStarted", 0) > 0
-    specs = w.STARTER_WINDOWS if is_starter else w.RELIEVER_WINDOWS
-    window_lines = [
-        WindowLine(
-            label=spec.label,
-            stats=w.aggregate_pitching(
-                w.select(rows, spec, as_of=as_of), fip_constant=fip_constant
-            ),
+def _deltas(
+    stats: dict[str, Any],
+    league: la.LeagueHitting | la.LeaguePitching,
+    keys: tuple[str, ...],
+    lower_better: frozenset[str],
+) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key in keys:
+        result = la.delta(
+            stats.get(key), league.get(key), lower_is_better=key in lower_better
         )
-        for spec in specs
-    ]
+        if result is not None:
+            out[key] = result
+    return out
 
-    saber = _first_split_stat(
-        api.sabermetrics(
-            archiver, person_id=player_id, season=season, group=api.GROUP_PITCHING
-        ).json()
-    )
 
-    arsenal = [
-        {
-            "pitch": row.get("pitch_name"),
-            "usage": sv.to_number(row.get("pitch_usage")),
-            "pitches": sv.to_number(row.get("pitches")),
-            "whiff": sv.to_number(row.get("whiff_percent")),
-            "put_away": sv.to_number(row.get("put_away")),
-            "ba": sv.to_number(row.get("ba")),
-            "slg": sv.to_number(row.get("slg")),
-            "woba": sv.to_number(row.get("woba")),
-            "xwoba": sv.to_number(row.get("est_woba")),
-            "hard_hit": sv.to_number(row.get("hard_hit_percent")),
-            "run_value_per_100": sv.to_number(row.get("run_value_per_100")),
-        }
-        for row in sorted(
-            arsenal_by_player.get(player_id, []),
-            key=lambda r: -(sv.to_number(r.get("pitch_usage")) or 0),
+def _arsenal_rows(
+    rows: list[dict[str, str]], league_by_pitch: dict[str, dict[str, float | None]]
+) -> list[dict[str, Any]]:
+    out = []
+    for row in sorted(
+        rows, key=lambda r: -(sv.to_number(r.get("pitch_usage")) or 0)
+    ):
+        pitch_type = row.get("pitch_type") or ""
+        benchmark = league_by_pitch.get(pitch_type, {})
+        out.append(
+            {
+                "pitch": row.get("pitch_name"),
+                "pitch_type": pitch_type,
+                "usage": sv.to_number(row.get("pitch_usage")),
+                "pitches": sv.to_number(row.get("pitches")),
+                "pa": sv.to_number(row.get("pa")),
+                "whiff": sv.to_number(row.get("whiff_percent")),
+                "put_away": sv.to_number(row.get("put_away")),
+                "ba": sv.to_number(row.get("ba")),
+                "slg": sv.to_number(row.get("slg")),
+                "woba": sv.to_number(row.get("woba")),
+                "xwoba": sv.to_number(row.get("est_woba")),
+                "hard_hit": sv.to_number(row.get("hard_hit_percent")),
+                "run_value_per_100": sv.to_number(row.get("run_value_per_100")),
+                "lg_whiff": benchmark.get("whiff_percent"),
+                "lg_xwoba": benchmark.get("est_woba"),
+            }
         )
-    ]
-
-    return PitcherProfile(
-        player_id=player_id,
-        name=name,
-        throws=throws,
-        season=season_stats,
-        windows=window_lines,
-        arsenal=arsenal,
-        percentiles=percentiles_by_player.get(player_id, {}),
-        expected=expected_by_player.get(player_id, {}),
-        sabermetrics=saber,
-    )
+    return out
 
 
-def _build_batter(
-    archiver: Archiver,
+def _build_batter_box(
+    person: dict[str, Any],
+    entry: dict[str, Any],
     *,
-    player_id: int,
-    name: str,
-    bats: str | None,
-    position: str | None,
-    batting_order: int | None,
-    season: int,
     as_of: date,
     opposing_hand: str | None,
-    expected_by_player: dict[int, dict[str, str]],
-    percentiles_by_player: dict[int, dict[str, str]],
-) -> BatterProfile:
-    log_payload = api.game_log(
-        archiver, person_id=player_id, season=season, group=api.GROUP_HITTING
-    ).json()
-    rows = w.parse_game_logs(log_payload)
+    league_hitting: la.LeagueHitting,
+    arsenal_by_player: dict[int, list[dict[str, str]]],
+    league_by_pitch: dict[str, dict[str, float | None]],
+    percentiles: dict[int, dict[str, str]],
+    expected: dict[int, dict[str, str]],
+) -> PlayerBox:
+    pid = person["id"]
 
-    season_stats = w.aggregate_hitting([r for r in rows if r.game_date < as_of])
-    window_lines = [
-        WindowLine(label=spec.label, stats=w.aggregate_hitting(w.select(rows, spec, as_of=as_of)))
-        for spec in w.HITTER_WINDOWS
-    ]
+    rows = w.parse_game_logs({"stats": [{"splits": _stat_block(person, "gameLog")}]})
+    prior = [r for r in rows if r.game_date < as_of]
 
-    # Platoon split against the hand the opposing starter throws.
+    season_stats = w.aggregate_hitting(prior)
+    windows = []
+    for spec in w.HITTER_WINDOWS:
+        stats = w.aggregate_hitting(w.select(rows, spec, as_of=as_of))
+        windows.append(
+            WindowLine(
+                label=spec.label,
+                stats=stats,
+                deltas=_deltas(
+                    stats, league_hitting, HITTER_DELTA_KEYS, HITTER_LOWER_BETTER
+                ),
+            )
+        )
+
     vs_hand: dict[str, Any] = {}
     vs_hand_label = ""
     if opposing_hand in ("L", "R"):
         wanted = "vl" if opposing_hand == "L" else "vr"
         vs_hand_label = f"vs {'LHP' if opposing_hand == 'L' else 'RHP'}"
-        payload = api.stat_splits(
-            archiver,
-            person_id=player_id,
-            season=season,
-            group=api.GROUP_HITTING,
-            split_codes=DEFAULT_SPLIT_CODES,
-        ).json()
-        for block in payload.get("stats") or []:
-            for split in block.get("splits") or []:
-                if (split.get("split") or {}).get("code") == wanted:
-                    vs_hand = split.get("stat", {})
-                    break
+        for split in _stat_block(person, "statSplits"):
+            if (split.get("split") or {}).get("code") == wanted:
+                vs_hand = split.get("stat", {})
+                break
 
-    saber = _first_split_stat(
-        api.sabermetrics(
-            archiver, person_id=player_id, season=season, group=api.GROUP_HITTING
-        ).json()
-    )
-
-    return BatterProfile(
-        player_id=player_id,
-        name=name,
-        bats=bats,
-        position=position,
-        batting_order=batting_order,
+    return PlayerBox(
+        player_id=pid,
+        name=person.get("fullName", "Unknown"),
+        hand=(person.get("batSide") or {}).get("code"),
+        position=(entry.get("position") or {}).get("abbreviation"),
+        jersey=entry.get("jerseyNumber"),
         season=season_stats,
-        windows=window_lines,
+        season_deltas=_deltas(
+            season_stats, league_hitting, HITTER_DELTA_KEYS, HITTER_LOWER_BETTER
+        ),
+        windows=windows,
+        percentiles=percentiles.get(pid, {}),
+        expected=expected.get(pid, {}),
+        sabermetrics=_first_stat(person, "sabermetrics"),
+        arsenal=_arsenal_rows(arsenal_by_player.get(pid, []), league_by_pitch),
+        zone_grids=zn.parse_zones(person),
         vs_hand=vs_hand,
         vs_hand_label=vs_hand_label,
-        expected=expected_by_player.get(player_id, {}),
-        percentiles=percentiles_by_player.get(player_id, {}),
-        sabermetrics=saber,
+    )
+
+
+def _build_pitcher_box(
+    person: dict[str, Any],
+    entry: dict[str, Any],
+    *,
+    as_of: date,
+    fip_constant: float,
+    league_pitching: la.LeaguePitching,
+    arsenal_by_player: dict[int, list[dict[str, str]]],
+    league_by_pitch: dict[str, dict[str, float | None]],
+    percentiles: dict[int, dict[str, str]],
+    expected: dict[int, dict[str, str]],
+    probable_starter_id: int | None,
+) -> PlayerBox:
+    pid = person["id"]
+
+    rows = w.parse_game_logs({"stats": [{"splits": _stat_block(person, "gameLog")}]})
+    prior = [r for r in rows if r.game_date < as_of]
+
+    season_stats = w.aggregate_pitching(prior, fip_constant=fip_constant)
+    windows = []
+    for spec in w.PITCHER_WINDOWS:
+        stats = w.aggregate_pitching(
+            w.select(rows, spec, as_of=as_of), fip_constant=fip_constant
+        )
+        windows.append(
+            WindowLine(
+                label=spec.label,
+                stats=stats,
+                deltas=_deltas(
+                    stats, league_pitching, PITCHER_DELTA_KEYS, PITCHER_LOWER_BETTER
+                ),
+            )
+        )
+
+    games = season_stats.get("games", 0) or 0
+    starts = season_stats.get("gamesStarted", 0) or 0
+    if starts >= max(1, games * 0.5):
+        role = "SP"
+    elif season_stats.get("saves", 0):
+        role = "RP (closer)"
+    else:
+        role = "RP"
+
+    return PlayerBox(
+        player_id=pid,
+        name=person.get("fullName", "Unknown"),
+        hand=(person.get("pitchHand") or {}).get("code"),
+        position="P",
+        jersey=entry.get("jerseyNumber"),
+        is_probable_starter=(pid == probable_starter_id),
+        season=season_stats,
+        season_deltas=_deltas(
+            season_stats, league_pitching, PITCHER_DELTA_KEYS, PITCHER_LOWER_BETTER
+        ),
+        windows=windows,
+        percentiles=percentiles.get(pid, {}),
+        expected=expected.get(pid, {}),
+        sabermetrics=_first_stat(person, "sabermetrics"),
+        arsenal=_arsenal_rows(arsenal_by_player.get(pid, []), league_by_pitch),
+        zone_grids=zn.parse_zones(person),
+        availability=w.bullpen_availability(rows, as_of=as_of),
+        role=role,
     )
 
 
@@ -381,24 +417,42 @@ def build_preview(
     schedule_payload = api.schedule(archiver, on=on, team_id=team_id).json()
     game = _find_game(schedule_payload, team_id=team_id)
     if game is None:
-        raise LookupError(
-            f"no game found for team {team_id} on {on.isoformat()}"
-        )
+        raise LookupError(f"no game found for team {team_id} on {on.isoformat()}")
 
     game_pk = game["gamePk"]
     teams = game["teams"]
 
-    # League constants first: FIP is meaningless without the season's constant.
+    # League context first: FIP needs the season's constant, and every stat is
+    # benchmarked against a league average derived the same way.
+    pitching_totals_payload = api.league_pitching_totals(
+        archiver, season=season
+    ).json()
     league = lc.derive(
-        lc.parse_league_totals(
-            api.league_pitching_totals(archiver, season=season).json(), season=season
-        )
+        lc.parse_league_totals(pitching_totals_payload, season=season)
+    )
+    league_pitching = la.pitching_from_payload(
+        pitching_totals_payload, season=season, fip_constant=league.fip_constant
+    )
+    league_hitting = la.hitting_from_payload(
+        api.league_hitting_totals(archiver, season=season).json(), season=season
     )
 
-    # Savant leaderboards are fetched once and indexed, rather than per player.
-    arsenal_by_player = sv.group_by_player(
-        sv.parse_csv(sv.pitch_arsenal_stats(archiver, year=season, minimum=1))
+    # Savant leaderboards: fetched once, indexed, reused for every player.
+    pitcher_arsenal_rows = sv.parse_csv(
+        sv.pitch_arsenal_stats(
+            archiver, year=season, minimum=1, player_type=sv.TYPE_PITCHER
+        )
     )
+    batter_arsenal_rows = sv.parse_csv(
+        sv.pitch_arsenal_stats(
+            archiver, year=season, minimum=1, player_type=sv.TYPE_BATTER
+        )
+    )
+    pitcher_arsenal = sv.group_by_player(pitcher_arsenal_rows)
+    batter_arsenal = sv.group_by_player(batter_arsenal_rows)
+    league_by_pitch_thrown = sv.league_average_by_pitch_type(pitcher_arsenal_rows)
+    league_by_pitch_faced = sv.league_average_by_pitch_type(batter_arsenal_rows)
+
     pitcher_percentiles = sv.index_by_player(
         sv.parse_csv(
             sv.percentile_rankings(archiver, year=season, player_type=sv.TYPE_PITCHER)
@@ -424,118 +478,146 @@ def build_preview(
         )
     )
 
-    # Probable starters, and the handedness each lineup will face.
-    starters: dict[str, dict[str, Any]] = {}
+    # Rosters
+    roster_entries: dict[str, tuple[list[dict], list[dict]]] = {}
     for side in ("home", "away"):
-        probable = teams[side].get("probablePitcher")
-        if probable:
-            starters[side] = probable
-
-    starter_ids = [p["id"] for p in starters.values()]
-    bios: dict[int, dict[str, Any]] = {}
-    if starter_ids:
-        for result in api.people(archiver, person_ids=starter_ids):
-            for person in result.json().get("people", []):
-                bios[person["id"]] = person
-
-    # Resolve both lineups first, then look up every batter's bio in one
-    # batched call. The lineups hydrate carries name and position but not
-    # batSide, and handedness is the whole basis of the platoon matchup this
-    # report is built around -- so it cannot be left blank.
-    resolved_lineups: dict[str, tuple[list[dict[str, Any]], str, str]] = {}
-    for side in ("home", "away"):
-        resolved_lineups[side] = _resolve_lineup(
-            archiver,
-            game,
-            side=side,
-            team_id=teams[side]["team"]["id"],
-            season=season,
-            as_of=on,
+        roster_entries[side] = _split_roster(
+            api.active_roster(
+                archiver, team_id=teams[side]["team"]["id"], season=season
+            ).json()
         )
 
-    batter_ids = [
-        person["id"]
-        for players, _, _ in resolved_lineups.values()
-        for person in players
-    ]
-    if batter_ids:
-        for result in api.people(archiver, person_ids=batter_ids):
-            for person in result.json().get("people", []):
-                bios[person["id"]] = person
+    probable: dict[str, int | None] = {}
+    for side in ("home", "away"):
+        pitcher = teams[side].get("probablePitcher")
+        probable[side] = pitcher["id"] if pitcher else None
 
-    previews: dict[str, TeamPreview] = {}
+    all_batter_ids = [
+        e["person"]["id"] for side in ("home", "away") for e in roster_entries[side][0]
+    ]
+    all_pitcher_ids = [
+        e["person"]["id"] for side in ("home", "away") for e in roster_entries[side][1]
+    ]
+
+    # Batched fetches. Light stat types together; game logs separately with a
+    # smaller batch because they are far larger per player.
+    batter_people = _merge_people(
+        api.people_with_stats(
+            archiver,
+            person_ids=all_batter_ids,
+            group=api.GROUP_HITTING,
+            stat_types=[
+                api.STAT_SEASON,
+                api.STAT_SABERMETRICS,
+                api.STAT_SPLITS,
+                api.STAT_HOT_COLD_ZONES,
+            ],
+            season=season,
+            sit_codes=DEFAULT_SPLIT_CODES,
+        )
+        + api.people_with_stats(
+            archiver,
+            person_ids=all_batter_ids,
+            group=api.GROUP_HITTING,
+            stat_types=[api.STAT_GAME_LOG],
+            season=season,
+            batch_size=api.GAMELOG_BATCH_SIZE,
+        )
+    )
+
+    pitcher_people = _merge_people(
+        api.people_with_stats(
+            archiver,
+            person_ids=all_pitcher_ids,
+            group=api.GROUP_PITCHING,
+            stat_types=[
+                api.STAT_SEASON,
+                api.STAT_SABERMETRICS,
+                api.STAT_HOT_COLD_ZONES,
+            ],
+            season=season,
+        )
+        + api.people_with_stats(
+            archiver,
+            person_ids=all_pitcher_ids,
+            group=api.GROUP_PITCHING,
+            stat_types=[api.STAT_GAME_LOG],
+            season=season,
+            batch_size=api.GAMELOG_BATCH_SIZE,
+        )
+    )
+
+    # Handedness of each probable starter, for the opposing hitters' splits.
+    hands: dict[str, str | None] = {}
+    for side in ("home", "away"):
+        pid = probable[side]
+        hands[side] = (
+            (pitcher_people.get(pid, {}).get("pitchHand") or {}).get("code")
+            if pid
+            else None
+        )
+
+    sections: dict[str, TeamSection] = {}
     for side in ("home", "away"):
         opposite = "away" if side == "home" else "home"
         team_info = teams[side]["team"]
         record = teams[side].get("leagueRecord", {})
+        batter_entries, pitcher_entries = roster_entries[side]
 
-        starter_profile: PitcherProfile | None = None
-        if side in starters:
-            sid = starters[side]["id"]
-            bio = bios.get(sid, {})
-            starter_profile = _build_pitcher(
-                archiver,
-                player_id=sid,
-                name=starters[side].get("fullName", bio.get("fullName", "Unknown")),
-                throws=(bio.get("pitchHand") or {}).get("code"),
-                season=season,
+        batters = [
+            _build_batter_box(
+                batter_people[entry["person"]["id"]],
+                entry,
+                as_of=on,
+                opposing_hand=hands[opposite],
+                league_hitting=league_hitting,
+                arsenal_by_player=batter_arsenal,
+                league_by_pitch=league_by_pitch_faced,
+                percentiles=batter_percentiles,
+                expected=batter_expected,
+            )
+            for entry in batter_entries
+            if entry["person"]["id"] in batter_people
+        ]
+        # Most plate appearances first: the players most likely to bat today.
+        batters.sort(key=lambda b: -(b.season.get("plateAppearances") or 0))
+
+        pitchers = [
+            _build_pitcher_box(
+                pitcher_people[entry["person"]["id"]],
+                entry,
                 as_of=on,
                 fip_constant=league.fip_constant,
-                arsenal_by_player=arsenal_by_player,
-                percentiles_by_player=pitcher_percentiles,
-                expected_by_player=pitcher_expected,
+                league_pitching=league_pitching,
+                arsenal_by_player=pitcher_arsenal,
+                league_by_pitch=league_by_pitch_thrown,
+                percentiles=pitcher_percentiles,
+                expected=pitcher_expected,
+                probable_starter_id=probable[side],
             )
-
-        # The hand this side's hitters will face is the *opposing* starter's.
-        opposing_starter_id = (
-            starters[opposite]["id"] if opposite in starters else None
+            for entry in pitcher_entries
+            if entry["person"]["id"] in pitcher_people
+        ]
+        # Probable starter first, then the most rested arms.
+        pitchers.sort(
+            key=lambda p: (
+                not p.is_probable_starter,
+                -(p.availability.days_rest if p.availability
+                  and p.availability.days_rest is not None else 99),
+            )
         )
-        opposing_hand = None
-        if opposing_starter_id is not None:
-            opposing_hand = (
-                bios.get(opposing_starter_id, {}).get("pitchHand") or {}
-            ).get("code")
 
-        players, lineup_source, note = resolved_lineups[side]
-
-        lineup: list[BatterProfile] = []
-        for order, person in enumerate(players, start=1):
-            bio = bios.get(person["id"], {})
-            lineup.append(
-                _build_batter(
-                    archiver,
-                    player_id=person["id"],
-                    name=person.get("fullName", bio.get("fullName", "Unknown")),
-                    bats=(
-                        (person.get("batSide") or bio.get("batSide") or {})
-                    ).get("code"),
-                    position=(
-                        person.get("primaryPosition")
-                        or bio.get("primaryPosition")
-                        or {}
-                    ).get("abbreviation"),
-                    batting_order=order,
-                    season=season,
-                    as_of=on,
-                    opposing_hand=opposing_hand,
-                    expected_by_player=batter_expected,
-                    percentiles_by_player=batter_percentiles,
-                )
-            )
-
-        previews[side] = TeamPreview(
+        sections[side] = TeamSection(
             team_id=team_info["id"],
             name=team_info.get("name", ""),
             abbreviation=team_info.get("abbreviation", ""),
             record=f"{record.get('wins', 0)}-{record.get('losses', 0)}",
             is_home=(side == "home"),
-            starter=starter_profile,
-            lineup=lineup,
-            lineup_source=lineup_source,
-            lineup_source_note=note,
+            batters=batters,
+            pitchers=pitchers,
+            opposing_hand=hands[opposite],
         )
 
-    # Weather and umpires only exist on the live feed.
     weather: dict[str, Any] = {}
     try:
         feed = api.game_feed(archiver, game_pk=game_pk).json()
@@ -560,8 +642,11 @@ def build_preview(
         venue_name=(game.get("venue") or {}).get("name", ""),
         status=(game.get("status") or {}).get("detailedState", ""),
         weather=weather,
-        home=previews["home"],
-        away=previews["away"],
+        season=season,
+        home=sections["home"],
+        away=sections["away"],
         league=league,
+        league_hitting=league_hitting,
+        league_pitching=league_pitching,
         provenance=[r.provenance() for r in archiver.written],
     )

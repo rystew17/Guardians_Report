@@ -100,18 +100,68 @@ def expected_statistics(
 
 
 def pitch_arsenal_stats(
-    archiver: Archiver, *, year: int, minimum: int = 10
+    archiver: Archiver,
+    *,
+    year: int,
+    minimum: int = 10,
+    player_type: str = TYPE_PITCHER,
 ) -> FetchResult:
-    """Per-pitch-type results for every pitcher: usage, velocity, whiff rate,
-    put-away rate, and results allowed.
+    """Per-pitch-type results, for pitchers or for batters.
 
-    This is the backbone of the starting-pitcher section -- it is what lets the
-    report say what a pitcher actually throws and how each offering has played,
-    rather than just his ERA.
+    For a pitcher this is his arsenal: what he throws, how often, and how each
+    offering has played. For a batter the same endpoint returns the mirror
+    image -- how he has performed against each pitch type he has faced, with
+    `pitch_usage` meaning the share of pitches thrown to him rather than by him.
+
+    Together these are what let the report put a hitter's weakness against
+    changeups next to the fact that the starter throws one a quarter of the
+    time.
     """
     return _leaderboard(
-        LB_PITCH_ARSENAL, archiver, {"type": "pitcher", "year": year, "min": minimum}
+        LB_PITCH_ARSENAL,
+        archiver,
+        {"type": player_type, "year": year, "min": minimum},
     )
+
+
+def league_average_by_pitch_type(
+    rows: list[dict[str, str]]
+) -> dict[str, dict[str, float | None]]:
+    """League-average results for each pitch type, weighted by pitch count.
+
+    Used to benchmark an individual arsenal line: a .320 xwOBA against sliders
+    means something different from a .320 against fastballs, and this is what
+    supplies that context.
+
+    Weighting by pitches is deliberate. Averaging the per-pitcher rates would
+    give a pitcher who threw forty sliders the same say as one who threw two
+    thousand, which is not the league rate.
+    """
+    weighted: dict[str, dict[str, float]] = {}
+    totals: dict[str, float] = {}
+
+    metrics = ("whiff_percent", "put_away", "est_woba", "woba", "hard_hit_percent")
+
+    for row in rows:
+        pitch = row.get("pitch_type")
+        pitches = to_number(row.get("pitches"))
+        if not pitch or not pitches:
+            continue
+        totals[pitch] = totals.get(pitch, 0.0) + pitches
+        bucket = weighted.setdefault(pitch, {})
+        for metric in metrics:
+            value = to_number(row.get(metric))
+            if value is not None:
+                bucket[metric] = bucket.get(metric, 0.0) + value * pitches
+
+    return {
+        pitch: {
+            metric: (sums[metric] / totals[pitch] if metric in sums else None)
+            for metric in metrics
+        }
+        for pitch, sums in weighted.items()
+        if totals.get(pitch)
+    }
 
 
 def percentile_rankings(

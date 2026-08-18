@@ -39,23 +39,18 @@ class WindowSpec:
 
 
 SEASON = WindowSpec(label="Season", days=400)
-HITTER_WINDOWS: tuple[WindowSpec, ...] = (
+
+# L5 / L15 / L30 games for everyone, hitters and pitchers alike. For a pitcher
+# these are appearances, so a starter's L5 is his last five starts. Because the
+# game log is scoped to a single season, a 30-game window can never reach back
+# into the previous year -- it simply returns however many appearances exist.
+STANDARD_WINDOWS: tuple[WindowSpec, ...] = (
     WindowSpec(label="L5", games=5),
     WindowSpec(label="L15", games=15),
     WindowSpec(label="L30", games=30),
 )
-# A starter makes roughly one appearance every five days, so these cover
-# about the last 3, 6, and 12 starts respectively.
-STARTER_WINDOWS: tuple[WindowSpec, ...] = (
-    WindowSpec(label="Last 15d", days=15),
-    WindowSpec(label="Last 30d", days=30),
-    WindowSpec(label="Last 60d", days=60),
-)
-RELIEVER_WINDOWS: tuple[WindowSpec, ...] = (
-    WindowSpec(label="L5 app", games=5),
-    WindowSpec(label="L15 app", games=15),
-    WindowSpec(label="Last 30d", days=30),
-)
+HITTER_WINDOWS = STANDARD_WINDOWS
+PITCHER_WINDOWS = STANDARD_WINDOWS
 
 
 # Counting stats summed across a window. Anything not listed here is either a

@@ -1,25 +1,25 @@
 """Render a ReportBundle to a single self-contained HTML file.
 
 The renderer formats; it never computes. Every number it displays was produced
-by metrics/formulas.py before it got here. The formatting filters below are
-deliberately strict about one thing: a value of None means "not computable",
-and it renders as a dash, never as 0.000.
+by metrics/ before it got here. It is strict about one thing: a value of None
+means "not computable", and it renders as a dash, never as 0.000 -- a hitter
+with no plate appearances against left-handers has an undefined average, not a
+.000 one.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from markupsafe import Markup
 
 from guards_report.ingest.preview import ReportBundle
+from guards_report.metrics.zones import ZoneCell, ZoneGrid
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 
-# A dash, not a zero. The distinction matters: a hitter with no plate
-# appearances against left-handers has an undefined average, not a .000 one.
 EMPTY = "–"
 
 
@@ -41,8 +41,8 @@ def pct1(value: Any, *, already_pct: bool = False) -> str:
     """Format a proportion as a percentage.
 
     `already_pct` distinguishes our own rates (0-1, from formulas.py) from
-    Savant's, which arrive pre-multiplied (0-100). Conflating them would show
-    a 27% whiff rate as 2700%.
+    Savant's, which arrive pre-multiplied (0-100). Conflating them would show a
+    27% whiff rate as 2700%.
     """
     if value is None:
         return EMPTY
@@ -59,17 +59,18 @@ def integer(value: Any) -> str:
 
 
 def innings(value: Any) -> str:
-    """Innings in MLB notation, where .1 and .2 mean one and two outs."""
     if value is None:
         return EMPTY
     return f"{float(value):.1f}"
 
 
 def percentile_class(value: Any) -> str:
-    """Bucket a 0-100 percentile for colour coding."""
     if value is None or value == "":
         return "pct-none"
-    number = float(value)
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "pct-none"
     if number >= 75:
         return "pct-great"
     if number >= 60:
@@ -79,6 +80,46 @@ def percentile_class(value: Any) -> str:
     if number >= 25:
         return "pct-poor"
     return "pct-bad"
+
+
+def delta_html(entry: dict[str, Any] | None, *, style: str = "rate3") -> Markup:
+    """Render a league-average delta as a small signed, coloured annotation.
+
+    Direction is decided in metrics/league_averages.py, which knows that a low
+    ERA is good and a low OPS is not. The renderer only paints it.
+    """
+    if not entry:
+        return Markup("")
+
+    difference = entry["diff"]
+    if style == "pct":
+        text = f"{difference * 100:+.1f}"
+    elif style == "rate2":
+        text = f"{difference:+.2f}"
+    else:
+        text = f"{difference:+.3f}".replace("+0.", "+.").replace("-0.", "-.")
+
+    return Markup(
+        f'<span class="d d-{entry["direction"]}">{text}</span>'
+    )
+
+
+def zone_cell_style(grid: ZoneGrid, cell: ZoneCell) -> str:
+    """Background shading for one heat-map cell.
+
+    Shaded on a blue-to-red scale against the player's own range, which is what
+    makes a heat map answer "where is this hitter strong relative to himself"
+    rather than washing out for anyone uniformly good or uniformly bad.
+    """
+    if cell.value is None:
+        return "background: var(--zone-empty);"
+
+    intensity = grid.intensity(cell)
+    if intensity >= 0.5:
+        weight = (intensity - 0.5) * 2
+        return f"background: rgba(210, 45, 73, {0.12 + weight * 0.68:.2f});"
+    weight = (0.5 - intensity) * 2
+    return f"background: rgba(50, 90, 168, {0.12 + weight * 0.68:.2f});"
 
 
 def build_environment() -> Environment:
@@ -95,7 +136,9 @@ def build_environment() -> Environment:
         integer=integer,
         innings=innings,
         percentile_class=percentile_class,
+        delta=delta_html,
     )
+    env.globals.update(zone_cell_style=zone_cell_style)
     return env
 
 

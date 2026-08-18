@@ -22,7 +22,17 @@ SOURCE = "mlb_statsapi"
 
 # statsapi rejects a request whose personIds list is too long. Well under any
 # observed limit, and it keeps individual archived payloads a sane size.
-PERSON_BATCH_SIZE = 40
+PERSON_BATCH_SIZE = 20
+
+# Game logs run about 130 KB per player for a full season, so they get a
+# smaller batch to keep any single archived payload manageable.
+GAMELOG_BATCH_SIZE = 8
+
+STAT_SEASON = "season"
+STAT_GAME_LOG = "gameLog"
+STAT_SABERMETRICS = "sabermetrics"
+STAT_SPLITS = "statSplits"
+STAT_HOT_COLD_ZONES = "hotColdZones"
 
 
 def _get(
@@ -105,6 +115,50 @@ def active_roster(archiver: Archiver, *, team_id: int, season: int) -> FetchResu
 
 def team(archiver: Archiver, *, team_id: int, season: int) -> FetchResult:
     return _get(f"/v1/teams/{team_id}", archiver, {"season": season})
+
+
+def people_with_stats(
+    archiver: Archiver,
+    *,
+    person_ids: Sequence[int],
+    group: str,
+    stat_types: Sequence[str],
+    season: int,
+    sit_codes: Sequence[str] = (),
+    batch_size: int = PERSON_BATCH_SIZE,
+) -> list[FetchResult]:
+    """Fetch several stat types for several players in one request each.
+
+    The `stats(...)` hydrate accepts a list of types and a list of personIds
+    simultaneously, so a full report's worth of season lines, sabermetrics,
+    splits and zone data collapses from one request per player per stat type
+    into a handful of requests. For a 52-player preview that is the difference
+    between roughly 200 calls and about a dozen -- materially faster, and much
+    gentler on an unauthenticated public API we depend on.
+
+    Game logs are large enough (~130 KB per player) that callers should pass a
+    smaller batch_size for them; see GAMELOG_BATCH_SIZE.
+    """
+    types = ",".join(stat_types)
+    inner = f"group=[{group}],type=[{types}]"
+    if sit_codes:
+        inner += f",sitCodes=[{','.join(sit_codes)}]"
+    inner += f",season={season}"
+
+    results: list[FetchResult] = []
+    for start in range(0, len(person_ids), batch_size):
+        batch = person_ids[start : start + batch_size]
+        results.append(
+            _get(
+                "/v1/people",
+                archiver,
+                {
+                    "personIds": ",".join(str(i) for i in batch),
+                    "hydrate": f"stats({inner})",
+                },
+            )
+        )
+    return results
 
 
 def people(
@@ -293,6 +347,25 @@ def vs_player(
 # ---------------------------------------------------------------------------
 # League-wide totals, for deriving the FIP constant
 # ---------------------------------------------------------------------------
+
+
+def league_hitting_totals(archiver: Archiver, *, season: int) -> FetchResult:
+    """Season hitting totals for every team, summed to give league averages.
+
+    Every stat in the report is benchmarked against these, so a .750 OPS
+    carries its own context rather than requiring the reader to know what an
+    average one is this year.
+    """
+    return _get(
+        "/v1/teams/stats",
+        archiver,
+        {
+            "season": season,
+            "sportIds": MLB_SPORT_ID,
+            "group": GROUP_HITTING,
+            "stats": "season",
+        },
+    )
 
 
 def league_pitching_totals(archiver: Archiver, *, season: int) -> FetchResult:
