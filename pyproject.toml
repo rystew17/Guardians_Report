@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "guards-report"
+version = "0.1.0"
+description = "Daily scouting report / game preview for Cleveland Guardians games"
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.32",
+    "google-cloud-bigquery>=3.25",
+    "jinja2>=3.1",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+guards-report = "guards_report.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+guards_report = ["report/templates/*.html", "report/assets/*", "store/views/*.sql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

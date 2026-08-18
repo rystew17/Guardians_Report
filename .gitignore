@@ -1,0 +1,12 @@
+# Raw payload archive and rendered output are reproducible; never commit.
+data/
+out/
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
