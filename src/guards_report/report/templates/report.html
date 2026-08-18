@@ -144,8 +144,10 @@
   .zgrid { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
            display:grid; grid-template-columns:repeat(3,36px); grid-template-rows:repeat(3,31px);
            gap:2px; background:#eff2f5; padding:2px; box-shadow:0 0 0 2px #eff2f5; }
-  .zcell { display:flex; align-items:center; justify-content:center; font-size:.64rem;
-           font-variant-numeric:tabular-nums; font-weight:750; color:#1a1a1a; }
+  /* Sized so a five-character rate like 28.4% still fits the cell. */
+  .zcell { display:flex; align-items:center; justify-content:center; font-size:.6rem;
+           font-variant-numeric:tabular-nums; font-weight:750; color:#1a1a1a;
+           letter-spacing:-.02em; }
   .zplate { display:block; margin:3px auto 0; }
   .zcap { font-size:.6rem; color:var(--faint); margin-top:.2rem; }
   .spray { display:block; }

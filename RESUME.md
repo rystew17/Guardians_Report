@@ -24,7 +24,12 @@ cd C:\dev\guards-report
 `--date` accepts `today`, `tomorrow`, `yesterday`, or `YYYY-MM-DD`. Drop
 `--no-store` once BigQuery is authenticated. Output lands in `out/`.
 
-Tests: `.venv\Scripts\python.exe -m pytest -q` (70 offline).
+**`--no-statcast`** skips the per-player pitch-level fetches. A full run is
+~80 requests and about three minutes; without Statcast it is ~29 requests and
+about twenty seconds, at the cost of the handedness-split zone maps and spray
+charts. Use it when iterating on layout.
+
+Tests: `.venv\Scripts\python.exe -m pytest -q` (82 offline).
 Network tests, which validate our math against MLB's published values:
 `pytest -m network` (6).
 

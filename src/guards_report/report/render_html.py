@@ -250,12 +250,18 @@ def statcast_zone_style(chart: Any, code: str) -> str:
 
 
 def zone_value(chart: Any, code: str) -> str:
-    """Format a zone cell according to its metric."""
+    """Format a zone cell according to its metric.
+
+    Rate metrics carry one decimal like every other percentage in the report:
+    the difference between a 28% and a 28.4% chase rate in a given zone is the
+    kind of thing this map exists to show, and rounding it away costs the
+    resolution the reader came for.
+    """
     value = chart.value(code)
     if value is None or chart.sample(code) < 4:
         return EMPTY
     if chart.metric in ("swing", "k", "whiff"):
-        return f"{value * 100:.0f}%"
+        return f"{value * 100:.1f}%"
     return rate3(value)
 
 
