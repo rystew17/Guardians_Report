@@ -1,6 +1,7 @@
 """Command line entry point.
 
     guards-report build [--date today|YYYY-MM-DD] [--no-store]
+    guards-report serve [--port 8765]
     guards-report setup-bq
     guards-report cost
 """
@@ -24,6 +25,79 @@ def _parse_date(text: str) -> date:
     return date.fromisoformat(text)
 
 
+def attach_analysis(bundle, settings, *, model: str) -> dict:
+    """Generate written notes and attach them to a finished bundle.
+
+    Deliberately fault-tolerant: the report is complete without prose, so an
+    unauthenticated CLI or a failed call degrades to an un-annotated report
+    with a clear message rather than losing the run.
+    """
+    from guards_report.analysis.agent import (
+        AgentUnavailable,
+        PartialResult,
+        generate_sync,
+    )
+    from guards_report.analysis.digest import select_subjects
+    from guards_report.analysis.store import AnalysisStore, summarize
+
+    digests = select_subjects(bundle)
+    store = AnalysisStore(settings.raw_archive_dir.parent / "analysis")
+    cache = store.load(bundle.game_pk)
+
+    print(f"  analysing {len(digests)} subjects ...", file=sys.stderr)
+
+    def progress(done: int, total: int, label: str) -> None:
+        print(f"    [{done}/{total}] {label}", file=sys.stderr)
+
+    partial = False
+    try:
+        analyses = generate_sync(
+            digests, model=model, cache=cache, on_progress=progress
+        )
+    except PartialResult as exc:
+        # The subscription's usage window ran out mid-run. Everything already
+        # generated is kept and saved, so a later run resumes from the cache
+        # instead of paying for these notes twice.
+        analyses, partial = exc.analyses, True
+        print(
+            f"  stopped: {exc.reason}. Keeping {len(analyses)} of "
+            f"{len(digests)} notes; rerun later to finish the rest.",
+            file=sys.stderr,
+        )
+    except AgentUnavailable as exc:
+        print(
+            f"  warning: analysis skipped ({exc})\n"
+            f"  the report is complete without it; run "
+            f'"claude login" to enable written analysis',
+            file=sys.stderr,
+        )
+        return {}
+
+    store.save(bundle.game_pk, analyses)
+    bundle.analyses = {a.subject_id: a for a in analyses}
+    bundle.analysis_summary = summarize(analyses)
+
+    s = bundle.analysis_summary
+    # Tokens, not dollars: with subscription auth nothing here is billed to a
+    # card, and reporting a dollar figure invites exactly the wrong decision.
+    # The equivalent is kept in parentheses purely for scale.
+    detail = f"  analysis: {s['generated']} generated, {s['from_cache']} cached"
+    if s.get("tokens"):
+        detail += f" · {s['tokens']:,} tokens"
+    if s.get("cost_usd"):
+        detail += f" (~${s['cost_usd']} at API rates; billed to your subscription)"
+    if partial:
+        detail += " · INCOMPLETE"
+    print(detail, file=sys.stderr)
+    if s["with_unverified_figures"]:
+        print(
+            f"  warning: {s['with_unverified_figures']} notes cite figures not "
+            f"found in their source data: {', '.join(s['unverified_subjects'][:3])}",
+            file=sys.stderr,
+        )
+    return s
+
+
 def cmd_build(args: argparse.Namespace) -> int:
     from guards_report.ingest.preview import build_preview
     from guards_report.report.render_html import render
@@ -37,6 +111,11 @@ def cmd_build(args: argparse.Namespace) -> int:
     except LookupError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+
+    # Written analysis is a separate, optional stage that runs only after the
+    # numbers are final. A failure here never costs the report.
+    if args.with_analysis:
+        attach_analysis(bundle, settings, model=args.model)
 
     path = render(bundle, output_dir=settings.output_dir)
 
@@ -122,6 +201,37 @@ def cmd_cost(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_serve(args: argparse.Namespace) -> int:
+    from guards_report.app.main import serve
+
+    serve(host=args.host, port=args.port)
+    return 0
+
+
+def cmd_publish(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from guards_report.publish import gcs
+
+    settings = load_settings()
+    path = Path(args.path)
+    if not path.is_absolute():
+        candidate = settings.output_dir / path.name
+        if candidate.is_file():
+            path = candidate
+
+    try:
+        result = gcs.publish(
+            path, bucket_name=settings.gcs_bucket, project=settings.gcp_project
+        )
+    except gcs.PublishError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    print(result.url)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="guards-report")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -141,7 +251,30 @@ def main(argv: list[str] | None = None) -> int:
             "-- useful when iterating on layout."
         ),
     )
+    build.add_argument(
+        "--with-analysis",
+        action="store_true",
+        help=(
+            "generate written analysis for the matchup, both starters and both "
+            "lineups via the Claude Agent SDK (uses your subscription's Agent "
+            "SDK credit; requires `claude login`)"
+        ),
+    )
+    build.add_argument(
+        "--model",
+        default="sonnet",
+        help="model for written analysis: sonnet (default), opus, or haiku",
+    )
     build.set_defaults(func=cmd_build)
+
+    serve = sub.add_parser("serve", help="run the local web app")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8765)
+    serve.set_defaults(func=cmd_serve)
+
+    publish = sub.add_parser("publish", help="upload a report and print its link")
+    publish.add_argument("path", help="report file, or just its name in out/")
+    publish.set_defaults(func=cmd_publish)
 
     setup = sub.add_parser("setup-bq", help="create dataset and tables")
     setup.set_defaults(func=cmd_setup_bq)
