@@ -18,7 +18,7 @@
     --accent:#0c2340; --accent-2:#e31937;
     --good:#0b7a48; --bad:#c02233; --even:#8992a0;
     --zone-empty:#eef1f4;
-    --field:#e8eee6; --field-line:#c3cfc0;
+    --field:#dcebe4; --field-line:#a9c0b4; --field-dirt:#f3ece1;
     --great:#d22d49; --gd:#e8896a; --avg:#cbd1d6; --poor:#7aa0c4; --bad-p:#325aa8;
 
     --sp-1:.25rem; --sp-2:.5rem; --sp-3:.75rem; --sp-4:1rem; --sp-6:1.5rem;
@@ -133,7 +133,12 @@
   /* The handedness groups are flex children so their plots share the row with
      the spray chart rather than starting a block of their own. */
   .hgroup { display:flex; gap:var(--sp-4); flex-wrap:wrap; align-items:flex-start; }
-  .spraywrap { flex:0 0 auto; }
+  /* Pinned to a zone plot's width so the spray chart is the first cell of the
+     same row rather than a wide block that pushes the zone maps onto their own
+     line. Without the width the caption -- "344 batted balls - pull 33.4% ..."
+     -- sets the wrapper's width and forces exactly that break. */
+  .spraywrap { flex:0 0 auto; width:186px; }
+  .spraywrap .zcap { white-space:normal; }
   .zwrap { text-align:center; }
   .zlabel { font-size:.64rem; text-transform:uppercase; letter-spacing:.05em;
             color:var(--faint); font-weight:750; margin-bottom:var(--sp-1); }
@@ -230,11 +235,83 @@
   .note { border-left:3px solid var(--accent-2); background:var(--panel);
           padding:var(--sp-2) var(--sp-3); border-radius:0 6px 6px 0;
           font-size:.8rem; color:var(--muted); margin:var(--sp-2) 0 var(--sp-4); }
-  .llm { margin-top:var(--sp-3); border:1px dashed var(--border-hi); border-radius:8px;
-         padding:var(--sp-2) var(--sp-3); background:var(--panel); min-height:50px; }
+  /* Written analysis. Visually distinct from every sourced figure on the page:
+     a filled note is the one place a human did not compute the words, so it
+     carries its own border and a badge showing how many of its numbers were
+     traced back to the data it was given. */
+  /* The note is the last thing in a box and the first thing people read, so it
+     gets real breathing room above it and consistent internal rhythm rather
+     than a cramped strip wedged against the tables. Spacing is set with flex
+     gap so the label and body cannot double up their margins. */
+  .spray .sdist { font-size:6.5px; font-weight:700; fill:var(--field-line);
+                  letter-spacing:.02em; }
+
+  tr.career td { background:var(--panel); border-bottom:2px solid var(--border); }
+  tr.career td.na { color:var(--faint); }
+
+  /* Series box scores */
+  .gbox { border:1px solid var(--border); border-radius:9px;
+          padding:var(--sp-3) var(--sp-4) var(--sp-4);
+          margin-bottom:var(--sp-4); background:var(--box); }
+  .ghead { display:flex; align-items:baseline; gap:var(--sp-2); flex-wrap:wrap;
+           margin-bottom:var(--sp-3); padding-bottom:var(--sp-2);
+           border-bottom:1px solid var(--border); }
+  .ghead .gscore { font-weight:750; font-size:1.05rem; letter-spacing:-.01em; }
+  /* The line score is a scoreboard, so it gets scoreboard spacing: even
+     columns wide enough to read at a glance, and the R/H/E block set apart
+     from the innings rather than running straight on from them. */
+  table.line { width:auto; min-width:0; font-variant-numeric:tabular-nums;
+               border-collapse:separate; border-spacing:0; }
+  table.line th, table.line td { padding:.4rem 0; text-align:center;
+                                 min-width:1.75rem; border-bottom:0; }
+  table.line thead th { font-size:.62rem; color:var(--faint); font-weight:700;
+                        padding-bottom:.3rem; }
+  table.line tbody td { font-size:.9rem; }
+  table.line th.l, table.line td.l { text-align:left; min-width:3rem;
+                                     padding-right:var(--sp-2); }
+  table.line tbody tr + tr td { border-top:1px solid var(--border); }
+  table.line .rhe { font-weight:750; min-width:2rem; }
+  table.line th:nth-last-child(3), table.line td:nth-last-child(3) {
+    border-left:2px solid var(--border); padding-left:.7rem; }
+  .gdec { display:flex; flex-direction:column; gap:.4rem; margin-top:var(--sp-3);
+          font-size:.85rem; }
+  .dtag { display:inline-block; min-width:1.15rem; text-align:center; font-size:.62rem;
+          font-weight:800; padding:.06rem .26rem; border-radius:3px; color:#fff;
+          margin-right:.3rem; }
+  .dtag-w { background:var(--good); } .dtag-l { background:var(--bad); }
+  .dtag-s { background:var(--muted); }
+  .gperf { margin-top:var(--sp-3); padding-top:var(--sp-3);
+           border-top:1px solid var(--border); display:flex; flex-direction:column;
+           gap:.4rem; }
+  .gplabel { font-size:.62rem; text-transform:uppercase; letter-spacing:.06em;
+             color:var(--faint); font-weight:750; margin-bottom:.1rem; }
+  .gprow { font-size:.85rem; display:flex; align-items:baseline; gap:.45rem;
+           flex-wrap:wrap; }
+
+  /* A player's line across the current series, in his box header */
+  .sline { display:flex; align-items:baseline; gap:.4rem; flex-wrap:wrap;
+           margin-top:var(--sp-2); padding:.34rem .55rem; border-radius:6px;
+           background:var(--panel); border-left:3px solid var(--accent-2);
+           font-size:.82rem; }
+  .sline .slabel { font-size:.6rem; text-transform:uppercase; letter-spacing:.06em;
+                   color:var(--faint); font-weight:750; }
+  .sline .sval { font-weight:700; font-variant-numeric:tabular-nums; }
+
+  .llm { margin-top:var(--sp-4); border:1px dashed var(--border-hi); border-radius:8px;
+         padding:var(--sp-3); background:var(--panel);
+         display:flex; flex-direction:column; gap:var(--sp-2); }
+  .llm.filled { border-style:solid; border-left:4px solid var(--accent);
+                background:var(--box); }
   .llm .lt { font-size:.62rem; text-transform:uppercase; letter-spacing:.06em;
-             color:var(--faint); font-weight:750; margin-bottom:.15rem; }
-  .llm .lp { color:var(--faint); font-size:.76rem; font-style:italic; }
+             color:var(--faint); font-weight:750; margin:0;
+             display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
+  .llm .lp { color:var(--faint); font-size:.76rem; font-style:italic; margin:0; }
+  .llm .la { font-size:.88rem; line-height:1.6; color:var(--ink); max-width:74ch;
+             margin:0; text-wrap:pretty; }
+  .lv { font-size:.6rem; font-weight:700; letter-spacing:.02em; padding:.1rem .34rem;
+        border-radius:4px; text-transform:none; }
+  .lv-ok { background:rgba(11,122,72,.12); color:var(--good); }
+  .lv-warn { background:rgba(192,34,51,.12); color:var(--bad); }
 
   footer { margin-top:2.5rem; padding-top:var(--sp-4); border-top:1px solid var(--border);
            font-size:.74rem; color:var(--faint); }
@@ -246,6 +323,18 @@
   /* ---------- mobile ---------- */
   @media (max-width:640px) {
     body { padding:0 .6rem 3rem; font-size:13px; }
+
+    /* The five tabs are 595px of buttons. In a 375px viewport the two
+       opponent pages sat entirely off-screen, and a horizontally scrolling
+       nav with a hidden scrollbar gives no hint that anything is there --
+       so half the report was simply unreachable on a phone. Wrapping into a
+       grid keeps every tab on screen and makes each one a full-size tap
+       target. */
+    nav { display:grid; grid-template-columns:repeat(2,1fr); gap:var(--sp-1);
+          overflow-x:visible; }
+    nav button { white-space:normal; text-align:center; padding:.55rem .5rem;
+                 font-size:.78rem; line-height:1.25; min-height:44px; }
+    nav button:first-child { grid-column:1 / -1; }
     .box { padding:var(--sp-2) var(--sp-3) var(--sp-3); border-radius:8px; }
     .bhead { gap:var(--sp-1); }
     .bname { font-size:.95rem; width:100%; }
@@ -255,6 +344,10 @@
     th,td { padding:.3rem .4rem; }
     .vis { gap:var(--sp-3); justify-content:center; }
     .zplot { width:158px; height:136px; }
+    /* Keeps the pairing with .zplot on small screens; the SVG carries a
+       viewBox, so it scales rather than crops. */
+    .spraywrap { width:158px; }
+    .spray { width:158px; height:auto; }
     .zgrid { grid-template-columns:repeat(3,31px); grid-template-rows:repeat(3,27px); }
     .zcell,.zq span { font-size:.58rem; }
     .pcts { grid-template-columns:repeat(auto-fill,minmax(52px,1fr)); }
@@ -266,6 +359,59 @@
     .page { display:block !important; break-after:page; }
     body { padding:0; background:#fff; }
   }
+
+/* ---- projections page ---- */
+.pread{font:1.02rem/1.55 var(--sans);margin:.35rem 0 .7rem;
+       padding:.55rem .75rem;border-left:3px solid var(--accent);
+       background:var(--panel);border-radius:0 3px 3px 0}
+.pread strong{font-variant-numeric:tabular-nums}
+.pwrap{display:flex;flex-direction:column;gap:.35rem;margin:.5rem 0 1rem}
+.pbar{display:flex;height:2.2rem;border-radius:3px;overflow:hidden;
+      border:1px solid var(--rule);background:var(--panel)}
+.pfill{display:flex;align-items:center;font:600 .78rem/1 var(--sans);
+       color:#fff;padding:0 .55rem;white-space:nowrap;min-width:0}
+.pfill.home{background:#1d4e89;justify-content:flex-start}
+.pfill.away{background:#8a3b2e;justify-content:flex-end}
+.pmeta{display:flex;flex-wrap:wrap;gap:.75rem;justify-content:space-between;
+       font:.72rem/1.35 var(--sans);color:var(--muted)}
+.agree{color:#2f6b3f;font-weight:600}
+.disagree{color:#9a5b12;font-weight:600}
+
+.pcols{display:grid;grid-template-columns:repeat(auto-fit,minmax(24rem,1fr));
+       gap:1rem 1.4rem;align-items:start;margin:.5rem 0 1rem}
+.pfig{margin:0;min-width:0}
+.pcols.split{grid-template-columns:minmax(0,620px) minmax(16rem,1fr)}
+.pfig.wide{grid-column:1/-1}
+.pfig svg{max-width:100%;height:auto;display:block}
+.cap{font:600 .7rem/1.3 var(--sans);letter-spacing:.05em;
+     text-transform:uppercase;color:var(--muted);margin-bottom:.3rem}
+.pfig .sub{font:.74rem/1.5 var(--sans);color:var(--muted);margin:.35rem 0 0}
+.pexp{min-width:0}
+.pexp p{font:.8rem/1.55 var(--sans);margin:0 0 .5rem}
+.pexp .sub{color:var(--muted);font-size:.75rem}
+
+.pcmp,.pstart,.ptrack{width:100%;border-collapse:collapse;margin:.4rem 0 .2rem;
+       font-variant-numeric:tabular-nums}
+.pcmp th,.pstart th,.ptrack th{font:600 .68rem/1.3 var(--sans);
+       letter-spacing:.04em;text-transform:uppercase;color:var(--muted);
+       text-align:right;padding:.3rem .45rem;border-bottom:1px solid var(--rule)}
+.pcmp td,.pstart td,.ptrack td{font:.82rem/1.4 var(--sans);text-align:right;
+       padding:.32rem .45rem;border-bottom:1px solid var(--rule)}
+.pcmp th.l,.pstart th.l,.ptrack th.l,
+.pcmp td.l,.pstart td.l,.ptrack td.l{text-align:left}
+.ptrack tr.tot td{border-top:1.5px solid var(--ink);border-bottom:none}
+.rcmp,.accbar{vertical-align:middle}
+
+/* svg text classes */
+.sgl{font:.66rem var(--sans);fill:var(--muted)}
+.sga{font:600 .7rem var(--sans);fill:var(--ink)}
+.elolab{font:600 .72rem var(--sans)}
+.wfl{font:.72rem var(--sans);fill:var(--muted)}
+.wfl.lead{font-weight:600;fill:var(--ink)}
+.wfv{font:.68rem var(--sans);fill:var(--muted);font-variant-numeric:tabular-nums}
+.wfv.lead{font-weight:700;fill:var(--ink)}
+.mwin{font:700 .82rem var(--sans)}
+.cstrip,.wfall,.mdist,.rside,.tdist,.eloscale{overflow:visible}
 </style>
 </head>
 <body>
@@ -274,7 +420,7 @@
 <header>
   <h1>{{ bundle.away.name }} at {{ bundle.home.name }}</h1>
   <div class="sub">{{ bundle.game_date }} · {{ bundle.venue_name }} · {{ bundle.status }}
-    {% if bundle.game_datetime %} · {{ bundle.game_datetime.strftime('%H:%M UTC') }}{% endif %}
+    {% if bundle.game_datetime %} · {{ game_time(bundle.game_datetime) }}{% endif %}
     {% if bundle.series and bundle.series.series_game_number %}
       · Game {{ bundle.series.series_game_number }} of {{ bundle.series.games_in_series }}
     {% endif %}
@@ -284,6 +430,10 @@
     <span>League <b>{{ bundle.league_hitting.get('avg')|rate3 }}/{{ bundle.league_hitting.get('obp')|rate3 }}/{{ bundle.league_hitting.get('slg')|rate3 }}</b></span>
     <span>lgERA <b>{{ bundle.league_pitching.get('era')|rate2 }}</b></span>
     <span>cFIP <b>{{ bundle.league.fip_constant|rate2 }}</b></span>
+    {#- The boundary every figure on this page respects. Stated openly because
+        a reader checking a number against a box score needs to know which
+        games it covers, and because today's game is deliberately absent. -#}
+    <span title="Regular season and postseason games completed before this date. Games in progress are excluded, so a rebuild produces the same figures.">Through <b>{{ bundle.as_of_date }}</b>, completed games only</span>
   </div>
 </header>
 
@@ -299,6 +449,9 @@
   {% for kind, team, label in pages %}
   <button role="tab" data-page="p{{ loop.index }}" aria-selected="{{ 'true' if loop.first else 'false' }}">{{ label }}</button>
   {% endfor %}
+  {% if bundle.projection %}
+  <button role="tab" data-page="pproj" aria-selected="false">Projections</button>
+  {% endif %}
 </nav>
 
 {#- ============================ macros ============================ -#}
@@ -437,9 +590,22 @@
 {% endif %}
 {% endmacro %}
 
-{% macro llm_slot() %}
-<div class="llm"><div class="lt">Analysis</div>
-<div class="lp">Reserved for the Phase 2 written read-out. No text is generated in this build — every figure above is sourced or computed.</div></div>
+{% macro llm_slot(subject_id) %}
+{% set a = bundle.analyses.get(subject_id) if subject_id else none %}
+<div class="llm{{ ' filled' if a }}">
+  <div class="lt">Analysis{% if a %}
+    <span class="lv {{ 'lv-ok' if a.verification.ok else 'lv-warn' }}"
+          title="{{ a.verification.summary }}">
+      {{ '✓ ' ~ a.verification.checked ~ ' figures verified' if a.verification.ok
+         else '⚠ ' ~ a.verification.unverified|length ~ ' unverified' }}
+    </span>{% endif %}
+  </div>
+  {% if a %}
+  <div class="la">{{ a.text }}</div>
+  {% else %}
+  <div class="lp">No written analysis for this player in this run.</div>
+  {% endif %}
+</div>
 {% endmacro %}
 
 {#- ========================= pitcher box ========================= -#}
@@ -459,6 +625,18 @@
     {% endif %}
   </div>
 
+  {#- This player's line in the current set. Shown above the season splits
+      because it is the most immediate context there is: what he has done in
+      these games, against this opponent, this week. -#}
+  {% if box.series_line and box.series_line.has_data %}
+  <div class="sline">
+    <span class="slabel">This series</span>
+    <span class="sval">{{ box.series_line.summary }}</span>
+    <span class="sub">{{ box.series_line.games }}
+      game{{ '' if box.series_line.games == 1 else 's' }}</span>
+  </div>
+  {% endif %}
+
   {% if box.percentiles %}
   {{ pchips(box, [('xera','xERA'),('xwoba','xwOBA'),('xba','xBA'),('xslg','xSLG'),
       ('k_percent','K%'),('bb_percent','BB%'),('whiff_percent','Whiff'),('chase_percent','Chase'),
@@ -475,6 +653,23 @@
       <thead><tr><th class="l">Split</th><th>G</th><th>IP</th><th>BF</th><th>ERA</th><th>FIP</th><th>WHIP</th>
         <th>K%</th><th>BB%</th><th>K-BB%</th><th>HR/9</th></tr></thead>
       <tbody>
+        {#- Career sits above the season line: it is the baseline everything
+            below is measured against. Values come straight from the source's
+            own career totals, so they are shown as published, without league
+            deltas -- a career spans many seasons and this year's league
+            average is not a fair benchmark for it. -#}
+        {% if box.career and box.career.gamesPlayed %}
+        <tr class="career">
+          <td class="l"><strong>Career</strong></td><td>{{ box.career.gamesPlayed }}</td>
+          <td>{{ box.career.inningsPitched|innings }}</td>
+          <td class="denom">{{ box.career.battersFaced or '—' }}</td>
+          <td>{{ box.career.era or '—' }}</td>
+          <td class="na">—</td>
+          <td>{{ box.career.whip or '—' }}</td>
+          <td class="na">—</td><td class="na">—</td><td class="na">—</td>
+          <td>{{ box.career.homeRunsPer9 or '—' }}</td>
+        </tr>
+        {% endif %}
         <tr>
           <td class="l"><strong>Season</strong></td><td>{{ box.season.games }}</td>
           <td>{{ box.season.inningsPitchedDisplay|innings }}</td>
@@ -532,10 +727,10 @@
   {% endif %}
 
   {{ situational(box, ['vl','vr','risp','lc','2s','pi000','pi760','h','a'], true) }}
-  {{ zone_section(box, 'pitcher') }}
+  {{ zone_section(box, pitcher) }}
   </details>
 
-  {{ llm_slot() }}
+  {{ llm_slot("pitcher-" ~ box.player_id) }}
 </div>
 {% endmacro %}
 
@@ -559,6 +754,18 @@
     {% if box.vs_hand and box.vs_hand.get('ops') %}<span class="tag hot">{{ box.vs_hand_label }} {{ box.vs_hand.get('ops') }}</span>{% endif %}
   </div>
 
+  {#- This player's line in the current set. Shown above the season splits
+      because it is the most immediate context there is: what he has done in
+      these games, against this opponent, this week. -#}
+  {% if box.series_line and box.series_line.has_data %}
+  <div class="sline">
+    <span class="slabel">This series</span>
+    <span class="sval">{{ box.series_line.summary }}</span>
+    <span class="sub">{{ box.series_line.games }}
+      game{{ '' if box.series_line.games == 1 else 's' }}</span>
+  </div>
+  {% endif %}
+
   {% if box.percentiles %}
   {{ pchips(box, [('xwoba','xwOBA'),('xba','xBA'),('xslg','xSLG'),('xiso','xISO'),('xobp','xOBP'),
       ('brl_percent','Barrel'),('exit_velocity','ExitVelo'),('max_ev','MaxEV'),('hard_hit_percent','HardHit'),
@@ -575,6 +782,20 @@
       <thead><tr><th class="l">Split</th><th>G</th><th>PA</th><th>AVG</th><th>OBP</th><th>SLG</th>
         <th>OPS</th><th>ISO</th><th>BABIP</th><th>K%</th><th>BB%</th><th>HR</th></tr></thead>
       <tbody>
+        {#- See the note on the pitcher table: career totals are shown as the
+            source publishes them, without a league delta. -#}
+        {% if box.career and box.career.gamesPlayed %}
+        <tr class="career">
+          <td class="l"><strong>Career</strong></td><td>{{ box.career.gamesPlayed }}</td>
+          <td class="denom">{{ box.career.plateAppearances or '—' }}</td>
+          <td>{{ box.career.avg or '—' }}</td>
+          <td>{{ box.career.obp or '—' }}</td>
+          <td>{{ box.career.slg or '—' }}</td>
+          <td>{{ box.career.ops or '—' }}</td>
+          <td class="na">—</td><td class="na">—</td><td class="na">—</td><td class="na">—</td>
+          <td>{{ box.career.homeRuns }}</td>
+        </tr>
+        {% endif %}
         <tr>
           <td class="l"><strong>Season</strong></td><td>{{ box.season.games }}</td>
           <td class="denom">{{ box.season.plateAppearances }}</td>
@@ -689,16 +910,18 @@
   {% endif %}
 
   {{ situational(box, ['vl','vr','risp','risp2','lc','2s','ac','bc','h','a'], false) }}
-  {{ zone_section(box, 'batter') }}
+  {{ zone_section(box, batter) }}
   </details>
 
-  {{ llm_slot() }}
+  {{ llm_slot("batter-" ~ box.player_id) }}
 </div>
 {% endmacro %}
 
 {#- ======================= page 1: matchup ======================= -#}
 <section class="page active" id="p1">
   <h2>Matchup</h2>
+
+  {{ llm_slot("game-" ~ bundle.game_pk) }}
 
   {% if bundle.highlights %}
   <h4>What to watch</h4>
@@ -728,6 +951,73 @@
       Recent: {{ bundle.series.recent|join(' · ') }} (away–home).
     {% endif %}
   </div>
+  {% endif %}
+
+  {% if bundle.series_boxes %}
+  <h4>This series, game by game</h4>
+  {% for g in bundle.series_boxes %}
+  <div class="gbox">
+    <div class="ghead">
+      <strong>Game {{ g.series_game_number }}</strong>
+      <span class="gscore">{{ g.final }}</span>
+      <span class="sub">{{ g.game_date }}</span>
+    </div>
+
+    <div class="scroll">
+      <table class="line">
+        <thead>
+          <tr><th class="l">&nbsp;</th>
+            {% for inning in g.innings %}<th>{{ inning.num }}</th>{% endfor %}
+            <th class="rhe">R</th><th class="rhe">H</th><th class="rhe">E</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="l"><strong>{{ g.away_abbr }}</strong></td>
+            {# A blank half-inning means that team did not bat -- the home side
+               in a game it was already winning. "x" is the scorebook mark. #}
+            {% for inning in g.innings %}<td>{{ inning.away if inning.away is not none else 'x' }}</td>{% endfor %}
+            <td class="rhe">{{ g.away_totals.runs }}</td><td class="rhe">{{ g.away_totals.hits }}</td>
+            <td class="rhe">{{ g.away_totals.errors }}</td>
+          </tr>
+          <tr>
+            <td class="l"><strong>{{ g.home_abbr }}</strong></td>
+            {% for inning in g.innings %}<td>{{ inning.home if inning.home is not none else 'x' }}</td>{% endfor %}
+            <td class="rhe">{{ g.home_totals.runs }}</td><td class="rhe">{{ g.home_totals.hits }}</td>
+            <td class="rhe">{{ g.home_totals.errors }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="gdec">
+      {% if g.winning_pitcher %}
+      <div><span class="dtag dtag-w">W</span> {{ g.winning_pitcher }}
+        <span class="sub">{{ g.winning_line }}</span></div>
+      {% endif %}
+      {% if g.losing_pitcher %}
+      <div><span class="dtag dtag-l">L</span> {{ g.losing_pitcher }}
+        <span class="sub">{{ g.losing_line }}</span></div>
+      {% endif %}
+      {% if g.save_pitcher %}
+      <div><span class="dtag dtag-s">S</span> {{ g.save_pitcher }}</div>
+      {% endif %}
+    </div>
+
+    {% if g.performers %}
+    <div class="gperf">
+      <div class="gplabel">Top performers</div>
+      {% for p in g.performers %}
+      <div class="gprow"><strong>{{ p.name }}</strong>
+        <span class="tag">{{ p.team }}</span>
+        <span class="sub">{{ p.summary }}</span></div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+  <div class="note">Top performers are ranked by hard-coded box score formulas —
+    batters on {{ batter_score_formula }}, pitchers on {{ pitcher_score_formula }}.
+    Nothing here is judged or written.</div>
   {% endif %}
 
   <div class="vs">
@@ -819,6 +1109,276 @@
   {% endfor %}
 </section>
 
+{#- ===================== projections ===================== -#}
+{% if bundle.projection %}
+{% set pj = bundle.projection %}
+{% set sc = pj.score %}
+{% set wm = pj.metrics.win_model %}
+<section class="page" id="pproj">
+  <h2>Projections
+    <span class="sub" style="font-weight:400;">probabilities, not predictions</span>
+  </h2>
+
+  {% set sc = pj.score %}
+  {% set wm = pj.metrics.win_model %}
+  {% set lr = pj.metrics.league_rates %}
+  {% set rd = projection_read(pj) %}
+
+  <div class="note">
+    These are likelihoods over outcomes, not a forecast of what will happen. The
+    models are right about {{ (wm.accuracy * 100)|round(1) }}% of the time against a
+    {{ (wm.baseline_accuracy * 100)|round(1) }}% baseline of always picking the home
+    team &mdash; a real edge, and a small one. Across
+    {{ '{:,}'.format(lr.n_games) }} games since 2015,
+    {{ (lr.one_run_game * 100)|round(0)|int }}% were decided by a single run. Read
+    the spread, not the centre.
+  </div>
+
+  {#- ---------- the call, and how sure it is by this model's standards ---------- -#}
+  <h3 class="lab">The call</h3>
+  {% if rd.sentence %}
+  <p class="pread">
+    <strong>{{ pj.favourite }} {{ (pj.confidence * 100)|round(1) }}%</strong>
+    &mdash; {{ rd.sentence }}{% if rd.note %}; {{ rd.note }}{% endif %}.
+  </p>
+  {% endif %}
+
+  <div class="pwrap">
+    <div class="pbar">
+      <div class="pfill home" style="width:{{ (pj.win_probability * 100)|round(1) }}%">
+        {{ bundle.home.abbreviation }} {{ (pj.win_probability * 100)|round(1) }}%
+      </div>
+      <div class="pfill away" style="width:{{ ((1 - pj.win_probability) * 100)|round(1) }}%">
+        {{ bundle.away.abbreviation }} {{ ((1 - pj.win_probability) * 100)|round(1) }}%
+      </div>
+    </div>
+    <div class="pmeta">
+      <span>Win model {{ (pj.win_probability * 100)|round(1) }}%</span>
+      <span>Score model {{ (pj.implied_win_probability * 100)|round(1) }}%</span>
+      <span class="{{ 'agree' if pj.coherent else 'disagree' }}">
+        {% if pj.coherent %}&check; two independent models agree
+        {% else %}&#9888; the two models disagree &mdash; treat this as uncertain
+        {% endif %}
+      </span>
+    </div>
+  </div>
+
+  <div class="pcols">
+    <figure class="pfig">
+      <figcaption class="cap">How sure is that, for this model?</figcaption>
+      {{ confidence_strip(pj) }}
+      <p class="sub">
+        Tonight sits at the
+        <strong>{{ pj.confidence_percentile|round(0)|int|rank_ordinal }} percentile</strong> of every call this model has ever made. Its range across
+        {{ '{:,}'.format(lr.n_games) }} games runs from a coin flip to about 83%, and
+        six nights in ten land between 45% and 65% &mdash; so most nights this page
+        will say the home team is a slight favourite, and that is the honest answer.
+      </p>
+    </figure>
+
+    <figure class="pfig">
+      <figcaption class="cap">Team rating</figcaption>
+      {{ elo_scale_svg(pj, bundle.home.abbreviation, bundle.away.abbreviation) }}
+      <p class="sub">
+        Updated after every game since 2015 and carried forward through
+        {{ pj.ratings_note.ratings_through }}. It supplies about 59% of the movement
+        in the win model &mdash; more than every starter input combined &mdash; and
+        already contains much of what a bullpen or a defence contributes, which is
+        why those added nothing when tested separately.
+      </p>
+    </figure>
+  </div>
+
+  {#- ---------- the part that actually changes night to night ---------- -#}
+  <h3 class="lab">What moved it</h3>
+  <div class="pcols split">
+    <figure class="pfig">
+      {{ waterfall_svg(pj, bundle.home.abbreviation, bundle.away.abbreviation) }}
+    </figure>
+    <div class="pexp">
+      <p>
+        The win model is linear on the log-odds scale, so this split is exact rather
+        than an estimate of blame: the bars sum to the entire distance between this
+        matchup and an average one. The two darkest are the comparison worth making.
+      </p>
+      <p>
+        This is the part of the page that genuinely differs from day to day. Two
+        games can both read 60% while one is a gap in team quality and the other is
+        an ordinary club with its best arm going &mdash; identical headline, opposite
+        meaning.
+      </p>
+      {% if rd.starter_push is defined %}
+      <p class="sub">
+        Tonight the starters account for
+        <strong>{{ rd.starter_push|abs|round(3) }}</strong> log-odds against
+        <strong>{{ rd.rating_push|abs|round(3) }}</strong> from the team rating.
+      </p>
+      {% endif %}
+    </div>
+  </div>
+
+  {#- ---------- outcome shape ---------- -#}
+  <h3 class="lab">How it could land</h3>
+  <div class="pcols split">
+    <figure class="pfig">
+      {{ margin_svg(pj, bundle.home.abbreviation, bundle.away.abbreviation) }}
+    </figure>
+    <div class="pexp">
+      <p>
+        Every bar is a winning margin, from 20,000 simulated games. The win
+        probability is the area on each side of the middle, so the two models can
+        be checked against each other by eye rather than on trust.
+      </p>
+      <p>
+        The two tallest bars sit either side of centre. That is where most of
+        baseball's unpredictability lives, and it is the reason a model this well
+        calibrated still only reaches
+        {{ (wm.accuracy * 100)|round(1) }}% &mdash; a one-run game is close to a coin
+        flip no matter who is playing.
+      </p>
+      <p class="sub">
+        Expected margin {{ sc.expected_margin|round(2) }} runs in
+        {{ bundle.home.abbreviation if sc.expected_margin >= 0 else bundle.away.abbreviation }}'s
+        favour.
+      </p>
+    </div>
+  </div>
+
+  <div class="pcols">
+    <figure class="pfig">
+      <figcaption class="cap">Runs by side</figcaption>
+      {{ runs_by_side_svg(pj, bundle.home.abbreviation, bundle.away.abbreviation) }}
+    </figure>
+    <figure class="pfig">
+      <figcaption class="cap">Total runs vs a normal game</figcaption>
+      {{ totals_svg(pj) }}
+    </figure>
+  </div>
+
+  <table class="pcmp">
+    <thead>
+      <tr><th class="l">Outcome</th><th>Tonight</th><th>Normally</th>
+        <th class="l">&nbsp;</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="l">Decided by one run</td>
+        <td><strong>{{ (sc.p_one_run_game * 100)|round(1) }}%</strong></td>
+        <td class="sub">{{ (lr.one_run_game * 100)|round(1) }}%</td>
+        <td class="l">{{ rate_compare(sc.p_one_run_game, lr.one_run_game) }}</td>
+      </tr>
+      <tr>
+        <td class="l">Decided by 5 or more</td>
+        <td><strong>{{ (sc.p_blowout * 100)|round(1) }}%</strong></td>
+        <td class="sub">{{ (lr.blowout * 100)|round(1) }}%</td>
+        <td class="l">{{ rate_compare(sc.p_blowout, lr.blowout) }}</td>
+      </tr>
+      <tr>
+        <td class="l">{{ bundle.away.abbreviation }} shut out</td>
+        <td><strong>{{ (sc.p_home_shutout * 100)|round(1) }}%</strong></td>
+        <td class="sub">&ndash;</td>
+        <td class="l">&nbsp;</td>
+      </tr>
+      <tr>
+        <td class="l">{{ bundle.home.abbreviation }} shut out</td>
+        <td><strong>{{ (sc.p_away_shutout * 100)|round(1) }}%</strong></td>
+        <td class="sub">&ndash;</td>
+        <td class="l">&nbsp;</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="note">
+    The most likely single scoreline is
+    {{ bundle.home.abbreviation }} {{ sc.modal_score.home }}&ndash;{{ sc.modal_score.away }}
+    {{ bundle.away.abbreviation }}, and it is worth almost nothing: the model's
+    expected-runs figure moves only about a fifth as much as real scoring does, so
+    three rounded scorelines cover 70% of all games. The shape above is the useful
+    output; the exact final is not.
+  </div>
+
+  {#- ---------- inputs ---------- -#}
+  <h3 class="lab">Probable starters</h3>
+  <table class="pstart">
+    <thead>
+      <tr><th class="l">Stat</th><th>{{ bundle.home.abbreviation }}</th>
+        <th>{{ bundle.away.abbreviation }}</th><th class="l">Edge</th></tr>
+    </thead>
+    <tbody>
+      {% for key, label, as_pct, better_low in [
+        ('starter_fip','FIP',false,true),
+        ('starter_k_pct','K%',true,false),
+        ('starter_bb_pct','BB%',true,true),
+        ('starter_ip_per_start','IP/start',false,false)] %}
+      {% set h = pj.home[key] %}{% set a = pj.away[key] %}
+      <tr>
+        <td class="l">{{ label }}</td>
+        <td>{% if h is not none %}{% if as_pct %}{{ (h * 100)|round(1) }}%{% else %}{{ h|round(2) }}{% endif %}{% else %}&ndash;{% endif %}</td>
+        <td>{% if a is not none %}{% if as_pct %}{{ (a * 100)|round(1) }}%{% else %}{{ a|round(2) }}{% endif %}{% else %}&ndash;{% endif %}</td>
+        <td class="l sub">
+          {%- if h is not none and a is not none -%}
+            {%- set edge_home = (h < a) if better_low else (h > a) -%}
+            {%- if h == a -%}even
+            {%- elif edge_home -%}{{ bundle.home.abbreviation }}
+            {%- else -%}{{ bundle.away.abbreviation }}
+            {%- endif -%}
+          {%- else -%}&ndash;{%- endif -%}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div class="note">
+    {{ pj.home.starter_name or 'TBD' }} for {{ bundle.home.abbreviation }},
+    {{ pj.away.starter_name or 'TBD' }} for {{ bundle.away.abbreviation }}.
+    Strikeout rate is the strongest pitching input the model uses. Earned run
+    average was tested and dropped &mdash; next to FIP it added nothing measurable.
+    Park factor was kept but contributes essentially none of the movement.
+    {% if pj.missing %}
+    <br><strong>Incomplete inputs:</strong> {{ pj.missing|join('; ') }}. Missing
+    values fall back to the league mean, so the projection is flatter than it would
+    otherwise be.
+    {% endif %}
+  </div>
+
+  {#- ---------- track record ---------- -#}
+  <h3 class="lab">How this model has actually done</h3>
+  <table class="ptrack">
+    <thead>
+      <tr><th class="l">Season</th><th>Accuracy</th><th>vs baseline</th>
+        <th class="l">&nbsp;</th></tr>
+    </thead>
+    <tbody>
+      {% for season, m in pj.metrics.per_season.items() %}
+      <tr>
+        <td class="l">{{ season }}</td>
+        <td>{{ (m.accuracy * 100)|round(1) }}%</td>
+        <td class="sub">{{ ((m.accuracy - wm.baseline_accuracy) * 100)|round(1) }}pt</td>
+        <td class="l">{{ accuracy_bar(m.accuracy, wm.baseline_accuracy) }}</td>
+      </tr>
+      {% endfor %}
+      <tr class="tot">
+        <td class="l"><strong>All held-out</strong></td>
+        <td><strong>{{ (wm.accuracy * 100)|round(1) }}%</strong></td>
+        <td><strong>{{ wm.lift_points|round(1) }}pt</strong></td>
+        <td class="l sub">beat the baseline in
+          {{ wm.seasons_beating_baseline }}/{{ wm.seasons }} seasons</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="note">
+    Measured only on seasons the model never saw while being fitted, across
+    {{ '{:,}'.format(wm.n_games) }} games. The baseline is always picking the home
+    team, which wins {{ (wm.baseline_accuracy * 100)|round(1) }}% of the time.
+    Coefficients fitted on games through {{ pj.ratings_note.fitted_through }}{% if pj.ratings_note and pj.ratings_note.games_applied %}; team ratings carried
+    forward through {{ pj.ratings_note.ratings_through }} over
+    {{ '{:,}'.format(pj.ratings_note.games_applied) }} games played since, so both
+    clubs are rated on current form{% endif %}.
+    Nothing on this page is written or estimated by a language model &mdash; every
+    figure comes from fitted statistical code.
+  </div>
+</section>
+{% endif %}
+
 {#- ===================== pages 2-5: players ===================== -#}
 {% for kind, team, label in pages %}
 {% if team %}
@@ -867,10 +1427,10 @@
     <summary>Show all {{ bundle.provenance|length }} source requests</summary>
     <div class="scroll">
       <table class="prov">
-        <thead><tr><th class="l">Fetched (UTC)</th><th class="l">Source</th><th class="l">URL</th><th>Status</th><th>Bytes</th><th class="l">SHA-256</th></tr></thead>
+        <thead><tr><th class="l">Fetched (ET)</th><th class="l">Source</th><th class="l">URL</th><th>Status</th><th>Bytes</th><th class="l">SHA-256</th></tr></thead>
         <tbody>
           {% for p in bundle.provenance %}
-          <tr><td class="l">{{ p.fetched_at }}</td><td class="l">{{ p.source }}</td>
+          <tr><td class="l">{{ stamp(p.fetched_at) }}</td><td class="l">{{ p.source }}</td>
             <td class="l">{{ p.url }}</td><td>{{ p.http_status }}</td>
             <td>{{ p.byte_count|integer }}</td><td class="l">{{ p.sha256[:16] }}…</td></tr>
           {% endfor %}

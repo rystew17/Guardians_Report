@@ -17,13 +17,15 @@ dependency at all.
 from __future__ import annotations
 
 import subprocess
+import sys
 import uuid
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from guards_report.config import (
     CLEVELAND_GUARDIANS_TEAM_ID,
+    COMPETITIVE_GAME_TYPES,
     HITTER_SPLIT_CODES,
     PITCHER_SPLIT_CODES,
     REPO_ROOT,
@@ -31,6 +33,7 @@ from guards_report.config import (
 )
 from guards_report.metrics import highlights as hl
 from guards_report.metrics import league_averages as la
+from guards_report.metrics import series as sr
 from guards_report.metrics import statcast as sc
 from guards_report.metrics import league_constants as lc
 from guards_report.metrics import team_context as tc
@@ -41,7 +44,12 @@ from guards_report.sources import mlb_statsapi as api
 from guards_report.sources import savant as sv
 from guards_report.sources.http import Archiver
 
-POSITION_PLAYER_TYPES = {"Catcher", "Infielder", "Outfielder", "Two-Way Player"}
+# "Hitter" is the source's position type for a designated hitter. Leaving it
+# out silently dropped any player listed at DH -- Bryce Eldridge vanished from
+# a Giants report while the roster count still looked plausible.
+POSITION_PLAYER_TYPES = {
+    "Catcher", "Infielder", "Outfielder", "Two-Way Player", "Hitter",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +77,13 @@ class PlayerBox:
     season_deltas: dict[str, Any] = field(default_factory=dict)
     windows: list[WindowLine] = field(default_factory=list)
     trend: tr.TrendSeries | None = None
+
+    # This player's line across the games of the current series, when one is
+    # already under way. None means he has not appeared in it.
+    series_line: Any | None = None
+    # Career totals, for the context a single season cannot give: whether this
+    # is a rookie's hot month or a ten-year veteran playing to his norm.
+    career: dict[str, Any] = field(default_factory=dict)
 
     percentiles: dict[str, str] = field(default_factory=dict)
     expected: dict[str, str] = field(default_factory=dict)
@@ -136,6 +151,17 @@ class ReportBundle:
     provenance: list[dict[str, Any]]
     highlights: list[hl.Highlight] = field(default_factory=list)
     series: tc.SeriesContext | None = None
+    # Completed games of the current series, most recent first, each with its
+    # line score, decisions and standout performances.
+    series_boxes: list[Any] = field(default_factory=list)
+    # Projection for this game, when a fitted model is available. None means the
+    # models have not been trained yet -- the report is complete without them.
+    projection: Any | None = None
+    # Written analysis keyed by subject id, attached after the numbers are
+    # final. The report renders correctly whether or not this is populated --
+    # the analysis layer is additive and never blocks a build.
+    analyses: dict[str, Any] = field(default_factory=dict)
+    analysis_summary: dict[str, Any] = field(default_factory=dict)
     # League benchmarks for the Savant blocks, keyed by block name, so every
     # displayed stat has something to be measured against.
     savant_benchmarks: dict[str, dict[str, float | None]] = field(
@@ -235,8 +261,17 @@ def _merge_people(results: list[Any]) -> dict[int, dict[str, Any]]:
 
 
 def _find_game(payload: dict[str, Any], *, team_id: int) -> dict[str, Any] | None:
+    """The club's game on this date, ignoring exhibitions.
+
+    A March date can carry a spring training game, which is not what this
+    report covers: the season and recent-form numbers behind it count only
+    regular season and postseason play, so previewing an exhibition would
+    describe a game with data drawn from different games entirely.
+    """
     for day in payload.get("dates", []):
         for game in day.get("games", []):
+            if game.get("gameType") not in COMPETITIVE_GAME_TYPES:
+                continue
             teams = game.get("teams", {})
             ids = {
                 teams.get("home", {}).get("team", {}).get("id"),
@@ -287,6 +322,13 @@ def _split_roster(payload: dict[str, Any]) -> tuple[list[dict], list[dict]]:
             pitchers.append(entry)
         elif position_type in POSITION_PLAYER_TYPES:
             batters.append(entry)
+        else:
+            # An unrecognised position type must not vanish. Dropping a player
+            # is invisible in the output -- the roster simply looks one short --
+            # so anything unfamiliar is treated as a position player, which is
+            # true of every non-pitcher the source lists.
+            batters.append(entry)
+
         if position_type == "Two-Way Player":
             pitchers.append(entry)
     return batters, pitchers
@@ -323,10 +365,17 @@ def _pick(row: dict[str, str] | None, fields: tuple[str, ...]) -> dict[str, floa
     row or the cell is blank. A stable shape means the renderer can read any
     key without guarding for its existence, and a missing value stays
     distinguishable from a zero.
+
+    Fractional rates are converted to percentages on the way through, so a
+    single convention holds from here on.
     """
     if not row:
         return {name: None for name in fields}
-    return {name: sv.to_number(row.get(name)) for name in fields}
+
+    return {
+        name: sv.scale_rate(name, sv.to_number(row.get(name)))
+        for name in fields
+    }
 
 
 BATTED_BALL_FIELDS = (
@@ -377,6 +426,7 @@ def _build_batter_box(person, entry, *, as_of, opposing_hand, league_hitting,
     prior = [r for r in rows if r.game_date < as_of]
 
     season_stats = w.aggregate_hitting(prior)
+    career = _first_stat(person, "career")
     windows = []
     for spec in w.HITTER_WINDOWS:
         stats = w.aggregate_hitting(w.select(rows, spec, as_of=as_of))
@@ -397,7 +447,7 @@ def _build_batter_box(person, entry, *, as_of, opposing_hand, league_hitting,
         hand=(person.get("batSide") or {}).get("code"),
         position=(entry.get("position") or {}).get("abbreviation"),
         jersey=entry.get("jerseyNumber"),
-        season=season_stats,
+        season=season_stats, career=career,
         season_deltas=_deltas(season_stats, league_hitting, HITTER_DELTA_KEYS,
                               HITTER_LOWER_BETTER),
         windows=windows,
@@ -424,6 +474,7 @@ def _build_pitcher_box(person, entry, *, as_of, fip_constant, league_pitching,
     prior = [r for r in rows if r.game_date < as_of]
 
     season_stats = w.aggregate_pitching(prior, fip_constant=fip_constant)
+    career = _first_stat(person, "career")
     windows = []
     for spec in w.PITCHER_WINDOWS:
         stats = w.aggregate_pitching(w.select(rows, spec, as_of=as_of),
@@ -448,7 +499,7 @@ def _build_pitcher_box(person, entry, *, as_of, fip_constant, league_pitching,
         hand=(person.get("pitchHand") or {}).get("code"),
         position="P", jersey=entry.get("jerseyNumber"),
         is_probable_starter=(pid == probable_starter_id),
-        season=season_stats,
+        season=season_stats, career=career,
         season_deltas=_deltas(season_stats, league_pitching, PITCHER_DELTA_KEYS,
                               PITCHER_LOWER_BETTER),
         windows=windows,
@@ -470,9 +521,14 @@ def _build_pitcher_box(person, entry, *, as_of, fip_constant, league_pitching,
 
 
 def _statcast_for(
-    archiver: Archiver, *, player_id: int, season: int, perspective: str, bats: str | None
+    archiver: Archiver, *, player_id: int, season: int, perspective: str,
+    bats: str | None, as_of: date,
 ) -> tuple[dict[str, Any], Any]:
     """Fetch and aggregate one player's pitch-level season.
+
+    `as_of` bounds the data to games completed before the report date, matching
+    the game-log windows. Without it the charts would include pitches from a
+    game still in progress while every other number on the page excluded it.
 
     Returns zone charts and, for hitters, a spray chart. A failure here is not
     fatal: the rest of the box is still worth showing, so we return empties and
@@ -482,7 +538,8 @@ def _statcast_for(
         result = sc.parse_pitches(
             sv.player_pitches(
                 archiver, player_id=player_id, year=season, perspective=perspective
-            ).text()
+            ).text(),
+            before=as_of,
         )
     except Exception:
         return {}, None
@@ -490,6 +547,99 @@ def _statcast_for(
     zones = sc.build_zone_charts(result, perspective=perspective)
     spray = sc.build_spray(result, bats=bats) if perspective == "batter" else None
     return zones, spray
+
+
+def _current_series_boxes(
+    archiver: Archiver, *, team_id: int, game: dict[str, Any], on: date
+) -> tuple[list[Any], list[dict[str, Any]]]:
+    """Completed games of the series today's game belongs to.
+
+    Returns the parsed box scores and the raw payloads they came from, so the
+    per-player series lines can be aggregated without fetching each game twice.
+
+    The series is walked backwards from today using the source's own
+    `seriesGameNumber`, which counts 1..N within a set: today's game 3 means
+    games 2 and 1 are the two that came before it. That is more reliable than
+    guessing by date, which breaks on off-days and doubleheaders.
+
+    Only finished games are fetched. A game in progress has no final line
+    score, and this report does not report on games that are still being
+    played.
+    """
+    number = game.get("seriesGameNumber")
+    if not number or number < 2:
+        return [], []      # opener: nothing has been played in this set yet
+
+    # A series is a consecutive set against one club, so the opponent is the
+    # constraint that matters. `seriesGameNumber` alone is not enough: it
+    # restarts at 1 every series, so matching on it picked up game 1 and 2 of
+    # the *previous* set against a different team.
+    teams = game.get("teams") or {}
+    ours = {
+        side for side in ("home", "away")
+        if ((teams.get(side) or {}).get("team") or {}).get("id") == team_id
+    }
+    other = "away" if "home" in ours else "home"
+    opponent_id = ((teams.get(other) or {}).get("team") or {}).get("id")
+    if opponent_id is None:
+        return [], []
+
+    # Look back far enough to cover a four-game set containing an off-day.
+    payload = api.series_games(
+        archiver, team_id=team_id, start=on - timedelta(days=9), end=on,
+    ).json()
+
+    def _opponent_of(entry: dict[str, Any]) -> int | None:
+        entry_teams = entry.get("teams") or {}
+        for side in ("home", "away"):
+            side_id = ((entry_teams.get(side) or {}).get("team") or {}).get("id")
+            if side_id != team_id:
+                return side_id
+        return None
+
+    candidates = [
+        g
+        for day in payload.get("dates", [])
+        for g in day.get("games", [])
+        if g.get("gamePk") != game.get("gamePk")
+        and _opponent_of(g) == opponent_id
+        and (g.get("status") or {}).get("abstractGameState") == "Final"
+        and g.get("seriesGameNumber") is not None
+        and date.fromisoformat(g["officialDate"]) < on
+    ]
+    # Newest first, then walk back while the game number decrements by one.
+    candidates.sort(
+        key=lambda g: (g["officialDate"], g["seriesGameNumber"]), reverse=True
+    )
+
+    chosen: list[dict[str, Any]] = []
+    expected = number - 1
+    for entry in candidates:
+        if entry["seriesGameNumber"] != expected:
+            break          # a gap means the earlier games are a different set
+        chosen.append(entry)
+        expected -= 1
+        if expected < 1:
+            break
+    chosen.reverse()       # present them in the order they were played
+
+    boxes, payloads = [], []
+    for entry in chosen:
+        pk = entry["gamePk"]
+        try:
+            boxscore = api.game_boxscore(archiver, game_pk=pk).json()
+            boxes.append(
+                sr.parse_game_box(
+                    schedule_game=entry,
+                    boxscore=boxscore,
+                    linescore=api.game_linescore(archiver, game_pk=pk).json(),
+                )
+            )
+            payloads.append(boxscore)
+        except Exception:
+            # One unreadable game must not cost the whole section.
+            continue
+    return boxes, payloads
 
 
 def build_preview(
@@ -505,14 +655,31 @@ def build_preview(
     schedule_payload = api.schedule(archiver, on=on, team_id=team_id).json()
     game = _find_game(schedule_payload, team_id=team_id)
     if game is None:
-        raise LookupError(f"no game found for team {team_id} on {on.isoformat()}")
+        exhibition = any(
+            g.get("gameType") not in COMPETITIVE_GAME_TYPES
+            for d in schedule_payload.get("dates", [])
+            for g in d.get("games", [])
+        )
+        raise LookupError(
+            f"no regular season or postseason game for team {team_id} on "
+            f"{on.isoformat()}"
+            + (" (only spring training or exhibition games scheduled)"
+               if exhibition else "")
+        )
 
     game_pk = game["gamePk"]
     teams = game["teams"]
 
     # -- league context -----------------------------------------------------
-    pitching_totals = api.league_pitching_totals(archiver, season=season).json()
-    hitting_totals = api.league_hitting_totals(archiver, season=season).json()
+    # Bounded to games finished before the report date, so the benchmarks and
+    # the FIP constant do not drift while a game is being played.
+    through = on - timedelta(days=1)
+    pitching_totals = api.league_pitching_totals(
+        archiver, season=season, through=through
+    ).json()
+    hitting_totals = api.league_hitting_totals(
+        archiver, season=season, through=through
+    ).json()
 
     league = lc.derive(lc.parse_league_totals(pitching_totals, season=season))
     league_pitching = la.pitching_from_payload(
@@ -599,7 +766,7 @@ def build_preview(
         api.people_with_stats(
             archiver, person_ids=all_batter_ids, group=api.GROUP_HITTING,
             stat_types=[api.STAT_SEASON, api.STAT_SABERMETRICS, api.STAT_SPLITS,
-                        api.STAT_HOT_COLD_ZONES],
+                        api.STAT_CAREER, api.STAT_HOT_COLD_ZONES],
             season=season, sit_codes=HITTER_SPLIT_CODES,
         )
         + api.people_with_stats(
@@ -613,7 +780,7 @@ def build_preview(
         api.people_with_stats(
             archiver, person_ids=all_pitcher_ids, group=api.GROUP_PITCHING,
             stat_types=[api.STAT_SEASON, api.STAT_SABERMETRICS, api.STAT_SPLITS,
-                        api.STAT_HOT_COLD_ZONES],
+                        api.STAT_CAREER, api.STAT_HOT_COLD_ZONES],
             season=season, sit_codes=PITCHER_SPLIT_CODES,
         )
         + api.people_with_stats(
@@ -713,8 +880,11 @@ def build_preview(
                 for hand in ("L", "R", "S")
             },
             series_record=tc.parse_series_records(
+                # Completed series only: today's game is still being played,
+                # and fetching it would make the archived payload differ
+                # between two runs that produce identical figures.
                 api.season_schedule(
-                    archiver, team_id=tid, season=season, through=on
+                    archiver, team_id=tid, season=season, through=through
                 ).json(),
                 team_id=tid,
             ),
@@ -736,13 +906,83 @@ def build_preview(
             for box in section.batters:
                 box.statcast_zones, box.spray = _statcast_for(
                     archiver, player_id=box.player_id, season=season,
-                    perspective="batter", bats=box.hand,
+                    perspective="batter", bats=box.hand, as_of=on,
                 )
             for box in section.pitchers:
                 box.statcast_zones, _ = _statcast_for(
                     archiver, player_id=box.player_id, season=season,
-                    perspective="pitcher", bats=None,
+                    perspective="pitcher", bats=None, as_of=on,
                 )
+
+    # -- current series ------------------------------------------------------
+    # Box scores for the games already played in this set, plus each player's
+    # line across them. This is the context a broadcaster reaches for first and
+    # no season split can supply: what has happened in *these* games.
+    series_boxes, series_payloads = _current_series_boxes(
+        archiver, team_id=team_id, game=game, on=on
+    )
+    if series_boxes:
+        series_batting, series_pitching = sr.player_series_lines(series_payloads)
+        for section in sections.values():
+            for box in section.batters:
+                box.series_line = series_batting.get(box.player_id)
+            for box in section.pitchers:
+                box.series_line = series_pitching.get(box.player_id)
+
+    # -- projection ----------------------------------------------------------
+    # Loaded from a stored fit rather than trained here: a report must not
+    # re-estimate a model, or two reports of the same game would disagree.
+    projection = None
+    try:
+        from guards_report.projections import model as projection_model
+        from guards_report.projections import predict as projection_predict
+
+        fitted = projection_model.load(
+            settings.raw_archive_dir.parent / "models" / "game_outcome.json"
+        )
+        if fitted is not None:
+            # The artifact's coefficients are fixed at fit time, but its rating
+            # state ages every day the league keeps playing. Walk it forward to
+            # the game being scouted so the clubs are rated on this season's
+            # form, not on last year's team.
+            from guards_report.projections import refresh as projection_refresh
+
+            fitted, ratings_note = projection_refresh.refresh(
+                fitted,
+                on=on,
+                cache_dir=settings.raw_archive_dir.parent / "corpus",
+            )
+
+            def _rpg(section) -> float | None:
+                profile = getattr(section, "profile", None)
+                for stat in (getattr(profile, "hitting", None) or []):
+                    if getattr(stat, "key", "") == "runsPerGame":
+                        return getattr(stat, "value", None)
+                return None
+
+            home_section, away_section = sections["home"], sections["away"]
+            projection = projection_predict.project(
+                fitted,
+                home_team_id=home_section.team_id,
+                away_team_id=away_section.team_id,
+                home_team=home_section.abbreviation,
+                away_team=away_section.abbreviation,
+                venue_id=(game.get("venue") or {}).get("id"),
+                home_starter=next(
+                    (p for p in home_section.pitchers if p.is_probable_starter), None
+                ),
+                away_starter=next(
+                    (p for p in away_section.pitchers if p.is_probable_starter), None
+                ),
+                home_offense_rpg=_rpg(home_section),
+                away_offense_rpg=_rpg(away_section),
+            )
+            projection.ratings_note = ratings_note
+    except Exception as exc:
+        # A projection is an addition to the report, never a precondition for
+        # it. Say what failed and carry on.
+        print(f"  warning: projection skipped ({type(exc).__name__}: {exc})",
+              file=sys.stderr)
 
     weather: dict[str, Any] = {}
     try:
@@ -768,6 +1008,8 @@ def build_preview(
         league=league, league_hitting=league_hitting, league_pitching=league_pitching,
         provenance=[r.provenance() for r in archiver.written],
         savant_benchmarks=savant_benchmarks,
+        series_boxes=series_boxes,
+        projection=projection,
         series=tc.parse_series(
             api.head_to_head(
                 archiver, team_id=sections["home"].team_id,

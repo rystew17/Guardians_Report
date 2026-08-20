@@ -17,6 +17,7 @@ from markupsafe import Markup
 
 from guards_report.config import SPLIT_LABELS
 from guards_report.ingest.preview import ReportBundle
+from guards_report.metrics import clocks, series
 from guards_report.metrics.trends import reliability as _reliability
 from guards_report.metrics.zones import ZoneCell, ZoneGrid
 
@@ -213,7 +214,7 @@ def reliability_class(entry: Any) -> str:
 
 
 def rank_ordinal(rank: Any) -> str:
-    """Render a 1-30 league rank as 1st, 2nd, 3rd and so on."""
+    """Render an integer rank or percentile as 1st, 2nd, 3rd and so on."""
     if _missing(rank):
         return EMPTY
     number = int(rank)
@@ -356,8 +357,28 @@ def build_environment() -> Environment:
         reliability=_reliability,
         split_labels=SPLIT_LABELS,
         spray_colors=SPRAY_COLORS,
+        confidence_strip=confidence_strip,
+        waterfall_svg=waterfall_svg,
+        margin_svg=margin_svg,
+        runs_by_side_svg=runs_by_side_svg,
+        totals_svg=totals_svg,
+        rate_compare=rate_compare,
+        elo_scale_svg=elo_scale_svg,
+        accuracy_bar=accuracy_bar,
+        projection_read=_projection_read,
     )
     return env
+
+
+def _projection_read(projection: Any) -> dict:
+    """The sentence the decomposition supports, selected by arithmetic.
+
+    Lives here only so the template can reach it; every branch is a threshold on
+    a measured contribution, and no text is model-generated.
+    """
+    from guards_report.projections.predict import read_of
+
+    return read_of(projection) if projection is not None else {}
 
 
 def render(bundle: ReportBundle, *, output_dir: Path) -> Path:
@@ -368,7 +389,15 @@ def render(bundle: ReportBundle, *, output_dir: Path) -> Path:
         bundle=bundle,
         guardians=bundle.guardians,
         opponent=bundle.opponent,
-        generated=bundle.generated_at.strftime("%Y-%m-%d %H:%M UTC"),
+        generated=clocks.stamp(bundle.generated_at),
+        # Exposed to the template so first-pitch and audit timestamps are
+        # formatted by the same code rather than by ad-hoc strftime calls.
+        game_time=clocks.game_time,
+        stamp=clocks.stamp,
+        # The ranking formulas are printed in the report so "top performers" is
+        # checkable rather than asserted.
+        batter_score_formula=series.BATTER_SCORE,
+        pitcher_score_formula=series.PITCHER_SCORE,
     )
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -376,3 +405,500 @@ def render(bundle: ReportBundle, *, output_dir: Path) -> Path:
     path = output_dir / f"{bundle.game_date.isoformat()}_{matchup}.html"
     path.write_text(html, encoding="utf-8")
     return path
+
+# ---------------------------------------------------------------------------
+# Projection visuals
+# ---------------------------------------------------------------------------
+#
+# Built to answer three questions the headline percentage cannot: how confident
+# is this by the model's own standards, what pushed it there, and how does
+# tonight differ from a normal night.
+#
+# That emphasis comes from a measurement. Across 25,192 games the model's
+# expected-runs figure moves only 18% as much as real scoring does, and three
+# rounded scorelines cover 70% of all games -- so a page built around the
+# projected final would print nearly the same thing every day. The win
+# probability does vary (0.23 to 0.83, sd 0.087) and is well calibrated in every
+# bucket, but it lands between 0.45 and 0.65 on roughly six nights in ten. What
+# genuinely changes night to night is which input is doing the work, so that is
+# what these charts are built to show.
+
+HOME_INK = "#1d4e89"
+AWAY_INK = "#8a3b2e"
+FLAG_INK = "#c2410c"
+
+
+def confidence_strip(projection: Any, *, width: int = 520, height: int = 118) -> Markup:
+    """Tonight's conviction against every call this model has ever made.
+
+    The common misreading of a win probability is treating 60% as a strong
+    opinion. For this model it is a moderately strong one; for a different model
+    it might be the most extreme output it has ever produced. The curve is this
+    model's own sorted conviction across the corpus, so the marker's position
+    answers "how sure is this, for something right 57% of the time" without the
+    reader holding any of those figures in mind.
+    """
+    grid = (projection.reference or {}).get("win_prob_sorted") or []
+    if not grid:
+        return Markup("")
+
+    # Folded around 0.5: the question is conviction, not which club is favoured.
+    folded = sorted(max(v, 1.0 - v) for v in grid)
+    lo, hi = folded[0], folded[-1]
+    span = max(hi - lo, 1e-6)
+
+    left, right, top, bottom = 34, 8, 14, 18
+    plot_w, plot_h = width - left - right, height - top - bottom
+
+    def px(i: int) -> float:
+        return left + plot_w * i / max(len(folded) - 1, 1)
+
+    def py(v: float) -> float:
+        return top + plot_h * (1.0 - (v - lo) / span)
+
+    line = " ".join(f"{px(i):.1f},{py(v):.1f}" for i, v in enumerate(folded))
+    area = f"{left},{top + plot_h:.1f} {line} {left + plot_w},{top + plot_h:.1f}"
+
+    here = max(0.0, min(100.0, projection.confidence_percentile))
+    conviction = max(projection.win_probability, 1 - projection.win_probability)
+    mx, my = left + plot_w * here / 100.0, py(conviction)
+
+    parts = [
+        f'<svg class="cstrip" width="{width}" height="{height}" '
+        f'viewBox="0 0 {width} {height}" role="img" aria-label="Tonight at the '
+        f'{here:.0f}th percentile of this model\'s confidence">',
+        f'<polygon points="{area}" fill="var(--accent)" opacity="0.12"/>',
+        f'<polyline points="{line}" fill="none" stroke="var(--accent)" '
+        f'stroke-width="1.4" opacity="0.6"/>',
+    ]
+    for pct in (25, 50, 75):
+        x = left + plot_w * pct / 100.0
+        parts.append(
+            f'<line x1="{x:.1f}" y1="{top}" x2="{x:.1f}" y2="{top + plot_h:.1f}" '
+            f'stroke="var(--rule)" stroke-width="0.6" stroke-dasharray="2 3"/>'
+        )
+    parts += [
+        f'<line x1="{mx:.1f}" y1="{top}" x2="{mx:.1f}" y2="{top + plot_h:.1f}" '
+        f'stroke="{FLAG_INK}" stroke-width="1.6"/>',
+        f'<circle cx="{mx:.1f}" cy="{my:.1f}" r="4.2" fill="{FLAG_INK}"/>',
+        f'<text class="sgl" x="{left - 6}" y="{py(hi) + 4:.1f}" text-anchor="end">'
+        f'{hi * 100:.0f}%</text>',
+        f'<text class="sgl" x="{left - 6}" y="{py(lo) + 4:.1f}" text-anchor="end">'
+        f'{lo * 100:.0f}%</text>',
+        f'<text class="sgl" x="{left}" y="{height - 5}">coin flip</text>',
+        f'<text class="sgl" x="{left + plot_w}" y="{height - 5}" '
+        f'text-anchor="end">most sure it gets</text>',
+        "</svg>",
+    ]
+    return Markup("".join(parts))
+
+
+def waterfall_svg(
+    projection: Any, home: str, away: str, *, width: int = 600, row: int = 28
+) -> Markup:
+    """What moved this game off an average matchup, input by input.
+
+    The model is linear on the log-odds scale, so this decomposition is exact
+    rather than an attribution heuristic: the bars sum to the whole departure
+    from a league-average game. It is also the part of the page that actually
+    differs night to night. Two games can both read 60% while one is a gap in
+    team quality and the other is an ordinary club with its best arm going --
+    identical headline, opposite meaning.
+
+    Bars stay in log-odds because that is the scale they add on. Converting each
+    to percentage points separately would give numbers that do not sum to the
+    total, which is exactly the misreading the chart should prevent.
+    """
+    from guards_report.projections.predict import FEATURE_LABELS
+
+    rows = [
+        r for r in (projection.contributions or [])
+        if abs(r["contribution"]) > 1e-4
+    ]
+    if not rows:
+        return Markup("")
+
+    # Below a half-hundredth of a log-odd a bar cannot be seen; collect the tail
+    # rather than drawing rows that only add height.
+    major = [r for r in rows if abs(r["contribution"]) >= 0.005]
+    minor = [r for r in rows if abs(r["contribution"]) < 0.005]
+    if minor:
+        major.append({
+            "name": "_rest",
+            "contribution": sum(r["contribution"] for r in minor),
+            "imputed": False,
+            "_label": f"{len(minor)} smaller inputs",
+        })
+
+    label_w, pad, gutter = 210, 8, 38
+    axis = label_w + (width - label_w) / 2
+    half = (width - label_w) / 2 - gutter
+    peak = max(abs(r["contribution"]) for r in major) or 1.0
+    height = pad + row * len(major) + 22
+
+    parts = [
+        f'<svg class="wfall" width="{width}" height="{height}" '
+        f'viewBox="0 0 {width} {height}" role="img" '
+        f'aria-label="What moved the win probability">'
+    ]
+
+    for i, r in enumerate(major):
+        value = r["contribution"]
+        y = pad + i * row
+        bar = max(half * abs(value) / peak, 1.0)
+        favours_home = value > 0
+        colour = HOME_INK if favours_home else AWAY_INK
+        x = axis if favours_home else axis - bar
+        label = r.get("_label") or FEATURE_LABELS.get(r["name"], r["name"])
+        if r.get("imputed"):
+            label += " (unknown)"
+
+        # The two largest inputs are the comparison worth making, so they carry
+        # the emphasis and everything below them recedes.
+        lead = i < 2 and r["name"] != "_rest"
+        opacity = "0.92" if lead else "0.45"
+
+        if i % 2 == 0:
+            parts.append(
+                f'<rect x="0" y="{y:.1f}" width="{width}" height="{row}" '
+                f'fill="var(--rule)" opacity="0.16"/>'
+            )
+        parts.append(
+            f'<text class="wfl{" lead" if lead else ""}" x="{label_w - 10}" '
+            f'y="{y + row / 2 + 4:.1f}" text-anchor="end">{label}</text>'
+        )
+        parts.append(
+            f'<rect x="{x:.1f}" y="{y + 5:.1f}" width="{bar:.1f}" '
+            f'height="{row - 10}" rx="1.5" fill="{colour}" opacity="{opacity}">'
+            f'<title>{label}: {value:+.3f} log-odds toward '
+            f'{home if favours_home else away}</title></rect>'
+        )
+        tx = axis + bar + 5 if favours_home else axis - bar - 5
+        parts.append(
+            f'<text class="wfv{" lead" if lead else ""}" x="{tx:.1f}" '
+            f'y="{y + row / 2 + 4:.1f}" '
+            f'text-anchor="{"start" if favours_home else "end"}">'
+            f'{value:+.2f}</text>'
+        )
+
+    base = pad + row * len(major)
+    parts += [
+        f'<line x1="{axis}" y1="{pad - 2}" x2="{axis}" y2="{base:.1f}" '
+        f'stroke="var(--ink)" stroke-width="1" opacity="0.55"/>',
+        f'<text class="sgl" x="{axis - 8}" y="{base + 15:.1f}" text-anchor="end">'
+        f'&#9664; {away}</text>',
+        f'<text class="sgl" x="{axis + 8}" y="{base + 15:.1f}">{home} &#9654;</text>',
+        "</svg>",
+    ]
+    return Markup("".join(parts))
+
+
+def margin_svg(
+    projection: Any, home: str, away: str, *, width: int = 600, height: int = 210
+) -> Markup:
+    """The result as a margin, which is the readable form of the same simulation.
+
+    This replaced a joint score grid. The grid was honest and nearly unreadable:
+    a hundred cells, the largest near three percent, and no two distinguishable
+    by eye. Collapsing to the margin keeps everything a reader actually asks --
+    the win probability is the area on one side of the middle, one-run games are
+    the two tallest central bars, blowouts are the tails -- and loses only the
+    exact scoreline, which is the least reliable thing the model produces.
+    """
+    rows = projection.score.get("margin_distribution") or []
+    if not rows:
+        return Markup("")
+
+    limit = max(abs(r["margin"]) for r in rows)
+    slots = [m for m in range(-limit, limit + 1) if m != 0]
+    lookup = {r["margin"]: r["p"] for r in rows}
+    peak = max(lookup.values())
+
+    left, right, top, bottom = 10, 10, 34, 34
+    plot_w, plot_h = width - left - right, height - top - bottom
+    step = plot_w / len(slots)
+    mid = left + plot_w / 2
+
+    home_p = projection.score["home_win_probability"]
+    parts = [
+        f'<svg class="mdist" width="{width}" height="{height}" '
+        f'viewBox="0 0 {width} {height}" role="img" '
+        f'aria-label="Winning margin distribution">'
+    ]
+
+    for i, m in enumerate(slots):
+        p = lookup.get(m, 0.0)
+        bar = plot_h * (p / peak)
+        x = left + i * step
+        y = top + plot_h - bar
+        favours_home = m > 0
+        colour = HOME_INK if favours_home else AWAY_INK
+        # One-run games are the single most likely outcome band in baseball and
+        # the reason this model cannot do better; they get the emphasis.
+        opacity = "0.95" if abs(m) == 1 else "0.6"
+        edge = "&ge;" if m == limit else ("&le;" if m == -limit else "")
+        parts.append(
+            f'<rect x="{x + 1:.1f}" y="{y:.1f}" width="{step - 2:.1f}" '
+            f'height="{bar:.1f}" rx="1.5" fill="{colour}" opacity="{opacity}">'
+            f'<title>{home if favours_home else away} by {edge}{abs(m)}: '
+            f'{p * 100:.1f}%</title></rect>'
+        )
+        if abs(m) in (1, 3, 5, 7) or abs(m) == limit:
+            parts.append(
+                f'<text class="sgl" x="{x + step / 2:.1f}" '
+                f'y="{top + plot_h + 13}" text-anchor="middle">'
+                f'{edge}{abs(m)}</text>'
+            )
+
+    parts.append(
+        f'<line x1="{mid:.1f}" y1="{top - 6}" x2="{mid:.1f}" '
+        f'y2="{top + plot_h + 3:.1f}" stroke="var(--ink)" stroke-width="1.1" '
+        f'opacity="0.5"/>'
+    )
+    # Win probability stated where its area is, rather than elsewhere on the page.
+    parts += [
+        f'<text class="mwin" x="{mid - 10:.1f}" y="{top - 18}" '
+        f'text-anchor="end" fill="{AWAY_INK}">{away} {(1 - home_p) * 100:.0f}%</text>',
+        f'<text class="mwin" x="{mid + 10:.1f}" y="{top - 18}" '
+        f'fill="{HOME_INK}">{home} {home_p * 100:.0f}%</text>',
+        f'<text class="sgl" x="{mid - 10:.1f}" y="{top - 6}" text-anchor="end">'
+        f'&#9664; wins by</text>',
+        f'<text class="sgl" x="{mid + 10:.1f}" y="{top - 6}">wins by &#9654;</text>',
+    ]
+
+    one_run = projection.score["p_one_run_game"]
+    parts.append(
+        f'<text class="sgl" x="{mid:.1f}" y="{height - 6}" text-anchor="middle">'
+        f'{one_run * 100:.0f}% of the time it comes down to one run</text>'
+    )
+    parts.append("</svg>")
+    return Markup("".join(parts))
+
+
+def runs_by_side_svg(
+    projection: Any, home: str, away: str, *, width: int = 520, height: int = 196
+) -> Markup:
+    """Each club's own run distribution, on one shared scale.
+
+    Paired bars rather than a joint grid, for the same reason: the question a
+    reader has is which offence is more likely to put up a number, and that is a
+    comparison of two curves, not a hundred cells.
+    """
+    home_rows = {r["runs"]: r["p"] for r in projection.score.get("home_runs_distribution", [])}
+    away_rows = {r["runs"]: r["p"] for r in projection.score.get("away_runs_distribution", [])}
+    if not home_rows or not away_rows:
+        return Markup("")
+
+    limit = max(max(home_rows), max(away_rows))
+    peak = max(list(home_rows.values()) + list(away_rows.values()))
+    left, right, top, bottom = 10, 10, 22, 32
+    plot_w, plot_h = width - left - right, height - top - bottom
+    step = plot_w / (limit + 1)
+    bar_w = (step - 3) / 2
+
+    parts = [
+        f'<svg class="rside" width="{width}" height="{height}" '
+        f'viewBox="0 0 {width} {height}" role="img" '
+        f'aria-label="Runs scored by each side">'
+    ]
+    for runs in range(limit + 1):
+        x = left + runs * step
+        for offset, rows, colour, team in (
+            (0, home_rows, HOME_INK, home), (bar_w + 1, away_rows, AWAY_INK, away)
+        ):
+            p = rows.get(runs, 0.0)
+            bar = plot_h * (p / peak)
+            parts.append(
+                f'<rect x="{x + 1 + offset:.1f}" y="{top + plot_h - bar:.1f}" '
+                f'width="{bar_w:.1f}" height="{bar:.1f}" rx="1" fill="{colour}" '
+                f'opacity="0.8"><title>{team} scores '
+                f'{"9+" if runs == limit else runs}: {p * 100:.1f}%</title></rect>'
+            )
+        if runs % 2 == 0 or runs == limit:
+            parts.append(
+                f'<text class="sgl" x="{x + step / 2:.1f}" '
+                f'y="{top + plot_h + 13}" text-anchor="middle">'
+                f'{f"{runs}+" if runs == limit else runs}</text>'
+            )
+
+    for i, (team, colour, mu) in enumerate((
+        (home, HOME_INK, projection.score["exp_home_runs"]),
+        (away, AWAY_INK, projection.score["exp_away_runs"]),
+    )):
+        x = left + i * 210
+        parts.append(
+            f'<rect x="{x}" y="{height - 13}" width="9" height="7" rx="1" '
+            f'fill="{colour}" opacity="0.8"/>'
+        )
+        parts.append(
+            f'<text class="sgl" x="{x + 13}" y="{height - 6}">'
+            f'{team} &middot; {mu:.2f} expected</text>'
+        )
+    parts.append(
+        f'<text class="sgl" x="{width - right}" y="{top - 8}" text-anchor="end">'
+        f'runs scored</text>'
+    )
+    parts.append("</svg>")
+    return Markup("".join(parts))
+
+
+def totals_svg(projection: Any, *, width: int = 520, height: int = 204) -> Markup:
+    """Tonight's total-runs distribution against a normal night.
+
+    Drawn over the measured league distribution because the projected total is
+    close to unreadable alone: the model's expected total varies far less than
+    real scoring does, so 8.4 looks much like 9.4 without the reference in the
+    same frame. The gap between the two shapes is the part worth seeing.
+    """
+    rows = [r for r in projection.score["total_distribution"] if 2 <= r["total"] <= 20]
+    if not rows:
+        return Markup("")
+
+    league = (projection.reference or {}).get("total_runs") or {}
+    lo, hi = 2, 20
+    peak = max(
+        [r["p"] for r in rows]
+        + [league.get(str(t), 0.0) for t in range(lo, hi + 1)]
+    )
+    left, right, top, bottom = 10, 10, 18, 32
+    plot_w, plot_h = width - left - right, height - top - bottom
+    step = plot_w / (hi - lo + 1)
+
+    def x_of(total: float) -> float:
+        return left + (total - lo) * step + step / 2
+
+    parts = [
+        f'<svg class="tdist" width="{width}" height="{height}" '
+        f'viewBox="0 0 {width} {height}" role="img" '
+        f'aria-label="Total runs tonight versus a normal game">'
+    ]
+    for r in rows:
+        bar = plot_h * (r["p"] / peak)
+        parts.append(
+            f'<rect x="{x_of(r["total"]) - step / 2 + 1:.1f}" '
+            f'y="{top + plot_h - bar:.1f}" width="{step - 2:.1f}" '
+            f'height="{bar:.1f}" rx="1" fill="var(--accent)" opacity="0.7">'
+            f'<title>{r["total"]} total runs: {r["p"] * 100:.1f}%</title></rect>'
+        )
+    if league:
+        pts = " ".join(
+            f"{x_of(t):.1f},{top + plot_h - plot_h * league.get(str(t), 0.0) / peak:.1f}"
+            for t in range(lo, hi + 1)
+        )
+        parts.append(
+            f'<polyline points="{pts}" fill="none" stroke="var(--ink)" '
+            f'stroke-width="1.4" stroke-dasharray="3 2" opacity="0.6"/>'
+        )
+
+    expected = projection.score["expected_total"]
+    league_mean = (projection.reference or {}).get("total_runs_mean")
+    ex = x_of(expected)
+    parts.append(
+        f'<line x1="{ex:.1f}" y1="{top}" x2="{ex:.1f}" y2="{top + plot_h:.1f}" '
+        f'stroke="{FLAG_INK}" stroke-width="1.6"/>'
+    )
+    parts.append(
+        f'<text class="sga" x="{ex:.1f}" y="{top - 5}" text-anchor="middle" '
+        f'fill="{FLAG_INK}">{expected:.1f}</text>'
+    )
+    for value in range(4, hi + 1, 4):
+        parts.append(
+            f'<text class="sgl" x="{x_of(value):.1f}" y="{top + plot_h + 13}" '
+            f'text-anchor="middle">{value}</text>'
+        )
+
+    legend = height - 6
+    parts.append(
+        f'<rect x="{left}" y="{legend - 7}" width="9" height="7" rx="1" '
+        f'fill="var(--accent)" opacity="0.7"/>'
+    )
+    parts.append(f'<text class="sgl" x="{left + 13}" y="{legend}">tonight</text>')
+    parts.append(
+        f'<line x1="{left + 62}" y1="{legend - 4}" x2="{left + 76}" '
+        f'y2="{legend - 4}" stroke="var(--ink)" stroke-width="1.4" '
+        f'stroke-dasharray="3 2" opacity="0.6"/>'
+    )
+    parts.append(
+        f'<text class="sgl" x="{left + 80}" y="{legend}">a normal game'
+        + (f" ({league_mean:.1f})" if league_mean else "")
+        + "</text>"
+    )
+    parts.append("</svg>")
+    return Markup("".join(parts))
+
+
+def rate_compare(tonight: float, typical: float, *, width: int = 110) -> Markup:
+    """One derived probability against its league rate, on a shared scale.
+
+    A blowout chance of 26% means nothing without knowing 28% is normal. The
+    direction of the gap is the finding, and it is invisible in the bare number.
+    """
+    scale = max(tonight, typical, 0.01) * 1.4
+    a, b = width * tonight / scale, width * typical / scale
+    return Markup(
+        f'<svg class="rcmp" width="{width}" height="14" viewBox="0 0 {width} 14" '
+        f'role="img" aria-label="tonight {tonight * 100:.0f}%, '
+        f'normally {typical * 100:.0f}%">'
+        f'<rect x="0" y="3" width="{a:.1f}" height="8" rx="1.5" '
+        f'fill="var(--accent)" opacity="0.75"/>'
+        f'<line x1="{b:.1f}" y1="0" x2="{b:.1f}" y2="14" stroke="var(--ink)" '
+        f'stroke-width="1.4" opacity="0.65"/>'
+        f"</svg>"
+    )
+
+
+def elo_scale_svg(projection: Any, home: str, away: str, *, width: int = 520) -> Markup:
+    """Both clubs on the rating scale, with the league centred.
+
+    Kept prominent because it earns it: the team rating supplies 59% of the
+    movement in the win model, more than every starter input combined.
+    """
+    height = 52
+    ratings = [projection.home.elo, projection.away.elo, 1500.0]
+    lo, hi = min(ratings) - 45, max(ratings) + 45
+    span = max(hi - lo, 1e-6)
+    left, right = 14, width - 14
+    axis = 32
+
+    def x_of(rating: float) -> float:
+        return left + (right - left) * (rating - lo) / span
+
+    parts = [
+        f'<svg class="eloscale" width="{width}" height="{height}" '
+        f'viewBox="0 0 {width} {height}" role="img" aria-label="Team ratings">',
+        f'<line x1="{left}" y1="{axis}" x2="{right}" y2="{axis}" '
+        f'stroke="var(--rule)" stroke-width="2" stroke-linecap="round"/>',
+        f'<line x1="{x_of(1500):.1f}" y1="{axis - 7}" x2="{x_of(1500):.1f}" '
+        f'y2="{axis + 7}" stroke="var(--muted)" stroke-width="1"/>',
+        f'<text class="sgl" x="{x_of(1500):.1f}" y="{axis + 18}" '
+        f'text-anchor="middle">league average</text>',
+    ]
+    for rating, label, colour in (
+        (projection.home.elo, home, HOME_INK),
+        (projection.away.elo, away, AWAY_INK),
+    ):
+        x = x_of(rating)
+        parts.append(f'<circle cx="{x:.1f}" cy="{axis}" r="5.5" fill="{colour}"/>')
+        parts.append(
+            f'<text class="elolab" x="{x:.1f}" y="{axis - 13}" '
+            f'text-anchor="middle" fill="{colour}">{label} {rating:.0f}</text>'
+        )
+    parts.append("</svg>")
+    return Markup("".join(parts))
+
+
+def accuracy_bar(accuracy: float, baseline: float, *, width: int = 140) -> Markup:
+    """One season's accuracy against the always-pick-home baseline."""
+    scale = 0.70
+    a = width * min(accuracy, scale) / scale
+    b = width * min(baseline, scale) / scale
+    return Markup(
+        f'<svg class="accbar" width="{width}" height="14" viewBox="0 0 {width} 14" '
+        f'role="img" aria-label="{accuracy * 100:.1f}% versus '
+        f'{baseline * 100:.1f}% baseline">'
+        f'<rect x="0" y="4" width="{a:.1f}" height="6" rx="1.5" '
+        f'fill="var(--accent)" opacity="0.8"/>'
+        f'<line x1="{b:.1f}" y1="1" x2="{b:.1f}" y2="13" stroke="var(--ink)" '
+        f'stroke-width="1.4" opacity="0.65"/>'
+        f"</svg>"
+    )
