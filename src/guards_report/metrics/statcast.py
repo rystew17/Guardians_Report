@@ -14,10 +14,12 @@ from __future__ import annotations
 
 import csv
 import io
+from datetime import date
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
+from guards_report.config import COMPETITIVE_GAME_TYPES
 from guards_report.metrics import formulas as f
 
 # Statcast's `description` values that mean the batter swung. Anything else --
@@ -44,8 +46,46 @@ OUT_ZONE = ("11", "12", "13", "14")
 ALL_ZONES = IN_ZONE + OUT_ZONE
 
 
-def parse_pitches(text: str) -> list[dict[str, str]]:
-    return list(csv.DictReader(io.StringIO(text)))
+def parse_pitches(text: str, *, before: date | None = None) -> list[dict[str, str]]:
+    """Pitch rows from a Savant CSV, exhibitions and unfinished games removed.
+
+    Savant returns spring training alongside regular season play, and February
+    and March pitches would otherwise be folded into the zone grids and spray
+    charts as if they were league games. The fetcher asks the source to filter
+    them; this is the backstop, because a contaminated chart still looks
+    perfectly plausible.
+
+    `before` drops anything from that date onward, which is how a game still
+    being played is kept out. Savant publishes pitches from a live game while it
+    is in progress, and a chart that silently absorbs three innings of today is
+    both wrong and unreproducible -- run the report an hour later and it
+    changes.
+
+    A row missing `game_type` is kept rather than dropped: if the source ever
+    stops sending the column, an unfiltered chart is a smaller failure than an
+    empty one. A row missing `game_date` is dropped whenever `before` is set,
+    because there is then no way to prove it is finished.
+    """
+    rows = list(csv.DictReader(io.StringIO(text)))
+    kept = []
+    for row in rows:
+        game_type = (row.get("game_type") or "").strip()
+        if game_type and game_type not in COMPETITIVE_GAME_TYPES:
+            continue
+        if before is not None and not _before(row.get("game_date"), before):
+            continue
+        kept.append(row)
+    return kept
+
+
+def _before(raw: str | None, cutoff: date) -> bool:
+    text = (raw or "").strip()
+    if not text:
+        return False
+    try:
+        return date.fromisoformat(text[:10]) < cutoff
+    except ValueError:
+        return False
 
 
 def _f(row: dict[str, str], key: str) -> float | None:

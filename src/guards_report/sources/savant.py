@@ -53,6 +53,32 @@ def _leaderboard(
     )
 
 
+# Savant is not consistent about how it expresses a rate. The percentile and
+# arsenal boards send 32.4 for 32.4%; the batted-ball and bat-tracking boards
+# send 0.324 for the same figure -- pull/straight/oppo sum to 1.0, not to 100.
+#
+# The rest of the project assumes one convention: a rate is a percentage. These
+# are the columns that have to be scaled to get there. Scaling happens once, on
+# the way in, because the player values and the league benchmarks are read by
+# different code paths -- and a mismatch there does not look broken, it just
+# renders 32.4% as "0.3%" and a benchmark delta of +32.4.
+FRACTION_FIELDS = frozenset({
+    "gb_rate", "ld_rate", "fb_rate", "pu_rate", "air_rate",
+    "pull_rate", "straight_rate", "oppo_rate",
+    "pull_gb_rate", "straight_gb_rate", "oppo_gb_rate",
+    "pull_air_rate", "straight_air_rate", "oppo_air_rate",
+    "hard_swing_rate", "squared_up_per_swing", "squared_up_per_bat_contact",
+    "blast_per_swing", "blast_per_bat_contact", "whiff_per_swing",
+})
+
+
+def scale_rate(field: str, value: float | None) -> float | None:
+    """Express a leaderboard value as a percentage, if that column is a fraction."""
+    if value is None:
+        return None
+    return value * 100 if field in FRACTION_FIELDS else value
+
+
 def parse_csv(result: FetchResult) -> list[dict[str, str]]:
     """Parse a Savant CSV response into row dicts.
 
@@ -322,6 +348,10 @@ def player_pitches(
         params={
             "all": "true",
             "hfSea": f"{year}|",
+            # Regular season and postseason only. Unfiltered, this endpoint
+            # also returns spring training, which would fold exhibition pitches
+            # into the zone grids and spray charts.
+            "hfGT": "R|PO|",
             "player_type": perspective,
             key: player_id,
             "type": "details",

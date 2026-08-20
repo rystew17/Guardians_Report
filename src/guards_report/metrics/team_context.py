@@ -18,6 +18,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from guards_report.config import (
+    COMPETITIVE_GAME_TYPES,
+    REGULAR_SEASON_GAME_TYPE,
+)
 from guards_report.metrics import formulas as f
 
 
@@ -307,6 +311,12 @@ def parse_series(
 
     for day in payload.get("dates", []):
         for game in day.get("games", []):
+            # Spring training and exhibitions share this endpoint with real
+            # games. The source is asked to filter them too, but a record is
+            # wrong rather than merely incomplete if one slips through.
+            if game.get("gameType") not in COMPETITIVE_GAME_TYPES:
+                continue
+
             teams = game.get("teams") or {}
             if game.get("gamePk") == today_game_pk:
                 series_game_number = game.get("seriesGameNumber")
@@ -390,7 +400,7 @@ def parse_series_records(
 
     for day in payload.get("dates", []):
         for game in day.get("games", []):
-            if game.get("gameType") != "R":
+            if game.get("gameType") != REGULAR_SEASON_GAME_TYPE:
                 continue
 
             teams = game.get("teams") or {}

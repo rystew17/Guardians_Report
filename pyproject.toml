@@ -12,6 +12,12 @@ dependencies = [
     "google-cloud-bigquery>=3.25",
     "jinja2>=3.1",
     "python-dotenv>=1.0",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    # Windows ships no IANA time zone database, so zoneinfo cannot resolve
+    # "America/New_York" without this. Every clock time in the report is
+    # Eastern, so it is a hard requirement, not a convenience.
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]

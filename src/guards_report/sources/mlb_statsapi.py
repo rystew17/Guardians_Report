@@ -15,7 +15,12 @@ from collections.abc import Iterable, Sequence
 from datetime import date
 from typing import Any
 
-from guards_report.config import MLB_SPORT_ID, STATSAPI_BASE
+from guards_report.config import (
+    COMPETITIVE_GAME_TYPES,
+    MLB_SPORT_ID,
+    REGULAR_SEASON_GAME_TYPE,
+    STATSAPI_BASE,
+)
 from guards_report.sources.http import Archiver, FetchResult, fetch
 
 SOURCE = "mlb_statsapi"
@@ -32,6 +37,9 @@ STAT_SEASON = "season"
 STAT_GAME_LOG = "gameLog"
 STAT_SABERMETRICS = "sabermetrics"
 STAT_SPLITS = "statSplits"
+# Career totals ride along in the same batched hydrate, so they cost no
+# additional request.
+STAT_CAREER = "career"
 STAT_HOT_COLD_ZONES = "hotColdZones"
 
 
@@ -388,6 +396,7 @@ def season_schedule(
             "season": season,
             "startDate": f"{season}-01-01",
             "endDate": through.isoformat(),
+            "gameTypes": ",".join(COMPETITIVE_GAME_TYPES),
             "hydrate": "team",
         },
     )
@@ -411,44 +420,100 @@ def head_to_head(
             "season": season,
             "startDate": f"{season}-01-01",
             "endDate": through.isoformat(),
+            "gameTypes": ",".join(COMPETITIVE_GAME_TYPES),
             "hydrate": "team,linescore",
         },
     )
 
 
-def league_hitting_totals(archiver: Archiver, *, season: int) -> FetchResult:
-    """Season hitting totals for every team, summed to give league averages.
+def _league_totals(
+    archiver: Archiver, *, season: int, group: str, through: date | None
+) -> FetchResult:
+    """Team-by-team totals for one group, optionally bounded by date.
+
+    `stats=season` counts a game that is still being played, so the league
+    averages it produces move every few minutes and the FIP constant derived
+    from them moves with it -- two reports built minutes apart disagreed by
+    0.0002 before this. `byDateRange` ending the day before the report is the
+    fix: it settles on completed games only, so a run is reproducible.
+    """
+    params: dict[str, Any] = {
+        "season": season,
+        "sportIds": MLB_SPORT_ID,
+        "group": group,
+    }
+    if through is None:
+        params["stats"] = "season"
+    else:
+        params.update({
+            "stats": "byDateRange",
+            "startDate": f"{season}-01-01",
+            "endDate": through.isoformat(),
+            "gameType": REGULAR_SEASON_GAME_TYPE,
+        })
+    return _get("/v1/teams/stats", archiver, params)
+
+
+def game_boxscore(archiver: Archiver, *, game_pk: int) -> FetchResult:
+    """Full box score for one finished game.
+
+    Carries every batting and pitching line, which is what the per-game and
+    per-series summaries are built from. Roughly 200 KB -- far cheaper than the
+    ~800 KB live feed, and it contains everything those summaries need.
+    """
+    return _get(f"/v1/game/{game_pk}/boxscore", archiver, {})
+
+
+def game_linescore(archiver: Archiver, *, game_pk: int) -> FetchResult:
+    """Inning-by-inning runs, hits and errors for one game."""
+    return _get(f"/v1/game/{game_pk}/linescore", archiver, {})
+
+
+def series_games(
+    archiver: Archiver, *, team_id: int, start: date, end: date
+) -> FetchResult:
+    """Games in a date window, hydrated with the decisions and line score.
+
+    `decisions` is what names the winning and losing pitcher; hydrating it here
+    avoids pulling the live feed for each game just to read two names.
+    """
+    return _get(
+        "/v1/schedule",
+        archiver,
+        {
+            "sportId": MLB_SPORT_ID,
+            "teamId": team_id,
+            "startDate": start.isoformat(),
+            "endDate": end.isoformat(),
+            "gameTypes": ",".join(COMPETITIVE_GAME_TYPES),
+            "hydrate": "team,linescore,decisions",
+        },
+    )
+
+
+def league_hitting_totals(
+    archiver: Archiver, *, season: int, through: date | None = None
+) -> FetchResult:
+    """Hitting totals for every team, summed to give league averages.
 
     Every stat in the report is benchmarked against these, so a .750 OPS
     carries its own context rather than requiring the reader to know what an
     average one is this year.
     """
-    return _get(
-        "/v1/teams/stats",
-        archiver,
-        {
-            "season": season,
-            "sportIds": MLB_SPORT_ID,
-            "group": GROUP_HITTING,
-            "stats": "season",
-        },
+    return _league_totals(
+        archiver, season=season, group=GROUP_HITTING, through=through
     )
 
 
-def league_pitching_totals(archiver: Archiver, *, season: int) -> FetchResult:
-    """Season pitching totals for every team.
+def league_pitching_totals(
+    archiver: Archiver, *, season: int, through: date | None = None
+) -> FetchResult:
+    """Pitching totals for every team.
 
     Summing all 30 teams gives the league totals needed to derive the FIP
     constant for this run environment, rather than hardcoding a number that
     drifts year to year. See metrics/league_constants.py.
     """
-    return _get(
-        "/v1/teams/stats",
-        archiver,
-        {
-            "season": season,
-            "sportIds": MLB_SPORT_ID,
-            "group": GROUP_PITCHING,
-            "stats": "season",
-        },
+    return _league_totals(
+        archiver, season=season, group=GROUP_PITCHING, through=through
     )

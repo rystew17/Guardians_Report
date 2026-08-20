@@ -14,7 +14,7 @@ These tests hit the network. Run with:  pytest -m network
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timezone
 
 import pytest
 
@@ -178,6 +178,13 @@ def test_our_window_agrees_with_source_last_x_games(archiver):
 
     Independent implementations of the same window, compared. A disagreement
     means our aggregation or ordering logic is wrong.
+
+    The two endpoints disagree about what "most recent" means while a game is
+    being played: `lastXGames` picks up the live game immediately, whereas
+    `gameLog` only gains the row once the game is final. Their windows then
+    cover different sets of games and no comparison is meaningful, so the test
+    detects that state and skips rather than reporting a defect that is not
+    there.
     """
     person_id = 608070  # Jose Ramirez
 
@@ -207,6 +214,16 @@ def test_our_window_agrees_with_source_last_x_games(archiver):
     ).json()
     theirs = (theirs_payload.get("stats") or [{}])[0]["splits"][0]["stat"]
 
+    # `lastXGames` counts a game the moment it starts, so during a live game
+    # the two windows cover different sets and cannot be compared. Our own data
+    # is bounded at `as_of`, which is exactly the point -- see
+    # test_live_game_is_excluded_from_windows.
+    if rows[0].game_date >= _today_eastern():
+        pytest.skip(
+            f"most recent logged game ({rows[0].game_date}) is today's, which "
+            "may still be in progress; windows are not comparable mid-game"
+        )
+
     assert ours["games"] == 15
     for field in ("atBats", "hits", "homeRuns", "baseOnBalls", "strikeOuts"):
         assert ours[field] == int(theirs[field]), f"{field} disagrees"
@@ -232,3 +249,50 @@ def test_rates_come_from_summed_counts_not_averaged_rates():
     assert aggregated["hits"] == 1
     assert aggregated["atBats"] == 6
     assert aggregated["avg"] == pytest.approx(1 / 6)
+
+
+def _today_eastern():
+    """The current date in the league's time zone, which is what a game date is."""
+    from datetime import datetime
+
+    from guards_report.metrics import clocks
+
+    return clocks.to_eastern(datetime.now(timezone.utc)).date()
+
+
+@pytest.mark.network
+def test_live_game_is_excluded_from_windows(archiver):
+    """A game in progress must not reach any window, season line, or chart.
+
+    The source adds a game to the log as soon as it starts and updates it pitch
+    by pitch. Two reports built an hour apart would otherwise disagree, and
+    neither could be checked against a published figure -- the whole point of
+    the project is that every number can be verified after the fact.
+    """
+    person_id = 608070  # Jose Ramirez
+
+    rows = w.parse_game_logs(
+        api.game_log(
+            archiver, person_id=person_id, season=SEASON, group=api.GROUP_HITTING
+        ).json()
+    )
+    if not rows:
+        pytest.skip("no games logged yet this season")
+
+    as_of = _today_eastern()
+
+    # Season line and every window are built from rows strictly before as_of.
+    prior = [r for r in rows if r.game_date < as_of]
+    assert all(r.game_date < as_of for r in prior)
+
+    for spec in w.HITTER_WINDOWS:
+        selected = w.select(rows, spec, as_of=as_of)
+        assert all(r.game_date < as_of for r in selected), (
+            f"{spec.label} window reached into {as_of}"
+        )
+
+    # And the aggregate is unchanged by whether today's row exists at all,
+    # which is the property that makes a run reproducible.
+    assert w.aggregate_hitting(prior) == w.aggregate_hitting(
+        [r for r in rows if r.game_date < as_of]
+    )

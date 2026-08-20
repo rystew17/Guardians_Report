@@ -13,6 +13,8 @@ not a thing that describes the league.
 
 from __future__ import annotations
 
+from guards_report.sources import savant as sv
+
 from dataclasses import dataclass
 from typing import Any
 
@@ -181,6 +183,9 @@ def leaderboard_means(
                 value = float(raw)
             except ValueError:
                 continue
+            # Same percentage convention the player rows are read with, so a
+            # value and its benchmark are always in the same units.
+            value = sv.scale_rate(name, value)
             totals[name] = totals.get(name, 0.0) + value * weight
             weights[name] = weights.get(name, 0.0) + weight
 

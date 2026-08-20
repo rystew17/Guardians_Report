@@ -24,6 +24,15 @@ load_dotenv(REPO_ROOT / ".env")
 CLEVELAND_GUARDIANS_TEAM_ID = 114
 MLB_SPORT_ID = 1
 
+# Game types that count toward a club's record. Spring training ("S"),
+# exhibition ("E") and the All-Star game ("A") are excluded: the schedule
+# endpoint returns them alongside real games, and counting them makes two
+# clubs look like they have already met before their first actual meeting.
+#   R regular season | F wild card | D division series
+#   L championship series | W World Series | P playoff or tiebreaker
+COMPETITIVE_GAME_TYPES = ("R", "F", "D", "L", "W", "P")
+REGULAR_SEASON_GAME_TYPE = "R"
+
 STATSAPI_BASE = "https://statsapi.mlb.com/api"
 SAVANT_BASE = "https://baseballsavant.mlb.com"
 
@@ -97,6 +106,10 @@ class Settings:
     bq_max_bytes_billed: int
     raw_archive_dir: Path
     output_dir: Path
+    # Cloud Storage bucket that published reports are copied to, so a report
+    # can be handed to someone as a link instead of a file. Empty means
+    # publishing is simply switched off.
+    gcs_bucket: str = ""
 
     @property
     def dataset_ref(self) -> str:
@@ -130,6 +143,7 @@ def load_settings() -> Settings:
         bq_max_bytes_billed=int(
             os.environ.get("BQ_MAX_BYTES_BILLED", str(1024**3))
         ),
+        gcs_bucket=os.environ.get("GCS_BUCKET", ""),
         raw_archive_dir=raw_archive,
         output_dir=REPO_ROOT / "out",
     )
