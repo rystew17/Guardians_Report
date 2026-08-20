@@ -184,7 +184,7 @@ def sparkline(series: Any, *, width: int = 132, height: int = 26) -> Markup:
     )
     end_x, end_y = coords[-1]
     stroke = {"up": "var(--good)", "down": "var(--bad)"}.get(
-        series.direction, "var(--slate)"
+        series.direction, "var(--muted)"
     )
 
     return Markup(
@@ -423,9 +423,11 @@ def render(bundle: ReportBundle, *, output_dir: Path) -> Path:
 # genuinely changes night to night is which input is doing the work, so that is
 # what these charts are built to show.
 
-HOME_INK = "#1d4e89"
-AWAY_INK = "#8a3b2e"
-FLAG_INK = "#c2410c"
+# Declared in the stylesheet so the projections share the report's palette
+# rather than introducing a private one. See --home / --away / --mark.
+HOME_INK = "var(--home)"
+AWAY_INK = "var(--away)"
+FLAG_INK = "var(--mark)"
 
 
 def confidence_strip(projection: Any, *, width: int = 520, height: int = 118) -> Markup:
@@ -464,7 +466,7 @@ def confidence_strip(projection: Any, *, width: int = 520, height: int = 118) ->
     mx, my = left + plot_w * here / 100.0, py(conviction)
 
     parts = [
-        f'<svg class="cstrip" width="{width}" height="{height}" '
+        f'<svg class="cstrip" '
         f'viewBox="0 0 {width} {height}" role="img" aria-label="Tonight at the '
         f'{here:.0f}th percentile of this model\'s confidence">',
         f'<polygon points="{area}" fill="var(--accent)" opacity="0.12"/>',
@@ -475,7 +477,7 @@ def confidence_strip(projection: Any, *, width: int = 520, height: int = 118) ->
         x = left + plot_w * pct / 100.0
         parts.append(
             f'<line x1="{x:.1f}" y1="{top}" x2="{x:.1f}" y2="{top + plot_h:.1f}" '
-            f'stroke="var(--rule)" stroke-width="0.6" stroke-dasharray="2 3"/>'
+            f'stroke="var(--border)" stroke-width="0.6" stroke-dasharray="2 3"/>'
         )
     parts += [
         f'<line x1="{mx:.1f}" y1="{top}" x2="{mx:.1f}" y2="{top + plot_h:.1f}" '
@@ -530,14 +532,29 @@ def waterfall_svg(
             "_label": f"{len(minor)} smaller inputs",
         })
 
-    label_w, pad, gutter = 210, 8, 38
-    axis = label_w + (width - label_w) / 2
-    half = (width - label_w) / 2 - gutter
-    peak = max(abs(r["contribution"]) for r in major) or 1.0
+    label_w, pad, gutter = 210, 8, 54
+    values = [r["contribution"] for r in major]
+
+    # A centred zero line is only worth its cost when the chart actually
+    # diverges. When every input pushes the same way -- which is common, since
+    # one club is usually better on most counts -- centring throws away half the
+    # canvas and squeezes the bars into the remainder.
+    diverges = min(values) < 0 < max(values)
+    if diverges:
+        axis = label_w + (width - label_w) / 2
+        span = (width - label_w) / 2 - gutter
+    elif max(values) > 0:
+        axis = label_w
+        span = width - label_w - gutter
+    else:
+        axis = width - gutter
+        span = width - label_w - gutter
+
+    peak = max(abs(v) for v in values) or 1.0
     height = pad + row * len(major) + 22
 
     parts = [
-        f'<svg class="wfall" width="{width}" height="{height}" '
+        f'<svg class="wfall" '
         f'viewBox="0 0 {width} {height}" role="img" '
         f'aria-label="What moved the win probability">'
     ]
@@ -545,7 +562,7 @@ def waterfall_svg(
     for i, r in enumerate(major):
         value = r["contribution"]
         y = pad + i * row
-        bar = max(half * abs(value) / peak, 1.0)
+        bar = max(span * abs(value) / peak, 1.0)
         favours_home = value > 0
         colour = HOME_INK if favours_home else AWAY_INK
         x = axis if favours_home else axis - bar
@@ -561,7 +578,7 @@ def waterfall_svg(
         if i % 2 == 0:
             parts.append(
                 f'<rect x="0" y="{y:.1f}" width="{width}" height="{row}" '
-                f'fill="var(--rule)" opacity="0.16"/>'
+                f'fill="var(--border)" opacity="0.16"/>'
             )
         parts.append(
             f'<text class="wfl{" lead" if lead else ""}" x="{label_w - 10}" '
@@ -578,18 +595,32 @@ def waterfall_svg(
             f'<text class="wfv{" lead" if lead else ""}" x="{tx:.1f}" '
             f'y="{y + row / 2 + 4:.1f}" '
             f'text-anchor="{"start" if favours_home else "end"}">'
-            f'{value:+.2f}</text>'
+            f'{value:+.3f}</text>'
         )
 
     base = pad + row * len(major)
-    parts += [
-        f'<line x1="{axis}" y1="{pad - 2}" x2="{axis}" y2="{base:.1f}" '
-        f'stroke="var(--ink)" stroke-width="1" opacity="0.55"/>',
-        f'<text class="sgl" x="{axis - 8}" y="{base + 15:.1f}" text-anchor="end">'
-        f'&#9664; {away}</text>',
-        f'<text class="sgl" x="{axis + 8}" y="{base + 15:.1f}">{home} &#9654;</text>',
-        "</svg>",
-    ]
+    parts.append(
+        f'<line x1="{axis:.1f}" y1="{pad - 2}" x2="{axis:.1f}" y2="{base:.1f}" '
+        f'stroke="var(--ink)" stroke-width="1" opacity="0.55"/>'
+    )
+    # Only name the directions the chart actually uses; a one-sided chart
+    # labelled with both invites the reader to look for bars that are not there.
+    if diverges:
+        parts.append(
+            f'<text class="sgl" x="{axis - 8:.1f}" y="{base + 15:.1f}" '
+            f'text-anchor="end">&#9664; {away}</text>'
+        )
+        parts.append(
+            f'<text class="sgl" x="{axis + 8:.1f}" y="{base + 15:.1f}">'
+            f'{home} &#9654;</text>'
+        )
+    else:
+        favoured = home if max(values) > 0 else away
+        parts.append(
+            f'<text class="sgl" x="{label_w:.1f}" y="{base + 15:.1f}">'
+            f'every input favours {favoured} &#9654;</text>'
+        )
+    parts.append("</svg>")
     return Markup("".join(parts))
 
 
@@ -621,7 +652,7 @@ def margin_svg(
 
     home_p = projection.score["home_win_probability"]
     parts = [
-        f'<svg class="mdist" width="{width}" height="{height}" '
+        f'<svg class="mdist" '
         f'viewBox="0 0 {width} {height}" role="img" '
         f'aria-label="Winning margin distribution">'
     ]
@@ -697,7 +728,7 @@ def runs_by_side_svg(
     bar_w = (step - 3) / 2
 
     parts = [
-        f'<svg class="rside" width="{width}" height="{height}" '
+        f'<svg class="rside" '
         f'viewBox="0 0 {width} {height}" role="img" '
         f'aria-label="Runs scored by each side">'
     ]
@@ -768,7 +799,7 @@ def totals_svg(projection: Any, *, width: int = 520, height: int = 204) -> Marku
         return left + (total - lo) * step + step / 2
 
     parts = [
-        f'<svg class="tdist" width="{width}" height="{height}" '
+        f'<svg class="tdist" '
         f'viewBox="0 0 {width} {height}" role="img" '
         f'aria-label="Total runs tonight versus a normal game">'
     ]
@@ -864,10 +895,10 @@ def elo_scale_svg(projection: Any, home: str, away: str, *, width: int = 520) ->
         return left + (right - left) * (rating - lo) / span
 
     parts = [
-        f'<svg class="eloscale" width="{width}" height="{height}" '
+        f'<svg class="eloscale" '
         f'viewBox="0 0 {width} {height}" role="img" aria-label="Team ratings">',
         f'<line x1="{left}" y1="{axis}" x2="{right}" y2="{axis}" '
-        f'stroke="var(--rule)" stroke-width="2" stroke-linecap="round"/>',
+        f'stroke="var(--border)" stroke-width="2" stroke-linecap="round"/>',
         f'<line x1="{x_of(1500):.1f}" y1="{axis - 7}" x2="{x_of(1500):.1f}" '
         f'y2="{axis + 7}" stroke="var(--muted)" stroke-width="1"/>',
         f'<text class="sgl" x="{x_of(1500):.1f}" y="{axis + 18}" '

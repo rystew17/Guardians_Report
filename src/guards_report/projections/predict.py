@@ -323,6 +323,10 @@ def read_of(projection: Projection) -> dict[str, Any]:
     return {
         "sentence": sentence,
         "note": note,
+        # How many starter bars the chart draws, so the prose can say which
+        # bars it is adding up rather than quoting a total that appears
+        # nowhere on the chart.
+        "starter_count": len(starters),
         "shape": shape,
         "top_label": label,
         "top_share": top_share,

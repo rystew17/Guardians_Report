@@ -21,6 +21,12 @@
     --field:#dcebe4; --field-line:#a9c0b4; --field-dirt:#f3ece1;
     --great:#d22d49; --gd:#e8896a; --avg:#cbd1d6; --poor:#7aa0c4; --bad-p:#325aa8;
 
+    /* Projections. Home takes the report's navy; away is a warm brown chosen
+       to sit clear of both the brand red and the percentile ramp, so a third
+       meaning for red is not introduced. 6.93:1 on white. */
+    --home:#0c2340; --away:#7d4f2f; --mark:#c2410c;
+
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
     --sp-1:.25rem; --sp-2:.5rem; --sp-3:.75rem; --sp-4:1rem; --sp-6:1.5rem;
     --radius:10px;
   }
@@ -28,7 +34,7 @@
   html { -webkit-text-size-adjust:100%; }
   body {
     margin:0; padding:0 var(--sp-4) 4rem; background:var(--bg); color:var(--ink);
-    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+    font:14px/1.5 var(--sans);
     -webkit-font-smoothing:antialiased;
   }
   .wrap { max-width:1360px; margin:0 auto; }
@@ -57,6 +63,8 @@
   .page { display:none; } .page.active { display:block; }
 
   h2 { margin:var(--sp-1) 0 var(--sp-4); font-size:1.15rem; letter-spacing:-.015em; }
+  h3.lab { margin:var(--sp-4) 0 var(--sp-2); font-size:.7rem; text-transform:uppercase;
+           letter-spacing:.06em; color:var(--faint); font-weight:750; }
   h4 { margin:var(--sp-4) 0 var(--sp-2); font-size:.7rem; text-transform:uppercase;
        letter-spacing:.06em; color:var(--faint); font-weight:750; }
 
@@ -69,7 +77,7 @@
      scrollbar does not jump as boxes are realised. */
   .box { width:100%; background:var(--box); border:1px solid var(--border);
          border-radius:var(--radius); padding:var(--sp-3) var(--sp-4) var(--sp-4);
-         content-visibility:auto; contain-intrinsic-size:auto 900px; }
+         content-visibility:auto; contain-intrinsic-size:auto 440px; }
   .box.featured { border:2px solid var(--accent-2); }
   .box.bench { opacity:.9; border-style:dashed; }
   .bhead { display:flex; align-items:center; gap:var(--sp-2); flex-wrap:wrap;
@@ -115,7 +123,7 @@
   .tr-up { color:var(--good); } .tr-down { color:var(--bad); } .tr-flat { color:var(--faint); }
 
   /* ---------- percentile chips ---------- */
-  .pcts { display:grid; grid-template-columns:repeat(auto-fill,minmax(58px,1fr)); gap:var(--sp-1); }
+  .pcts { display:grid; grid-template-columns:repeat(auto-fit,minmax(58px,1fr)); gap:var(--sp-1); }
   .pchip { text-align:center; border-radius:6px; padding:.3rem .2rem; border:1px solid var(--border); }
   .pchip .pv { display:block; font-size:.92rem; font-weight:750; line-height:1.1;
                font-variant-numeric:tabular-nums; }
@@ -159,7 +167,7 @@
            letter-spacing:-.02em; }
   .zplate { display:block; margin:3px auto 0; }
   .zcap { font-size:.6rem; color:var(--faint); margin-top:.2rem; }
-  .spray { display:block; }
+  .spray { display:block; width:100%; height:auto; }
   .slegend { display:flex; flex-wrap:wrap; gap:.3rem .7rem; justify-content:center;
              font-size:.6rem; color:var(--muted); margin-top:.2rem; }
   .slegend i { width:.5rem; height:.5rem; border-radius:50%; display:inline-block; margin-right:.2rem; }
@@ -350,7 +358,7 @@
     .spray { width:158px; height:auto; }
     .zgrid { grid-template-columns:repeat(3,31px); grid-template-rows:repeat(3,27px); }
     .zcell,.zq span { font-size:.58rem; }
-    .pcts { grid-template-columns:repeat(auto-fill,minmax(52px,1fr)); }
+    .pcts { grid-template-columns:repeat(auto-fit,minmax(52px,1fr)); }
     .trec { font-size:1.4rem; }
     .spark { width:96px; }
   }
@@ -367,22 +375,22 @@
 .pread strong{font-variant-numeric:tabular-nums}
 .pwrap{display:flex;flex-direction:column;gap:.35rem;margin:.5rem 0 1rem}
 .pbar{display:flex;height:2.2rem;border-radius:3px;overflow:hidden;
-      border:1px solid var(--rule);background:var(--panel)}
+      border:1px solid var(--border);background:var(--panel)}
 .pfill{display:flex;align-items:center;font:600 .78rem/1 var(--sans);
        color:#fff;padding:0 .55rem;white-space:nowrap;min-width:0}
-.pfill.home{background:#1d4e89;justify-content:flex-start}
-.pfill.away{background:#8a3b2e;justify-content:flex-end}
+.pfill.home{background:var(--home);justify-content:flex-start}
+.pfill.away{background:var(--away);justify-content:flex-end}
 .pmeta{display:flex;flex-wrap:wrap;gap:.75rem;justify-content:space-between;
        font:.72rem/1.35 var(--sans);color:var(--muted)}
 .agree{color:#2f6b3f;font-weight:600}
 .disagree{color:#9a5b12;font-weight:600}
 
-.pcols{display:grid;grid-template-columns:repeat(auto-fit,minmax(24rem,1fr));
+.pcols{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(24rem,100%),1fr));
        gap:1rem 1.4rem;align-items:start;margin:.5rem 0 1rem}
 .pfig{margin:0;min-width:0}
 .pcols.split{grid-template-columns:minmax(0,620px) minmax(16rem,1fr)}
 .pfig.wide{grid-column:1/-1}
-.pfig svg{max-width:100%;height:auto;display:block}
+.pfig svg{width:100%;height:auto;display:block}
 .cap{font:600 .7rem/1.3 var(--sans);letter-spacing:.05em;
      text-transform:uppercase;color:var(--muted);margin-bottom:.3rem}
 .pfig .sub{font:.74rem/1.5 var(--sans);color:var(--muted);margin:.35rem 0 0}
@@ -394,9 +402,9 @@
        font-variant-numeric:tabular-nums}
 .pcmp th,.pstart th,.ptrack th{font:600 .68rem/1.3 var(--sans);
        letter-spacing:.04em;text-transform:uppercase;color:var(--muted);
-       text-align:right;padding:.3rem .45rem;border-bottom:1px solid var(--rule)}
+       text-align:right;padding:.3rem .45rem;border-bottom:1px solid var(--border)}
 .pcmp td,.pstart td,.ptrack td{font:.82rem/1.4 var(--sans);text-align:right;
-       padding:.32rem .45rem;border-bottom:1px solid var(--rule)}
+       padding:.32rem .45rem;border-bottom:1px solid var(--border)}
 .pcmp th.l,.pstart th.l,.ptrack th.l,
 .pcmp td.l,.pstart td.l,.ptrack td.l{text-align:left}
 .ptrack tr.tot td{border-top:1.5px solid var(--ink);border-bottom:none}
@@ -411,7 +419,12 @@
 .wfv{font:.68rem var(--sans);fill:var(--muted);font-variant-numeric:tabular-nums}
 .wfv.lead{font-weight:700;fill:var(--ink)}
 .mwin{font:700 .82rem var(--sans)}
-.cstrip,.wfall,.mdist,.rside,.tdist,.eloscale{overflow:visible}
+/* Charts now reserve a right gutter for their value labels, so nothing
+   needs to paint outside its own box. */
+.cstrip,.wfall,.mdist,.rside,.tdist,.eloscale{overflow:hidden}
+@media (max-width:720px){
+  .pcols.split{grid-template-columns:1fr}
+}
 </style>
 </head>
 <body>
@@ -1207,10 +1220,10 @@
         an ordinary club with its best arm going &mdash; identical headline, opposite
         meaning.
       </p>
-      {% if rd.starter_push is defined %}
+      {% if rd.starter_count %}
       <p class="sub">
-        Tonight the starters account for
-        <strong>{{ rd.starter_push|abs|round(3) }}</strong> log-odds against
+        Every starter input together comes to
+        <strong>{{ rd.starter_push|abs|round(3) }}</strong> log-odds, against
         <strong>{{ rd.rating_push|abs|round(3) }}</strong> from the team rating.
       </p>
       {% endif %}
@@ -1255,6 +1268,7 @@
     </figure>
   </div>
 
+  <div class="scroll">
   <table class="pcmp">
     <thead>
       <tr><th class="l">Outcome</th><th>Tonight</th><th>Normally</th>
@@ -1287,6 +1301,7 @@
       </tr>
     </tbody>
   </table>
+  </div>
   <div class="note">
     The most likely single scoreline is
     {{ bundle.home.abbreviation }} {{ sc.modal_score.home }}&ndash;{{ sc.modal_score.away }}
