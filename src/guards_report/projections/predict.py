@@ -20,6 +20,8 @@ from typing import Any
 
 import numpy as np
 
+from guards_report.projections import lineup as lineup_module
+from guards_report.projections import talent as talent_module
 from guards_report.projections.model import OutcomeModel
 
 MEAN_ELO = 1500.0
@@ -39,6 +41,60 @@ FEATURE_LABELS = {
 }
 
 
+def live_talent(model: OutcomeModel, plate, *, on: date):
+    """The stored prior carried forward through this season's plate appearances.
+
+    The artifact holds talent fitted on completed seasons. On its own that is as
+    stale as ratings frozen at last September, and this season's plate
+    appearances are the strongest single predictor available -- measured on
+    strikeout rate, the current first half beats the whole prior season 0.4390
+    to 0.3098. Only appearances strictly before `on` are used, so this computes
+    exactly what training computed.
+    """
+    prior = model.talent()
+    if plate is None or not len(plate):
+        return prior, {"applied": 0, "through": prior.through}
+
+    current = plate[plate["game_date"] < on]
+    if not len(current):
+        return prior, {"applied": 0, "through": prior.through}
+
+    season = int(current["season"].max())
+    updated = talent_module.update_as_of(prior, current, on=on, season=season)
+    applied = int(((current["season"] == season)).sum())
+    return updated, {
+        "applied": applied,
+        "through": str(current["game_date"].max()),
+        "season": season,
+    }
+
+
+def lineup_value(batters, talent, *, weights, stands=None):
+    """Slot-weighted mean of the lineup's batter *effects*.
+
+    Effects, not absolute run values. Training builds this column from
+    `running_scores`, which returns deviations from the league mean centred near
+    zero; adding the intercept here instead would hand the model a number four
+    tenths larger than anything it was fitted on. With a coefficient of +4.4 that
+    is not a small drift -- it multiplies projected runs by four.
+
+    Which is to say this is the train/serve skew the score-model work spent so
+    long arguing against, and it is only visible because a projection of
+    nineteen runs is obviously absurd. A subtler mismatch would have shipped.
+    """
+    slots = [int(b) for b in batters or []]
+    if len(slots) < lineup_module.MIN_SLOTS:
+        return None
+
+    fallback = weights or lineup_module.DEFAULT_SLOT_PA
+    total_weight = total_value = 0.0
+    for index, batter in enumerate(slots[:9]):
+        weight = fallback[index] if index < len(fallback) else fallback[-1]
+        total_value += weight * (talent.batter_score(batter) or 0.0)
+        total_weight += weight
+    return total_value / total_weight if total_weight else None
+
+
 @dataclass
 class SideInputs:
     """What the models were told about one club."""
@@ -55,6 +111,11 @@ class SideInputs:
     starter_ip_per_start: float | None = None
     starter_innings: float | None = None
     offense_rpg: float | None = None
+    # Plate-appearance block: latent quality for the starter, and the value
+    # of the nine actually posted to bat.
+    starter_talent: float | None = None
+    lineup_value: float | None = None
+    lineup_source: str = "none"
 
 
 @dataclass
@@ -75,6 +136,9 @@ class Projection:
     model_fitted_at: str = ""
     # How current the ratings are: which games were applied on top of the fit.
     ratings_note: dict[str, Any] = field(default_factory=dict)
+    # How current the talent estimates are, reported for the same reason as
+    # the ratings: a frozen estimate presented as live is the failure mode.
+    talent_note: dict[str, Any] = field(default_factory=dict)
     # Per-feature push on the log-odds, and where tonight sits in the model's
     # own historical spread. Both exist so the page can show why, and how
     # unusual, rather than only what.
@@ -173,6 +237,11 @@ def project(
     away_starter: Any = None,
     home_offense_rpg: float | None = None,
     away_offense_rpg: float | None = None,
+    plate_appearances: Any = None,
+    home_lineup: list[int] | None = None,
+    away_lineup: list[int] | None = None,
+    lineup_source: str = "none",
+    on: date | None = None,
 ) -> Projection:
     """Run both models against one upcoming game."""
     home = _side(model, home_team_id, home_team, home_starter)
@@ -181,6 +250,29 @@ def project(
     away.offense_rpg = _clean(away_offense_rpg)
 
     park = model.park_factors.get(str(venue_id), 1.0) if venue_id else 1.0
+
+    # -- plate-appearance block -------------------------------------------
+    fitted_talent, talent_note = live_talent(
+        model, plate_appearances, on=on or date.today()
+    )
+    stands = {}
+    if plate_appearances is not None and len(plate_appearances):
+        stands = (
+            plate_appearances.drop_duplicates("batter")
+            .set_index("batter")["stand"].to_dict()
+        )
+    weights = model.slot_weights or list(lineup_module.DEFAULT_SLOT_PA)
+    for side, card in ((home, home_lineup), (away, away_lineup)):
+        side.starter_talent = None
+        side.lineup_source = lineup_source
+    home.lineup_value = lineup_value(home_lineup, fitted_talent,
+                                     weights=weights, stands=stands)
+    away.lineup_value = lineup_value(away_lineup, fitted_talent,
+                                     weights=weights, stands=stands)
+    for side, box in ((home, home_starter), (away, away_starter)):
+        pid = getattr(box, "player_id", None)
+        if pid is not None:
+            side.starter_talent = fitted_talent.pitcher.get(int(pid))
 
     missing: list[str] = []
     if str(home_team_id) not in model.elo_ratings:
@@ -238,6 +330,10 @@ def project(
                 + (0.16 if is_home else 0.0)
             ),
             "sp_known": 1.0 if _clean(fielding.starter_fip) is not None else 0.0,
+            # The opposing starter's latent quality, and the value of the nine
+            # this side is actually sending up.
+            "opp_sp_talent": _clean(fielding.starter_talent),
+            "own_lineup": _clean(batting.lineup_value),
         }
 
     simulation = model.simulate(
@@ -257,6 +353,7 @@ def project(
         confidence_percentile=model.percentile_of(win_probability),
         reference=model.reference,
         metrics=model.metrics,
+        talent_note=talent_note,
         model_fitted_at=model.fitted_at,
     )
 

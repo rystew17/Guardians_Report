@@ -72,6 +72,20 @@ class OutcomeModel:
     score_mean: list[float] = field(default_factory=list)
     alpha: float = NB_ALPHA
 
+    # Latent batter and pitcher quality, fitted on seasons before the corpus
+    # ends. Stored for the same reason as the ratings: refitting a ridge over
+    # nineteen hundred thousand plate appearances during report generation would
+    # cost a minute and change nothing, and the current season is layered on at
+    # projection time by `talent.update_as_of`.
+    talent_batter: dict[str, float] = field(default_factory=dict)
+    talent_pitcher: dict[str, float] = field(default_factory=dict)
+    talent_platoon: dict[str, float] = field(default_factory=dict)
+    talent_intercept: float = 0.0
+    talent_alpha: float = 800.0
+    talent_batter_pa: dict[str, int] = field(default_factory=dict)
+    talent_pitcher_pa: dict[str, int] = field(default_factory=dict)
+    slot_weights: list[float] = field(default_factory=list)
+
     # State carried forward so an unplayed game can be rated
     elo_ratings: dict[str, float] = field(default_factory=dict)
     elo_params: dict[str, Any] = field(default_factory=dict)
@@ -240,6 +254,23 @@ class OutcomeModel:
             "draws": draws,
         }
 
+    def talent(self):
+        """Rebuild the fitted talent object from the stored fields."""
+        from guards_report.projections.talent import Talent
+
+        return Talent(
+            batter={int(k): v for k, v in self.talent_batter.items()},
+            pitcher={int(k): v for k, v in self.talent_pitcher.items()},
+            platoon=dict(self.talent_platoon),
+            intercept=self.talent_intercept,
+            alpha=self.talent_alpha,
+            batter_pa={int(k): v for k, v in self.talent_batter_pa.items()},
+            pitcher_pa={int(k): v for k, v in self.talent_pitcher_pa.items()},
+            through=self.corpus_through,
+        )
+
+
+
 
 def _grid(home: np.ndarray, away: np.ndarray, *, limit: int = 12) -> list[dict]:
     """Joint probability over plausible finals, for the heat grid."""
@@ -289,6 +320,7 @@ def _totals(totals: np.ndarray, *, limit: int = 24) -> list[dict]:
         if count:
             out.append({"total": t, "p": count / n})
     return out
+
 
 
 def save(model: OutcomeModel, path: Path) -> Path:

@@ -178,6 +178,20 @@ STRENGTH_COLUMNS = ["elo_diff", "od_exp_runs"]
 # same variance.
 PEN_COLUMNS = ["opp_pen_fip"]
 
+# Who is actually pitching and hitting tonight, from the plate-appearance corpus.
+#
+# These failed to improve the win model -- nine blocks have now failed there,
+# because Elo is built from the outcomes they cause and lineup value alone
+# correlates 0.65 with the Elo logit. Runs are a different target: no rating
+# already summarises them, so the same information is not redundant.
+#
+# Adopted on a dose-response test rather than a p-value. Held-out gain rises
+# monotonically with how far tonight's nine departs from the club's own running
+# average -- +0.0006 in the most typical quartile against +0.0017 in the least
+# typical (p = 0.006) -- which is the pattern the mechanism predicts and noise
+# does not produce.
+PA_COLUMNS = ["opp_sp_talent", "own_lineup"]
+
 
 def design(data: pd.DataFrame, columns: list[str]):
     """Model matrix, response and offset, with missing predictors mean-imputed.

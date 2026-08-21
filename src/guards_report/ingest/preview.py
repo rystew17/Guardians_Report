@@ -642,6 +642,42 @@ def _current_series_boxes(
     return boxes, payloads
 
 
+def _plate_appearances(settings, on):
+    """This season's plate appearances, for carrying talent forward.
+
+    Read straight from the cached pitch corpus and projected to the columns the
+    talent model needs, which keeps it seconds rather than minutes. A missing
+    corpus is not fatal: the projection falls back to the stored prior and says
+    so, exactly as it does for an unannounced starter.
+    """
+    try:
+        from guards_report.projections import pa as pa_module
+
+        directory = settings.raw_archive_dir.parent / "pitches"
+        if not directory.exists():
+            return None
+        return pa_module.load(directory, seasons={on.year})
+    except Exception as exc:  # noqa: BLE001 -- reported, never fatal
+        print(f"  warning: plate appearances unavailable ({exc})", file=sys.stderr)
+        return None
+
+
+def _posted_lineup(section) -> list[int]:
+    """Batting order from the official card, when one has been posted.
+
+    Returns an empty list rather than a guess when it has not. The projection
+    then values the side from team form instead, and the page says which.
+    """
+    if getattr(section, "lineup_source", "none") != "official":
+        return []
+    ordered = [
+        box for box in section.batters
+        if getattr(box, "batting_order", None) is not None
+    ]
+    ordered.sort(key=lambda box: box.batting_order)
+    return [box.player_id for box in ordered[:9]]
+
+
 def build_preview(
     settings: Settings,
     *,
@@ -976,6 +1012,11 @@ def build_preview(
                 ),
                 home_offense_rpg=_rpg(home_section),
                 away_offense_rpg=_rpg(away_section),
+                plate_appearances=_plate_appearances(settings, on),
+                home_lineup=_posted_lineup(home_section),
+                away_lineup=_posted_lineup(away_section),
+                lineup_source=home_section.lineup_source,
+                on=on,
             )
             projection.ratings_note = ratings_note
     except Exception as exc:

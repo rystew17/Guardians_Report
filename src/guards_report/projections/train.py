@@ -21,7 +21,8 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
 from guards_report.projections import (
-    backtest, corpus, elo, features, model, pitchers, ratings, score,
+    backtest, corpus, elo, features, lineup, model, pa, pitchers, ratings,
+    score, talent,
 )
 
 ELO_PARAMS = elo.EloParams(k=4, hfa=24, carry=0.70, mov=True)
@@ -30,11 +31,113 @@ OFF_DEF_PARAMS = ratings.OffDefParams(0.010, 0.010, 0.16, 0.70, 0.40)
 # Regularization chosen by sweep on 2018-2021; the curve is flat above 0.03.
 LOGISTIC_C = 3.0
 
+# Ridge penalty for the plate-appearance talent model, chosen forward in time
+# on 2015-2021 validating against 2022 and confirmed independently on 2023,
+# which selects the same value.
+TALENT_ALPHA = 800
+
 FIRST_TEST_SEASON = 2022
 
 
+def _add_pa_block(data, games, plate, prior):
+    """Attach opposing-starter talent and own-lineup value to each team-game.
+
+    Built per season from a prior fitted on the seasons before it, then carried
+    forward through that season's plate appearances. `as_of_for_games` joins on
+    state standing strictly before first pitch, so a start can never contribute
+    to the feature predicting it.
+
+    Historical lineups are the real starting nine, reconstructed from the corpus.
+    Only the first nine distinct batters count -- a pinch-hitter appears as a
+    consequence of how the game went and would not be on a card three hours
+    before.
+    """
+    import numpy as np
+    import pandas as pd
+
+    slots_by_season = lineup.slot_weights_by_season(plate)
+    sp_rows, lu_rows = [], []
+
+    for season in sorted(plate["season"].unique()):
+        before = plate[plate["season"] < season]
+        if not len(before):
+            continue
+        season_prior = talent.fit(before, alpha=TALENT_ALPHA)
+        current = plate[plate["season"] == season]
+        season_games = games[games["season"] == season]
+        if not len(season_games):
+            continue
+
+        # -- opposing starter -------------------------------------------------
+        running = talent.running_scores(season_prior, current, side="pitcher")
+        block = season_games[["game_pk"]].copy()
+        for side in ("home", "away"):
+            joined = talent.as_of_for_games(
+                season_games[["game_pk", "game_date", f"{side}_starter_id"]]
+                .rename(columns={f"{side}_starter_id": "pitcher"}),
+                running, side="pitcher",
+            ).set_index("game_pk")
+            block[f"{side}_sp_talent"] = joined["score"].reindex(block.game_pk).to_numpy()
+        sp_rows.append(block)
+
+        # -- own lineup -------------------------------------------------------
+        batters = talent.running_scores(season_prior, current, side="batter")
+        batters["_key"] = pd.to_datetime(batters["game_date"])
+        starters = lineup.starting_lineups(current)
+        weights = slots_by_season.get(int(season), lineup.DEFAULT_SLOT_PA)
+
+        merged = starters.merge(
+            batters[["batter", "_key", "score"]], on="batter", how="left"
+        )
+        merged = merged[pd.to_datetime(merged["game_date"]) > merged["_key"]]
+        merged = merged.sort_values("_key").groupby(
+            ["game_pk", "batting_team", "batter", "slot"], as_index=False
+        ).last()
+        merged["w"] = merged["slot"].map(
+            lambda n: weights[n - 1] if 1 <= n <= 9 else weights[-1]
+        )
+        merged["score"] = merged["score"].fillna(0.0)
+        lu_rows.append(
+            merged.groupby(["game_pk", "batting_team"], as_index=False)
+            .apply(lambda b: pd.Series({
+                "lineup_value": float((b.score * b.w).sum() / b.w.sum())
+                if b.w.sum() else 0.0,
+            }), include_groups=False)
+        )
+
+    if not sp_rows:
+        for column in score.PA_COLUMNS:
+            data[column] = np.nan
+        return data
+
+    sp = pd.concat(sp_rows, ignore_index=True)
+    lu = pd.concat(lu_rows, ignore_index=True)
+
+    data = data.merge(sp, on="game_pk", how="left")
+    data["opp_sp_talent"] = np.where(
+        data["is_home"] == 1, data["away_sp_talent"], data["home_sp_talent"]
+    )
+    # The score dataset keys on numeric team id while lineups key on the club
+    # abbreviation. Pivoting to home and away sidesteps the mapping entirely and
+    # matches how the starter column above is handled.
+    sides = games[["game_pk", "home_team", "away_team"]]
+    home = lu.rename(columns={"batting_team": "home_team", "lineup_value": "home_lineup"})
+    away = lu.rename(columns={"batting_team": "away_team", "lineup_value": "away_lineup"})
+    wide = (
+        sides.merge(home, on=["game_pk", "home_team"], how="left")
+             .merge(away, on=["game_pk", "away_team"], how="left")
+    )[["game_pk", "home_lineup", "away_lineup"]]
+
+    data = data.merge(wide, on="game_pk", how="left")
+    data["own_lineup"] = np.where(
+        data["is_home"] == 1, data["home_lineup"], data["away_lineup"]
+    )
+    return data
+
+
 def fit(
-    *, corpus_dir: Path, pitcher_dir: Path, seasons: range, verbose: bool = True
+    *, corpus_dir: Path, pitcher_dir: Path, pa_dir: Path, seasons: range,
+    verbose: bool = True,
 ) -> model.OutcomeModel:
     games = corpus.build(seasons, cache_dir=corpus_dir).query("game_type == 'R'")
     games = games.reset_index(drop=True)
@@ -52,8 +155,22 @@ def fit(
         data["opp_sp_prior"].notna() & (data["opp_sp_prior"] >= 10)
     ).astype(int)
 
+    # -- plate-appearance block, score model only ---------------------------
+    # These do nothing for the win model: nine blocks have now failed there
+    # because Elo already summarises the outcomes they cause. Runs are a
+    # different target with no such incumbent, and the gain rises with how far
+    # tonight's lineup departs from the club's own average, which is the
+    # signature of a feature that works by knowing who is playing.
+    plate = pa.load(pa_dir)
+    talent_prior = talent.fit(plate, alpha=TALENT_ALPHA)
+    data = _add_pa_block(data, games, plate, talent_prior)
+    score_pa = [c for c in score.PA_COLUMNS if data[c].notna().mean() > 0.5]
+
     win_cols = list(features.CORE_COLUMNS)
-    score_cols = list(score.SCORE_COLUMNS) + list(score.STRENGTH_COLUMNS) + ["sp_known"]
+    score_cols = (
+        list(score.SCORE_COLUMNS) + list(score.STRENGTH_COLUMNS)
+        + ["sp_known"] + score_pa
+    )
 
     # -- held-out metrics, season by season, before the final fit -----------
     per_season = {}
@@ -146,6 +263,16 @@ def fit(
             str(int(r.venue_id)): float(r.park_factor) for r in latest.itertuples()
         },
         league_rpg=float(score.league_run_level(games).iloc[-1]),
+        talent_batter={str(k): float(v) for k, v in talent_prior.batter.items()},
+        talent_pitcher={str(k): float(v) for k, v in talent_prior.pitcher.items()},
+        talent_platoon={k: float(v) for k, v in talent_prior.platoon.items()},
+        talent_intercept=float(talent_prior.intercept),
+        talent_alpha=float(TALENT_ALPHA),
+        talent_batter_pa={str(k): int(v) for k, v in talent_prior.batter_pa.items()},
+        talent_pitcher_pa={str(k): int(v) for k, v in talent_prior.pitcher_pa.items()},
+        slot_weights=[float(w) for w in lineup.slot_weights(
+            plate[plate['season'] == plate['season'].max()]
+        )],
         metrics={
             "win_model": {
                 "log_loss": summary["log_loss"],
@@ -198,6 +325,7 @@ def main() -> int:
     artifact = fit(
         corpus_dir=root / "corpus",
         pitcher_dir=root / "pitchers",
+        pa_dir=root / "pitches",
         seasons=range(corpus.FIRST_SEASON, 2026),
     )
     path = model.save(artifact, root / "models" / "game_outcome.json")
