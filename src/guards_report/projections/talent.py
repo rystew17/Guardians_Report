@@ -338,3 +338,86 @@ def update_as_of(
             counts[player] = counts.get(player, 0) + int(row["size"])
 
     return updated
+
+
+def running_scores(
+    prior: Talent, frame: pd.DataFrame, *, side: str = "pitcher"
+) -> pd.DataFrame:
+    """Every player's as-of estimate after each of his plate appearances.
+
+    `update_as_of` answers one date. Fitting a feature for a whole season needs
+    one answer per game, and calling it per date would rescan the season each
+    time -- quadratic in a corpus of nearly two million rows.
+
+    The same posterior is available in one pass. Because the update is
+    prior + sum(residual) / (alpha + n), a running sum and a running count are
+    all that is required, so this is a cumulative sum per player and nothing
+    more. The result is exact, not an approximation of the per-date version.
+    """
+    usable = frame[
+        (frame["woba_denom"] >= DENOM_REQUIRED) & frame["woba_value"].notna()
+    ].sort_values(["game_date", "game_pk", "at_bat_number"])
+
+    if usable.empty:
+        return pd.DataFrame(columns=[side, "game_date", "score", "pa"])
+
+    expected = (
+        prior.intercept
+        + usable["batter"].map(prior.batter).fillna(0.0).to_numpy()
+        + usable["pitcher"].map(prior.pitcher).fillna(0.0).to_numpy()
+        + (usable["stand"].fillna("R") + usable["p_throws"].fillna("R"))
+        .map(prior.platoon).fillna(0.0).to_numpy()
+    )
+
+    out = pd.DataFrame({
+        side: usable[side].to_numpy(),
+        "game_date": usable["game_date"].to_numpy(),
+        "residual": usable["woba_value"].to_numpy(dtype=float) - expected,
+    })
+    grouped = out.groupby(side, sort=False)
+    out["cum_residual"] = grouped["residual"].cumsum()
+    out["pa"] = grouped.cumcount() + 1
+
+    base = out[side].map(
+        prior.batter if side == "batter" else prior.pitcher
+    ).fillna(0.0)
+    out["score"] = base + out["cum_residual"] / (prior.alpha + out["pa"])
+
+    # One row per player-date: the state after that day's last plate appearance.
+    return (
+        out.groupby([side, "game_date"], as_index=False)
+        .last()[[side, "game_date", "score", "pa"]]
+    )
+
+
+def as_of_for_games(
+    games: pd.DataFrame, running: pd.DataFrame, *, side: str = "pitcher"
+) -> pd.DataFrame:
+    """Join each game to the estimate standing strictly before first pitch.
+
+    `merge_asof` with `allow_exact_matches=False` is the whole leakage guard: a
+    game may only see state from a date strictly earlier than its own, so a
+    pitcher's line from the start being projected can never enter the feature
+    that predicts it.
+    """
+    # merge_asof needs an ordered numeric or datetime key; the corpus stores
+    # plain dates, which are object dtype. Converted here rather than at every
+    # call site so the leakage guard cannot be skipped by forgetting to.
+    left = games.copy()
+    right = running.copy()
+    left["_key"] = pd.to_datetime(left["game_date"])
+    right["_key"] = pd.to_datetime(right["game_date"])
+    right = right.drop(columns=["game_date"])
+
+    # The player id arrives as float on the game side, because a game with no
+    # announced starter carries NaN, and as int on the running side, where every
+    # row is a real appearance. merge_asof refuses to join across that.
+    left[side] = pd.to_numeric(left[side], errors="coerce").astype("float64")
+    right[side] = pd.to_numeric(right[side], errors="coerce").astype("float64")
+
+    merged = pd.merge_asof(
+        left.sort_values("_key"), right.sort_values("_key"),
+        on="_key", by=side,
+        direction="backward", allow_exact_matches=False,
+    )
+    return merged.drop(columns=["_key"])
