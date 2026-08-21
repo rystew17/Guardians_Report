@@ -133,10 +133,60 @@ def test_fit_respects_the_as_of_cutoff(frame):
         assert after.pitcher[player] == pytest.approx(value)
 
 
-def test_as_of_table_never_trains_on_the_season_it_serves(frame):
-    fits = talent.as_of_table(frame, alpha=10.0, seasons=[2024])
+def test_season_prior_never_trains_on_the_season_it_serves(frame):
+    fits = talent.season_priors(frame, alpha=10.0, seasons=[2024])
     assert 2024 in fits
     assert fits[2024].through < "2024-01-01"
+
+
+def test_as_of_update_uses_the_current_season_but_not_the_future(frame):
+    """The correction that matters: today's estimate must include this season.
+
+    Fitting on prior seasons and stopping there discarded the most predictive
+    input available, and left training and production computing different
+    things. This update carries the prior forward through plate appearances
+    strictly before the date -- and no further.
+    """
+    prior = talent.season_priors(frame, alpha=10.0, seasons=[2024])[2024]
+    cutoff = date(2024, 5, 7)
+
+    moved = talent.update_as_of(prior, frame, on=cutoff, season=2024)
+    assert moved.through == str(cutoff)
+    # Something in the season so far must have moved, or the update is inert.
+    assert any(
+        moved.batter[b] != pytest.approx(prior.batter.get(b, 0.0))
+        for b in moved.batter
+    )
+
+    # Poison everything from the cutoff on; the estimate must not notice.
+    poisoned = frame.copy()
+    later = poisoned["game_date"] >= cutoff
+    poisoned.loc[later, "woba_value"] = 9.0
+    after = talent.update_as_of(prior, poisoned, on=cutoff, season=2024)
+
+    for player, value in moved.batter.items():
+        assert after.batter[player] == pytest.approx(value), "future leaked in"
+
+
+def test_evidence_accumulates_as_the_season_runs(frame):
+    prior = talent.season_priors(frame, alpha=10.0, seasons=[2024])[2024]
+    early = talent.update_as_of(prior, frame, on=date(2024, 5, 4), season=2024)
+    late = talent.update_as_of(prior, frame, on=date(2024, 5, 12), season=2024)
+    assert late.evidence(100, side="batter") > early.evidence(100, side="batter")
+
+
+def test_a_player_performing_to_prior_does_not_move(frame):
+    """The update is on residuals, so meeting expectation is not news."""
+    prior = talent.season_priors(frame, alpha=10.0, seasons=[2024])[2024]
+    season = frame[frame["season"] == 2024].copy()
+    # Replace outcomes with exactly what the prior expects.
+    season["woba_value"] = [
+        prior.expected_value(b, p, stand=s, throws=t)
+        for b, p, s, t in zip(season.batter, season.pitcher, season.stand, season.p_throws)
+    ]
+    held = talent.update_as_of(prior, season, on=date(2024, 12, 31), season=2024)
+    for player, value in prior.batter.items():
+        assert held.batter[player] == pytest.approx(value, abs=1e-9)
 
 
 def test_stronger_shrinkage_pulls_effects_toward_zero(frame):
