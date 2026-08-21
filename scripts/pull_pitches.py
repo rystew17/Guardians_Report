@@ -11,12 +11,15 @@ import time
 from guards_report.projections import corpus, pitches
 
 root = Path("data")
-games = corpus.build(range(corpus.FIRST_SEASON, 2026), cache_dir=root / "corpus")
+CURRENT = date.today().year
+# Must include the current season: `season_teams` reads the club list from
+# this frame, and a range that stops short returns no teams and fetches
+# nothing, silently.
+games = corpus.build(range(corpus.FIRST_SEASON, CURRENT + 1), cache_dir=root / "corpus")
 games = games.query("game_type=='R'")
 
 start = time.time()
 grand = 0
-CURRENT = date.today().year
 
 for season in range(pitches.FIRST_SEASON, CURRENT + 1):
     teams = pitches.season_teams(games, season)

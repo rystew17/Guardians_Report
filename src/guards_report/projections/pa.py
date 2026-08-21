@@ -69,3 +69,53 @@ def pitch_count(pitch_corpus: pd.DataFrame) -> pd.DataFrame:
         pitch_corpus.groupby(["game_pk", "at_bat_number"], sort=False)
         .size().rename("pitches").reset_index()
     )
+
+
+# Columns the talent model reads. Projecting to these at read time is the
+# difference between a 10 GB frame and a manageable one: the corpus keeps all
+# 121 columns because re-fetching is expensive, but no single model wants them
+# all, and pandas holds what it reads.
+TALENT_COLUMNS = [
+    "game_date", "game_pk", "at_bat_number", "batter", "pitcher",
+    "stand", "p_throws", "events", "woba_value", "woba_denom",
+    "estimated_woba_using_speedangle", "batting_team", "season",
+]
+
+
+def load(
+    cache_dir, *, columns: list[str] | None = None, seasons=None
+) -> pd.DataFrame:
+    """Plate appearances read straight from the cached chunks.
+
+    Reads only the requested columns from each Parquet file rather than loading
+    everything and selecting afterwards. Parquet is columnar, so the unread
+    columns are never touched -- which on this corpus turns a four-minute,
+    ten-gigabyte load into seconds.
+    """
+    from pathlib import Path
+
+    cache_dir = Path(cache_dir)
+    columns = columns or TALENT_COLUMNS
+    if "events" not in columns:
+        columns = columns + ["events"]
+
+    frames = []
+    for path in sorted(cache_dir.glob("*.parquet")):
+        if seasons is not None and int(path.name[:4]) not in seasons:
+            continue
+        frame = pd.read_parquet(path, columns=columns)
+        frames.append(frame[frame["events"].notna() & (frame["events"] != "")])
+
+    if not frames:
+        return pd.DataFrame(columns=columns)
+
+    corpus = pd.concat(frames, ignore_index=True)
+    corpus["game_date"] = pd.to_datetime(corpus["game_date"]).dt.date
+    corpus = corpus.sort_values(
+        ["game_date", "game_pk", "at_bat_number"]
+    ).reset_index(drop=True)
+
+    assert not corpus.duplicated(["game_pk", "at_bat_number"]).any(), (
+        "a plate appearance must end exactly once"
+    )
+    return corpus
