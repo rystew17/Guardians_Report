@@ -154,3 +154,70 @@ def restore(
                 print(f"  down  {blob.name}  {(blob.size or 0)/1e6:.2f} MB", flush=True)
 
     return result
+
+
+@dataclass
+class VerifyResult:
+    """Whether the bucket actually holds what the disk holds."""
+
+    matched: int = 0
+    missing: list[str] = None
+    mismatched: list[str] = None
+    remote_only: list[str] = None
+
+    def __post_init__(self) -> None:
+        for name in ("missing", "mismatched", "remote_only"):
+            if getattr(self, name) is None:
+                setattr(self, name, [])
+
+    @property
+    def ok(self) -> bool:
+        return not (self.missing or self.mismatched)
+
+    def line(self) -> str:
+        return (
+            f"{self.matched} verified, {len(self.missing)} missing, "
+            f"{len(self.mismatched)} size mismatch, "
+            f"{len(self.remote_only)} only in bucket"
+        )
+
+
+def verify(
+    root: Path,
+    *,
+    bucket_name: str,
+    project: str,
+    datasets_: Iterable[str] = DATASETS,
+) -> VerifyResult:
+    """Compare the bucket against the disk, file by file.
+
+    Uploading is not the same as being safe. A sync that reports success while
+    silently skipping a file leaves a corpus that looks backed up and is not,
+    and the discovery would come at exactly the wrong moment. This is cheap --
+    one listing, no transfer -- so it should follow every sync.
+    """
+    from google.cloud import storage
+
+    client = storage.Client(project=project) if project else storage.Client()
+    bucket = client.bucket(bucket_name)
+
+    remote = {
+        blob.name: blob.size
+        for name in datasets_
+        for blob in client.list_blobs(bucket, prefix=f"data/{name}/")
+    }
+    local = {
+        _object_name(root, path): path.stat().st_size
+        for path in local_files(root, datasets_)
+    }
+
+    result = VerifyResult()
+    for name, size in local.items():
+        if name not in remote:
+            result.missing.append(name)
+        elif remote[name] != size:
+            result.mismatched.append(name)
+        else:
+            result.matched += 1
+    result.remote_only = sorted(set(remote) - set(local))
+    return result
