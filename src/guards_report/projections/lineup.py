@@ -61,7 +61,15 @@ class LineupValue:
 
 
 def slot_weights(pa_corpus: pd.DataFrame) -> tuple[float, ...]:
-    """Plate appearances per lineup slot, measured rather than assumed."""
+    """Plate appearances per lineup slot, measured rather than assumed.
+
+    Measure on the era being modelled. Before the universal designated hitter
+    arrived in 2022, the ninth slot in a National League park held a pitcher who
+    was pinch-hit for early, and it shows: measured on 2016 the ninth spot takes
+    2.87 plate appearances against 3.68 for the eighth, a cliff that does not
+    exist afterwards. One weight vector spanning 2015 to 2026 would describe
+    neither era.
+    """
     starters = starting_lineups(pa_corpus)
     if starters.empty:
         return DEFAULT_SLOT_PA
@@ -76,6 +84,19 @@ def slot_weights(pa_corpus: pd.DataFrame) -> tuple[float, ...]:
         .groupby("slot").mean()
     )
     return tuple(float(counts.get(i, DEFAULT_SLOT_PA[i - 1])) for i in range(1, 10))
+
+
+def slot_weights_by_season(pa_corpus: pd.DataFrame) -> dict[int, tuple[float, ...]]:
+    """One weight vector per season, so the designated-hitter change is followed.
+
+    Keyed by season rather than by a hard-coded 2022 boundary: the rule changed
+    once, but measuring each year separately means the code follows the data
+    instead of encoding a date that a future rule change would falsify.
+    """
+    return {
+        int(season): slot_weights(frame)
+        for season, frame in pa_corpus.groupby("season", sort=True)
+    }
 
 
 def starting_lineups(pa_corpus: pd.DataFrame) -> pd.DataFrame:
@@ -192,7 +213,10 @@ def build_feature(
     Talent is taken from the fit trained on seasons strictly before this one, so
     a projection never benefits from knowing how the hitters ended up doing.
     """
-    weights = weights or DEFAULT_SLOT_PA
+    # Weights vary by era, so they are looked up per season unless a caller
+    # deliberately pins one vector.
+    pinned = weights
+    by_season = {} if pinned else slot_weights_by_season(pa_corpus)
     starters = starting_lineups(pa_corpus)
     hands = (
         pa_corpus.drop_duplicates("batter").set_index("batter")["stand"].to_dict()
@@ -223,7 +247,8 @@ def build_feature(
                 batters, talent,
                 pitcher_id=int(opp_starter) if opp_starter == opp_starter else None,
                 pitcher_throws=opposing.get((game.game_pk, team), "R") or "R",
-                stands=hands, weights=weights,
+                stands=hands,
+                weights=pinned or by_season.get(season, DEFAULT_SLOT_PA),
             )
             record[f"{side}_lineup_value"] = value.expected_value
             record[f"{side}_lineup_slots"] = value.slots_known
