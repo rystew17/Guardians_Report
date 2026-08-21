@@ -82,6 +82,15 @@ TALENT_COLUMNS = [
 ]
 
 
+# What the player props read. Handedness drives the platoon split and the home
+# club identifies the park, neither of which the talent model needs.
+PROP_COLUMNS = [
+    "game_date", "game_pk", "at_bat_number", "batter", "pitcher",
+    "stand", "p_throws", "events", "batting_team", "season",
+    "home_team", "away_team",
+]
+
+
 def load(
     cache_dir, *, columns: list[str] | None = None, seasons=None
 ) -> pd.DataFrame:
