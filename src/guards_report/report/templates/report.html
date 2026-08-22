@@ -49,11 +49,22 @@
   .meta b { color:var(--ink); font-weight:650; }
 
   /* ---------- tabs ---------- */
-  nav { position:sticky; top:0; z-index:30; background:var(--bg);
-        border-bottom:2px solid var(--border); padding:var(--sp-2) 0;
-        margin-bottom:var(--sp-4); display:flex; gap:var(--sp-1);
+  /* Sticky lives on the wrapper, not the scroller: an element cannot be both
+     the sticky box and the thing that scrolls its own overflow, and the fade
+     that signals "there is more here" has to sit outside the scrolling area
+     or it scrolls away with the content. */
+  .navwrap { position:sticky; top:0; z-index:30; background:var(--bg);
+             border-bottom:2px solid var(--border); margin-bottom:var(--sp-4); }
+  nav { padding:var(--sp-2) 0; display:flex; gap:var(--sp-1);
         overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
   nav::-webkit-scrollbar { display:none; }
+  /* The affordance the wrapped grid was working around. It appears only while
+     there is somewhere to scroll, so it is information rather than decoration. */
+  .navwrap::after { content:""; position:absolute; top:0; right:0; bottom:2px;
+    width:2.25rem; pointer-events:none; opacity:0; transition:opacity .15s ease;
+    background:linear-gradient(to right, transparent, var(--bg) 72%); }
+  .navwrap.more::after { opacity:1; }
+  @media (prefers-reduced-motion:reduce) { .navwrap::after { transition:none; } }
   nav button { font:inherit; font-weight:650; font-size:.82rem; cursor:pointer;
     padding:.5rem .85rem; border:1px solid var(--border); border-radius:7px;
     background:var(--box); color:var(--muted); white-space:nowrap; flex:0 0 auto; }
@@ -96,8 +107,29 @@
   .bhead .spacer { margin-left:auto; }
 
   /* ---------- tables ---------- */
+  /* Some of these tables are 2,875px wide inside a 354px box on a phone, with
+     nothing to say so -- the columns simply stop. The shadows below appear at
+     whichever edge has content beyond it and retract when that edge is reached.
+     It is done with background-attachment rather than scroll listeners because
+     there are 214 of these wrappers on the page: the `local` layers travel with
+     the content and cover the `scroll` layers pinned to the box, so the shadow
+     is revealed exactly when the content has moved out from under it. No
+     JavaScript, no per-element observers, correct on first paint. */
   .scroll { overflow-x:auto; -webkit-overflow-scrolling:touch;
-            border:1px solid var(--border); border-radius:6px; }
+            border:1px solid var(--border); border-radius:6px;
+            background:
+              linear-gradient(to right, var(--box) 30%, rgba(255,255,255,0))
+                left / 2.5rem 100% no-repeat local,
+              linear-gradient(to left, var(--box) 30%, rgba(255,255,255,0))
+                right / 2.5rem 100% no-repeat local,
+              radial-gradient(farthest-side at 0 50%,
+                rgba(19,25,34,.16), rgba(19,25,34,0)) left / .9rem 100% no-repeat scroll,
+              radial-gradient(farthest-side at 100% 50%,
+                rgba(19,25,34,.16), rgba(19,25,34,0)) right / .9rem 100% no-repeat scroll;
+            background-color:var(--box); }
+  /* The header is sticky and opaque, so it would sit on top of the shadow and
+     hide it at the one moment the reader is looking at the table. */
+  .scroll table { position:relative; }
   table { border-collapse:collapse; width:100%; font-size:.78rem; min-width:max-content; }
   th,td { padding:.34rem .5rem; text-align:right; white-space:nowrap; }
   th { font-weight:650; color:var(--faint); background:var(--panel);
@@ -129,12 +161,19 @@
                font-variant-numeric:tabular-nums; }
   .pchip .pl { display:block; font-size:.56rem; text-transform:uppercase;
                letter-spacing:.03em; color:var(--muted); margin-top:.05rem; }
-  .pct-great{background:var(--great);color:#fff;} .pct-great .pl{color:rgba(255,255,255,.88);}
-  .pct-good{background:var(--gd);color:#fff;} .pct-good .pl{color:rgba(255,255,255,.88);}
-  .pct-avg{background:var(--avg);} .pct-poor{background:var(--poor);color:#fff;}
-  .pct-poor .pl{color:rgba(255,255,255,.88);}
-  .pct-bad{background:var(--bad-p);color:#fff;} .pct-bad .pl{color:rgba(255,255,255,.88);}
-  .pct-none{background:transparent;color:var(--faint);}
+  /* Text colour follows the chip's lightness, not its meaning. The ramp is
+     diverging -- red at one end, blue at the other, pale through the middle --
+     so white text held across all five put 2.56:1 on the orange chip and 2.74:1
+     on the pale blue, both well under the 4.5:1 a label this size needs. Dark
+     ink through the middle and white at the saturated ends is the standard
+     treatment for a diverging scale, and it is also the only one that reads.
+     Measured against each chip's own background, worst case now 4.99:1. */
+  .pct-great{background:var(--great);color:#fff;} .pct-great .pl{color:#fff;}
+  .pct-good{background:var(--gd);color:var(--ink);} .pct-good .pl{color:#4a2a18;}
+  .pct-avg{background:var(--avg);color:var(--ink);} .pct-avg .pl{color:#3c454f;}
+  .pct-poor{background:var(--poor);color:var(--ink);} .pct-poor .pl{color:#1c3049;}
+  .pct-bad{background:var(--bad-p);color:#fff;} .pct-bad .pl{color:#fff;}
+  .pct-none{background:transparent;color:var(--muted);} .pct-none .pl{color:var(--muted);}
 
   /* ---------- visual row: spray leads, zones follow ---------- */
   .vis { display:flex; gap:var(--sp-4); flex-wrap:wrap; align-items:flex-start; }
@@ -332,17 +371,21 @@
   @media (max-width:640px) {
     body { padding:0 .6rem 3rem; font-size:13px; }
 
-    /* The five tabs are 595px of buttons. In a 375px viewport the two
-       opponent pages sat entirely off-screen, and a horizontally scrolling
-       nav with a hidden scrollbar gives no hint that anything is there --
-       so half the report was simply unreachable on a phone. Wrapping into a
-       grid keeps every tab on screen and makes each one a full-size tap
-       target. */
-    nav { display:grid; grid-template-columns:repeat(2,1fr); gap:var(--sp-1);
-          overflow-x:visible; }
-    nav button { white-space:normal; text-align:center; padding:.55rem .5rem;
-                 font-size:.78rem; line-height:1.25; min-height:44px; }
-    nav button:first-child { grid-column:1 / -1; }
+    /* Six tabs are 595px of buttons in a 375px viewport, and the first fix for
+       that wrapped them into a grid so none sat off-screen. It worked, and it
+       cost 206px -- a quarter of the phone screen, pinned there for the whole
+       report, because the nav is sticky.
+       So: back to one scrolling row, but with the hint whose absence made
+       scrolling unusable in the first place. A fade marks that there is more,
+       the selected tab scrolls itself into view, and short labels mean four of
+       six are visible at rest. 44px instead of 206px. */
+    nav { gap:var(--sp-1); scroll-snap-type:x proximity; scroll-padding-left:var(--sp-2); }
+    nav button { white-space:nowrap; padding:.55rem .7rem; font-size:.78rem;
+                 min-height:44px; scroll-snap-align:start; }
+    /* The short form only exists on a phone; the full label stays the
+       accessible name, so a screen reader is unaffected by the abbreviation. */
+    nav button[data-short] span.full { display:none; }
+    nav button[data-short]::before { content:attr(data-short); }
     .box { padding:var(--sp-2) var(--sp-3) var(--sp-3); border-radius:8px; }
     .bhead { gap:var(--sp-1); }
     .bname { font-size:.95rem; width:100%; }
@@ -473,17 +516,23 @@
   ('players',  opponent,  opponent.abbreviation ~ ' Position Players')
 ] %}
 
+<div class="navwrap">
 <nav role="tablist" aria-label="Report sections">
   {% for kind, team, label in pages %}
+  {#- The phone label. "COL Position Players" is 19 characters of tab for a
+      word every reader of this page already supplies from context. -#}
+  {%- set short = label|replace(' Position Players', ' Bats')|replace(' Pitchers', ' Arms') -%}
   <button role="tab" id="tab-p{{ loop.index }}" aria-controls="p{{ loop.index }}"
           data-page="p{{ loop.index }}" tabindex="{{ '0' if loop.first else '-1' }}"
-          aria-selected="{{ 'true' if loop.first else 'false' }}">{{ label }}</button>
+          {% if short != label %}data-short="{{ short }}"{% endif %}
+          aria-selected="{{ 'true' if loop.first else 'false' }}"><span class="full">{{ label }}</span></button>
   {% endfor %}
   {% if bundle.projection %}
   <button role="tab" id="tab-pproj" aria-controls="pproj" data-page="pproj"
-          tabindex="-1" aria-selected="false">Projections</button>
+          tabindex="-1" aria-selected="false"><span class="full">Projections</span></button>
   {% endif %}
 </nav>
+</div>
 
 {#- ============================ macros ============================ -#}
 
@@ -1637,8 +1686,24 @@
     });
     pages.forEach(p => p.classList.toggle('active', p.id === tab.dataset.page));
     if (focus) tab.focus();
+    // On a phone the tab strip is wider than the screen, so the tab that was
+    // just chosen can sit off it. Without this the selected state is invisible
+    // and the reader has no idea which page they are on.
+    tab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     window.scrollTo({ top: 0 });
   }
+
+  // The fade shows only while there is somewhere left to scroll, which is what
+  // makes it a signal rather than an ornament.
+  const strip = document.querySelector('nav');
+  const shell = document.querySelector('.navwrap');
+  function markOverflow() {
+    const more = strip.scrollWidth - strip.clientWidth - strip.scrollLeft > 1;
+    shell.classList.toggle('more', more);
+  }
+  strip.addEventListener('scroll', markOverflow, { passive: true });
+  addEventListener('resize', markOverflow);
+  markOverflow();
 
   tabs.forEach(tab => tab.addEventListener('click', () => selectTab(tab)));
 
