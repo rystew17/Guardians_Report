@@ -37,6 +37,7 @@ LB_SPRINT_SPEED = "sprint_speed"
 LB_BASESTEALING = "basestealing-run-value"
 LB_BASERUNNING = "baserunning"
 LB_POPTIME = "poptime"
+LB_SWING_TAKE = "swing-take"
 
 TYPE_BATTER = "batter"
 TYPE_PITCHER = "pitcher"
@@ -314,6 +315,24 @@ def basestealing_run_value(archiver: Archiver, *, year: int) -> FetchResult:
 def baserunning_run_value(archiver: Archiver, *, year: int) -> FetchResult:
     """Run value from advancing on batted balls, separate from stealing."""
     return _leaderboard(LB_BASERUNNING, archiver, {"year": year})
+
+
+def batting_run_value(archiver: Archiver, *, year: int) -> FetchResult:
+    """Runs above average at the plate, by the zone the pitch was in.
+
+    This is the Batting Run Value on a player page, and `runs_all` is the total.
+    It decomposes by attack zone -- heart, shadow, chase, waste -- which is a
+    different and more useful decomposition than the batting line: two hitters
+    can share a wOBA while one earns it on pitches in the heart of the zone and
+    the other by not swinging at the ones outside it.
+
+    The parameter names are `playerType` and `minPA` rather than the `type` and
+    `min` every other Savant board takes. Passing the usual pair returns two
+    hundred bytes of empty CSV and no error.
+    """
+    return _leaderboard(LB_SWING_TAKE, archiver, {
+        "year": year, "playerType": "batter", "sub_type": "all", "minPA": "1",
+    })
 
 
 def pop_time(archiver: Archiver, *, year: int) -> FetchResult:

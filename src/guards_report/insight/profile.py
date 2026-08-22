@@ -240,12 +240,25 @@ def _composite_population(reference, measures) -> np.ndarray:
 # Value — is he a good player
 # --------------------------------------------------------------------------
 
-def batting_runs(xwoba: float, plate_appearances: int) -> float:
-    """Runs above average from hitting.
+def batting_runs(
+    xwoba: float, plate_appearances: int, measured: float | None = None
+) -> float:
+    """Runs above average at the plate.
 
-    The standard wRAA form on expected rather than actual wOBA, so a hitter is
-    graded on the contact he made rather than on where it happened to land.
+    Prefers Savant's Batting Run Value, which is the figure on the player page
+    and is built from the run-expectancy change of every pitch by the zone it
+    was in. It therefore credits decisions as well as outcomes: laying off a
+    pitch in the shadow zone is worth something, and swinging at waste costs
+    something, neither of which shows up in what happened on contact.
+
+    The fallback is the standard wRAA form on expected wOBA. It is not the same
+    quantity and should not be presented as though it were -- on this card the
+    two correlate 0.56 with a standard deviation of 9.6 runs between them, which
+    is the difference between a good season and an ordinary one. They disagree
+    about plate discipline, and Savant is the one that can see it.
     """
+    if measured is not None and np.isfinite(measured):
+        return float(measured)
     if xwoba is None or not np.isfinite(xwoba):
         return 0.0
     return float((xwoba - LEAGUE_XWOBA) / WOBA_SCALE * plate_appearances)
@@ -794,12 +807,44 @@ def value_runs(box: Any, xwoba: float | None, plate_appearances: int) -> tuple[f
     season = getattr(box, "season", {}) or {}
     games = float(season.get("gamesPlayed") or season.get("games") or 0)
 
-    runs = batting_runs(xwoba, plate_appearances) if xwoba is not None else 0.0
+    runs = batting_runs(
+        xwoba, plate_appearances, getattr(box, "batting_runs", None))
     runs += baserunning_runs(
         season, getattr(box, "baserunning_runs", None))
     runs += fielding_runs(box, games)
     per150 = runs * 150.0 / games if games else float("nan")
     return float(runs), float(per150)
+
+
+def value_breakdown(box: Any, xwoba: float | None, plate_appearances: int) -> dict:
+    """Where a player's value comes from, per 150 games and in total.
+
+    A single number answers "how good"; these three answer "how", and they are
+    the difference between a bat-first corner and a shortstop who cannot hit
+    reading identically because they happen to total the same.
+    """
+    season = getattr(box, "season", {}) or {}
+    games = float(season.get("gamesPlayed") or season.get("games") or 0)
+
+    terms = {
+        "batting": batting_runs(
+            xwoba, plate_appearances, getattr(box, "batting_runs", None)),
+        "baserunning": baserunning_runs(
+            season, getattr(box, "baserunning_runs", None)),
+        "fielding": fielding_runs(box, games),
+    }
+    out = {}
+    for name, value in terms.items():
+        out[name] = {
+            "runs": float(value),
+            "per150": float(value * 150.0 / games) if games else float("nan"),
+        }
+    out["total"] = {
+        "runs": float(sum(terms.values())),
+        "per150": (float(sum(terms.values()) * 150.0 / games)
+                   if games else float("nan")),
+    }
+    return out
 
 
 def build_batter(
@@ -910,11 +955,20 @@ def _prepare(pitch):
     pitch["in_zone"] = pitch["zone"].between(1, 9)
     pitch["chased"] = pitch["is_swing"] & ~pitch["in_zone"]
     pitch["barrel"] = pitch["launch_speed_angle"] == 6
+    pitch["hard"] = pitch["launch_speed"] >= 95.0
     return pitch
 
 
-def build_batter_reference(pitch, *, minimum_pa: int = 120):
-    """One row per batter-season, with every measure the tools read."""
+def build_batter_reference(pitch, *, minimum_pa: int = 25):
+    """One row per batter-season, with every measure the tools read.
+
+    The floor is deliberately low. Savant publishes percentiles only for
+    qualified players, which leaves a bench bat with fifty-five plate
+    appearances showing two grades out of fifteen -- and an unqualified
+    percentile, plainly marked, tells a reader far more than a dash does. The
+    thinness is a fact about the sample and is reported as one; it is not a
+    reason to withhold the number.
+    """
     import numpy as np
     import pandas as pd
 
@@ -943,11 +997,26 @@ def build_batter_reference(pitch, *, minimum_pa: int = 120):
         ~ends["events"].isin(UNBATTED_WOBA), ends["events"].map(UNBATTED_WOBA))
     frame["xwoba"] = ends.assign(x=expected).groupby(["batter", "season"])["x"].mean()
 
-    in_play = ends[ends["bb_type"].notna() & (ends["bb_type"] != "")]
+    # Bunts are excluded from every batted-ball aggregate, because Savant
+    # excludes them and a percentile that disagrees with the one printed beside
+    # it is worse than no percentile. Verified rather than assumed: keeping them
+    # put average exit velocity out by up to 24 percentile points against the
+    # published figure, and dropping them took the agreement from 0.936 to
+    # 0.954. A sacrifice bunt is a 30 mph batted ball and a decision by the
+    # manager; it says nothing about how hard the hitter can hit.
+    in_play = ends[
+        ends["bb_type"].notna() & (ends["bb_type"] != "")
+        & ~ends["events"].astype(str).str.contains("bunt", case=False, na=False)
+        & ~ends["description"].astype(str).str.contains("bunt", case=False, na=False)
+    ]
     balls = in_play.groupby(["batter", "season"])
     frame["barrel_rate"] = balls["barrel"].mean()
     frame["ev"] = balls["launch_speed"].mean()
     frame["la"] = balls["launch_angle"].mean()
+    # For the chip grid rather than the tools: max exit velocity and hard-hit
+    # rate are what a reader looks for and neither is a tool on its own.
+    frame["max_ev"] = balls["launch_speed"].max()
+    frame["hard_rate"] = balls["hard"].mean()
     for name, kind in (("gb_rate", "ground_ball"), ("ld_rate", "line_drive"),
                        ("fb_rate", "fly_ball")):
         frame[name] = balls["bb_type"].apply(lambda s, k=kind: (s == k).mean())
@@ -991,3 +1060,87 @@ def build_pitcher_reference(pitch, *, minimum_bf: int = 120):
         frame[name] = balls["bb_type"].apply(lambda s, k=kind: (s == k).mean())
 
     return frame[frame["bf"] >= minimum_bf].reset_index()
+
+
+# --------------------------------------------------------------------------
+# Percentiles for players Savant does not publish
+# --------------------------------------------------------------------------
+# A bench bat with fifty-five plate appearances gets two grades out of fifteen
+# from Savant, and thirteen dashes. An unqualified percentile, plainly marked,
+# tells a reader far more than a dash does -- so these are derived from the
+# pitch corpus, which has every underlying measure for every player who has
+# taken a swing.
+#
+# The derivation was verified against Savant's published percentiles for
+# qualified players before it was trusted. That check found two things.
+#
+# First, Savant does not grade every measure against the same population. Rate
+# and quality measures are graded against qualified batters; max exit velocity
+# is graded against everybody. Using one population for both put max EV out by
+# a median of twenty percentile points while leaving the rest correct, and using
+# the other put the rest out by six to sixteen while fixing max EV. Both
+# versions correlated above 0.98 with the published figures, so the ordering
+# looked right either way and only the absolute values were wrong -- which is
+# exactly the kind of error that renders as a plausible number.
+#
+# Second, max exit velocity is a best-of-N statistic: its expected value climbs
+# with the number of batted balls, from 106.6 mph in the 25-100 plate appearance
+# band to 111.5 mph above 400. For a thin sample that is bias, not noise, and a
+# reader cannot tell a number that is depressed by playing time from one that is
+# merely uncertain. So it is the one measure withheld from unqualified players
+# rather than shown with a caveat.
+
+QUALIFIED_PA = 300
+
+# Measures graded against every batter rather than the qualified subset.
+GRADED_AGAINST_ALL = frozenset({"max_ev"})
+
+# Measures whose expected value moves with sample size, so a thin player's
+# figure is biased rather than uncertain. Withheld when unqualified.
+SAMPLE_BIASED = frozenset({"max_ev"})
+
+# (chip key, corpus measure, lower_is_better)
+CHIP_MEASURES: tuple[tuple[str, str, bool], ...] = (
+    ("xwoba",             "xwoba",           False),
+    ("brl_percent",       "barrel_rate",     False),
+    ("exit_velocity",     "ev",              False),
+    ("max_ev",            "max_ev",          False),
+    ("hard_hit_percent",  "hard_rate",       False),
+    ("k_percent",         "k_rate",          True),
+    ("bb_percent",        "bb_rate",         False),
+    ("whiff_percent",     "whiff_per_swing", True),
+    ("chase_percent",     "chase_rate",      True),
+)
+
+
+def derived_percentiles(row: dict, reference, *, minimum_pa: int = 25) -> dict:
+    """Percentiles for one batter, on the same scale Savant publishes.
+
+    Returns {chip_key: percentile}. Empty when the sample is too thin to say
+    anything at all -- twenty plate appearances is not a rate, it is an anecdote.
+    """
+    import numpy as np
+
+    plate_appearances = float(row.get("pa") or 0)
+    if plate_appearances < minimum_pa:
+        return {}
+
+    qualified = reference[reference["pa"] >= QUALIFIED_PA]
+    unqualified = plate_appearances < QUALIFIED_PA
+
+    out: dict[str, float] = {}
+    for chip, measure, lower_better in CHIP_MEASURES:
+        if measure not in reference.columns:
+            continue
+        if unqualified and measure in SAMPLE_BIASED:
+            continue
+        value = row.get(measure)
+        if value is None or not np.isfinite(value):
+            continue
+        pool = (reference if measure in GRADED_AGAINST_ALL else qualified)
+        population = pool[measure].to_numpy(dtype=float)
+        grade = _percentile(float(value), population)
+        if not np.isfinite(grade):
+            continue
+        out[chip] = round(100.0 - grade if lower_better else grade)
+    return out

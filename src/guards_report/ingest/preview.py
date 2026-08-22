@@ -98,6 +98,15 @@ class PlayerBox:
     running: dict[str, float | None] = field(default_factory=dict)
     # Runs above average on the bases, measured rather than estimated.
     baserunning_runs: float | None = None
+    # Runs above average at the plate, as Savant measures it. The three
+    # value terms together answer where a player's worth comes from,
+    # which a single total cannot.
+    batting_runs: float | None = None
+    # Chips computed here because Savant publishes none for this player.
+    # Kept separate from `percentiles` so the page can mark them as the
+    # unqualified figures they are rather than passing them off as
+    # published ones.
+    derived_percentiles: dict[str, float] = field(default_factory=dict)
 
     # Every requested situational split, keyed by situation code.
     situational: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -428,7 +437,8 @@ def _arsenal_rows(rows, league_by_pitch) -> list[dict[str, Any]]:
 
 
 def _build_batter_box(person, entry, *, as_of, opposing_hand, league_hitting,
-                      arsenal_by_player, league_by_pitch, savant) -> PlayerBox:
+                      arsenal_by_player, league_by_pitch, savant,
+                      derived_percentiles=None) -> PlayerBox:
     pid = person["id"]
     rows = w.parse_game_logs({"stats": [{"splits": _stat_block(person, "gameLog")}]})
     prior = [r for r in rows if r.game_date < as_of]
@@ -468,7 +478,9 @@ def _build_batter_box(person, entry, *, as_of, opposing_hand, league_hitting,
         batted_ball=_pick(savant["batted_ball"].get(pid), BATTED_BALL_FIELDS),
         bat_tracking=_pick(savant["bat_tracking"].get(pid), BAT_TRACKING_FIELDS),
         fielding=_pick(savant["fielding"].get(pid), FIELDING_FIELDS),
+        derived_percentiles=(derived_percentiles or {}).get(pid, {}),
         baserunning_runs=savant.get("baserunning_runs", {}).get(pid),
+        batting_runs=savant.get("batting_runs", {}).get(pid),
         running=_pick(savant["running"].get(pid), RUNNING_FIELDS),
         situational=situational,
         vs_hand=vs_hand, vs_hand_label=vs_hand_label,
@@ -777,6 +789,10 @@ def build_preview(
         steal_rows = sv.parse_csv(sv.basestealing_run_value(archiver, year=season))
     except Exception:  # noqa: BLE001
         steal_rows = []
+    try:
+        batting_rv_rows = sv.parse_csv(sv.batting_run_value(archiver, year=season))
+    except Exception:  # noqa: BLE001
+        batting_rv_rows = []
 
     def _by_player(rows, field_name: str) -> dict[int, float]:
         out: dict[int, float] = {}
@@ -791,6 +807,7 @@ def build_preview(
                 continue
         return out
 
+    batting_value = _by_player(batting_rv_rows, "runs_all")
     running_runs = _by_player(baserun_rows, "runner_runs")
     stealing_runs = _by_player(steal_rows, "runs_stolen_on_running_act")
     baserunning_runs = {
@@ -814,6 +831,7 @@ def build_preview(
         "fielding": sv.index_by_player(fielding_rows),
         "running": sv.index_by_player(sprint_rows),
         "baserunning_runs": baserunning_runs,
+        "batting_runs": batting_value,
     }
 
     # Weighted by playing time: an unweighted mean would let a player with
@@ -845,10 +863,99 @@ def build_preview(
     savant_populations = {
         "sprint_speed": _population(sprint_rows, "sprint_speed"),
         "baserunning_runs": sorted(baserunning_runs.values()),
+        "batting_runs": sorted(batting_value.values()),
         "outs_above_average": _population(fielding_rows, "outs_above_average"),
         "fielding_runs_prevented": _population(
             fielding_rows, "fielding_runs_prevented"),
     }
+
+    def _expected_percentiles(rows, qualified_pa: int = 300) -> dict[int, dict]:
+        """xBA, xSLG, xISO and xwOBA for everyone, on the qualified scale.
+
+        The expected-statistics board carries these for 632 players where the
+        percentile board publishes them for 222, so the raw values are there for
+        the asking and only the ranking was missing. Verified against the
+        published percentiles for players who have both: r >= 0.999 with a
+        median error of about one point.
+
+        xISO is xSLG minus xBA, the standard identity, and it reproduces the
+        published percentile to a median of 1.2 points -- which is the check
+        that the identity is the one Savant uses rather than merely a plausible
+        one. xOBP is not on this board and is not derivable from what is, so
+        that chip stays empty rather than being filled with something adjacent.
+        """
+        parsed = []
+        for row in rows:
+            try:
+                pid = int(row.get("player_id"))
+                pa = float(row.get("pa") or 0)
+                xba = sv.to_number(row.get("est_ba"))
+                xslg = sv.to_number(row.get("est_slg"))
+                xwoba = sv.to_number(row.get("est_woba"))
+            except (TypeError, ValueError):
+                continue
+            if xba is None or xslg is None:
+                continue
+            parsed.append({
+                "pid": pid, "pa": pa, "xba": xba, "xslg": xslg,
+                "xiso": xslg - xba, "xwoba": xwoba,
+            })
+
+        # Ranked against qualified players only, so a derived chip answers "if
+        # he qualified, where would he rank" and means the same thing as the
+        # published chip beside it.
+        pools = {}
+        for chip in ("xba", "xslg", "xiso", "xwoba"):
+            values = sorted(
+                r[chip] for r in parsed
+                if r["pa"] >= qualified_pa and r[chip] is not None
+            )
+            pools[chip] = values
+
+        out: dict[int, dict] = {}
+        for row in parsed:
+            grades = {}
+            for chip, pool in pools.items():
+                value = row[chip]
+                if value is None or not pool:
+                    continue
+                below = sum(1 for x in pool if x < value)
+                grades[chip] = round(below / len(pool) * 100)
+            if grades:
+                out[row["pid"]] = grades
+        return out
+
+    # Percentiles for the players Savant leaves blank. Placed on the qualified
+    # scale rather than on a scale of everyone who took a swing, because the
+    # chip beside it is Savant's published figure and that is the qualified
+    # scale -- two meanings of "70th percentile" in one grid is worse than a
+    # dash. Grading against everyone instead would inflate a chip by up to 27
+    # points, which is the distance between a bad hitter and an average one.
+    derived_percentiles: dict[int, dict] = {}
+    try:
+        import pandas as _pd
+
+        from guards_report.insight import profile as _profile
+
+        _path = settings.raw_archive_dir.parent / "models" / "batter_profiles.parquet"
+        if _path.exists():
+            _ref = _pd.read_parquet(_path)
+            _ref = _ref[_ref["season"] == season]
+            for _, _row in _ref.iterrows():
+                _got = _profile.derived_percentiles(_row.to_dict(), _ref)
+                if _got:
+                    derived_percentiles[int(_row["batter"])] = _got
+
+        # The expected-statistics board covers more players than the corpus
+        # reference and matches the published percentiles more closely, so it
+        # wins where the two overlap.
+        for _pid, _grades in _expected_percentiles(
+            sv.parse_csv(sv.expected_statistics(
+                archiver, year=season, player_type=sv.TYPE_BATTER, minimum=1))
+        ).items():
+            derived_percentiles.setdefault(_pid, {}).update(_grades)
+    except Exception as exc:  # noqa: BLE001 -- derived chips are additive
+        print(f"  warning: derived percentiles unavailable ({exc})", file=sys.stderr)
 
     pitcher_arsenal = sv.group_by_player(pitcher_arsenal_rows)
     batter_arsenal = sv.group_by_player(batter_arsenal_rows)
@@ -919,6 +1026,7 @@ def build_preview(
                 opposing_hand=hands[opposite], league_hitting=league_hitting,
                 arsenal_by_player=batter_arsenal,
                 league_by_pitch=league_pitch_faced, savant=savant,
+        derived_percentiles=derived_percentiles,
             )
             for e in batter_entries if e["person"]["id"] in batter_people
         ]

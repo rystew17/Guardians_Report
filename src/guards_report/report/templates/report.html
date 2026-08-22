@@ -198,6 +198,20 @@
   .pct-bad{background:var(--bad-p);color:#fff;} .pct-bad .pl{color:#fff;}
   .pct-none{background:transparent;color:var(--muted);} .pct-none .pl{color:var(--muted);}
 
+  /* A derived chip is marked, not disguised -- and the mark has to survive the
+     chip's own background. The first attempt was a hairline dashed border in
+     the neutral border colour, which is invisible on a saturated chip: the
+     marker was applied, correct, and unseeable, which is worse than none.
+     Three signals now, so no single one has to carry it: the value is
+     italicised, the label takes an asterisk, and the border is dashed and
+     heavier. The colour that encodes the value is untouched. */
+  .pchip-unq { border-style:dashed; border-width:1.5px;
+    border-color:currentColor; }
+  .pchip-unq .pv { font-style:italic; }
+  .pchip-unq .pl::after { content:"*"; font-style:normal; }
+  .unqnote { font-size:.62rem; line-height:1.45; color:var(--faint);
+             margin-top:var(--sp-1); }
+
   /* ---------- visual row: spray leads, zones follow ---------- */
   .vis { display:flex; gap:var(--sp-4); flex-wrap:wrap; align-items:flex-start; }
   /* The handedness groups are flex children so their plots share the row with
@@ -560,14 +574,31 @@
 {#- ============================ macros ============================ -#}
 
 {% macro pchips(box, keys) %}
+{#- A chip is either Savant's published percentile or one computed here for a
+    player they do not publish. Both sit on the qualified scale, so the numbers
+    mean the same thing; the derived ones are marked because the sample behind
+    them is thin and the reader is owed that. -#}
+{% set derived = box.derived_percentiles or {} %}
+{% set ns = namespace(any_derived=false) %}
 <div class="pcts">
   {% for key, label in keys %}
-  {% set v = box.percentiles.get(key) %}
-  <div class="pchip {{ v|percentile_class }}">
+  {% set published = box.percentiles.get(key) %}
+  {% set v = published if published not in (None, '') else derived.get(key) %}
+  {% set is_derived = published in (None, '') and derived.get(key) is not none %}
+  {% if is_derived %}{% set ns.any_derived = true %}{% endif %}
+  <div class="pchip {{ v|percentile_class }}{{ ' pchip-unq' if is_derived }}"
+       {% if is_derived %}title="Computed here — {{ label }} on the qualified-player scale. Savant does not publish a percentile for this player."{% endif %}>
     <span class="pv">{{ v if v not in (None, '') else '–' }}</span><span class="pl">{{ label }}</span>
   </div>
   {% endfor %}
 </div>
+{% if ns.any_derived %}
+<div class="unqnote"><strong>*</strong> Computed here rather than published:
+this player has not qualified. Each one is placed on the same qualified-player
+scale as every other chip &mdash; it answers &ldquo;if he qualified, where would he
+rank&rdquo; &mdash; so a 60 means the same thing either way. The sample behind it is
+smaller.</div>
+{% endif %}
 {% endmacro %}
 
 {#- a value with its benchmark delta stacked underneath -#}
