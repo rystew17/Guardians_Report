@@ -82,10 +82,33 @@ class FirstFive:
     def favourite(self) -> str:
         return "home" if self.home_leads >= self.away_leads else "away"
 
+    # Share of a game's runs that fall in the first five innings, measured at
+    # 0.565 across the corpus and flat from low-scoring games to high.
+    expected_share: float = 0.565
+    full_game_total: float | None = None
+
     @property
     def coherent(self) -> bool:
-        """The three outcomes must be a probability distribution."""
-        return abs(self.home_leads + self.tied + self.away_leads - 1.0) < 0.01
+        """Sums to one, and agrees with the full-game model about the scoring.
+
+        Summing to one is arithmetic and cannot fail. The check that can is
+        whether this model and the score model describe the same game: they are
+        fitted independently, and if the first five hold 70% of the runs the
+        full-game model expects, one of them is extrapolating. The tolerance is
+        wide because a genuine pitching matchup does shift the share.
+        """
+        if abs(self.home_leads + self.tied + self.away_leads - 1.0) >= 0.01:
+            return False
+        if not self.full_game_total:
+            return True
+        return abs(self.share_of_game - self.expected_share) < 0.08
+
+    @property
+    def share_of_game(self) -> float:
+        """What fraction of the projected runs this model puts in five innings."""
+        if not self.full_game_total:
+            return self.expected_share
+        return self.expected_total / self.full_game_total
 
 
 def _as_of_rates(
@@ -150,6 +173,7 @@ def batter_props(
                     f"{stands.get(int(batter), 'R')}{opposing_throws}", 1.0
                 ),
                 artifact.park.get(outcome, {}).get(home_team, 1.0),
+                props_module.CALIBRATION.get(outcome, 1.0),
             )
             chances = props_module.SLOT_PA_DISTRIBUTION.get(
                 index, props_module.UNKNOWN_SLOT_PA

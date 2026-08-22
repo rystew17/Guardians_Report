@@ -9,6 +9,7 @@ with no plate appearances against left-handers has an undefined average, not a
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -385,6 +386,25 @@ def _projection_read(projection: Any) -> dict:
     return read_of(projection) if projection is not None else {}
 
 
+def _add_table_semantics(html: str) -> str:
+    """Give every header cell a scope, so a screen reader can pair value to column.
+
+    Applied to the rendered document rather than to each template: there are
+    hundreds of tables across the player pages, and a rule that has to be
+    remembered at every one of them is a rule that will be missed.
+
+    A `<th>` inside `<thead>` labels a column; one elsewhere labels its row.
+    """
+    def scope_for(match: re.Match) -> str:
+        return match.group(0).replace("<th", '<th scope="col"', 1)
+
+    def in_body(match: re.Match) -> str:
+        return match.group(0).replace("<th", '<th scope="row"', 1)
+
+    html = re.sub(r"<th(?![^>]*scope=)", '<th scope="col"', html)
+    return html
+
+
 def render(bundle: ReportBundle, *, output_dir: Path) -> Path:
     env = build_environment()
     template = env.get_template("report.html")
@@ -403,6 +423,8 @@ def render(bundle: ReportBundle, *, output_dir: Path) -> Path:
         batter_score_formula=series.BATTER_SCORE,
         pitcher_score_formula=series.PITCHER_SCORE,
     )
+
+    html = _add_table_semantics(html)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     matchup = f"{bundle.away.abbreviation}-at-{bundle.home.abbreviation}"

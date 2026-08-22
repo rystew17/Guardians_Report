@@ -426,6 +426,17 @@ STARTER_LEAGUE_FACTOR = 0.9758
 # probabilities the report actually publishes.
 MATCHUP_SHRINK = 0.75
 
+# Held-out calibration on the game-level totals, fitted on 2023 and judged on
+# 2024-2025. Home runs run about 5% high and a single factor fixes most of it.
+#
+# Hits are left alone deliberately. The sweep chose 1.00 because their bias is
+# not a constant but a gradient -- +0.00 at the top of the order rising to +0.05
+# at the ninth spot -- and no single multiplier addresses that. The cause is
+# real rather than a defect: shrinking every rate toward the league mean must
+# over-rate below-average hitters, and the bottom of the order is where they
+# bat. A per-slot fudge would hide that instead of showing it.
+CALIBRATION = {"hit": 1.00, "home_run": 0.98}
+
 
 @dataclass
 class CountProjection:
@@ -473,11 +484,19 @@ def count_distribution(
         for k in range(0, min(int(n), limit) + 1):
             out[k] = out.get(k, 0.0) + share * _binomial(k, int(n), rate)
 
-    expected = sum(k * p for k, p in out.items())
+    # Prune first, then renormalise, then take the mean from what remains. The
+    # published expected value has to be the mean of the published distribution:
+    # computing it from the unpruned dict left the two disagreeing in the
+    # seventh decimal, which is invisible and still wrong.
+    kept = {k: v for k, v in sorted(out.items()) if v > 1e-6}
+    mass = sum(kept.values()) or 1.0
+    kept = {k: v / mass for k, v in kept.items()}
+
+    expected = sum(k * p for k, p in kept.items())
     mean_chances = sum(int(n) * (w / total) for n, w in chances.items())
     return CountProjection(
         expected=float(expected),
-        distribution={k: float(v) for k, v in sorted(out.items()) if v > 1e-6},
+        distribution={k: float(v) for k, v in kept.items()},
         per_chance=float(rate),
         expected_chances=float(mean_chances),
     )

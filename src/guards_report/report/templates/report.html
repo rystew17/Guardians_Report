@@ -14,9 +14,9 @@
     color-scheme: light;
     --bg:#f4f6f8; --panel:#eaeef2; --box:#fff;
     --border:#dde3e9; --border-hi:#c2cbd4;
-    --ink:#131922; --muted:#57626e; --faint:#8992a0;
+    --ink:#131922; --muted:#57626e; --faint:#5e6875;
     --accent:#0c2340; --accent-2:#e31937;
-    --good:#0b7a48; --bad:#c02233; --even:#8992a0;
+    --good:#0b7a48; --bad:#c02233; --even:#5e6875;
     --zone-empty:#eef1f4;
     --field:#dcebe4; --field-line:#a9c0b4; --field-dirt:#f3ece1;
     --great:#d22d49; --gd:#e8896a; --avg:#cbd1d6; --poor:#7aa0c4; --bad-p:#325aa8;
@@ -475,10 +475,13 @@
 
 <nav role="tablist" aria-label="Report sections">
   {% for kind, team, label in pages %}
-  <button role="tab" data-page="p{{ loop.index }}" aria-selected="{{ 'true' if loop.first else 'false' }}">{{ label }}</button>
+  <button role="tab" id="tab-p{{ loop.index }}" aria-controls="p{{ loop.index }}"
+          data-page="p{{ loop.index }}" tabindex="{{ '0' if loop.first else '-1' }}"
+          aria-selected="{{ 'true' if loop.first else 'false' }}">{{ label }}</button>
   {% endfor %}
   {% if bundle.projection %}
-  <button role="tab" data-page="pproj" aria-selected="false">Projections</button>
+  <button role="tab" id="tab-pproj" aria-controls="pproj" data-page="pproj"
+          tabindex="-1" aria-selected="false">Projections</button>
   {% endif %}
 </nav>
 
@@ -946,7 +949,8 @@
 {% endmacro %}
 
 {#- ======================= page 1: matchup ======================= -#}
-<section class="page active" id="p1">
+<section class="page active" id="p1" role="tabpanel"
+         aria-labelledby="tab-p1" tabindex="0">
   <h2>Matchup</h2>
 
   {{ llm_slot("game-" ~ bundle.game_pk) }}
@@ -1142,7 +1146,7 @@
 {% set pj = bundle.projection %}
 {% set sc = pj.score %}
 {% set wm = pj.metrics.win_model %}
-<section class="page" id="pproj">
+<section class="page" id="pproj" role="tabpanel" aria-labelledby="tab-pproj" tabindex="0">
   <h2>Projections
     <span class="sub" style="font-weight:400;">probabilities, not predictions</span>
   </h2>
@@ -1434,6 +1438,12 @@
     supports them &mdash; hit rate only settles after roughly 475 plate appearances,
     home-run rate after 193, so a hot fortnight moves these less than it might seem
     it should. Rows in grey rest on thin samples.
+    <br>Measured against 2024&ndash;25, hit totals run about 0.02 high on average and
+    0.05 high in the ninth slot. That gradient is a property of the method rather
+    than a defect: shrinking every rate toward the league mean necessarily
+    over-rates below-average hitters, and the bottom of the order is where they
+    bat. Home runs carry a fitted correction; hits do not, because no single
+    factor fixes a gradient and a per-slot one would hide it.
   </div>
   {% endif %}
   <h3 class="lab">Probable starters</h3>
@@ -1512,6 +1522,16 @@
     forward through {{ pj.ratings_note.ratings_through }} over
     {{ '{:,}'.format(pj.ratings_note.games_applied) }} games played since, so both
     clubs are rated on current form{% endif %}.
+    {% if pj.freshness %}
+    Every source was refreshed before this ran: games and starts through
+    {{ pj.freshness.corpus_through }}, pitch-level data through
+    {{ pj.freshness.pitches_through }}
+    ({{ pj.freshness.requests }} requests, {{ pj.freshness.seconds }}s).
+    {% if not pj.freshness.current %}
+    <strong>One or more sources is behind &mdash; treat these projections as
+    stale.</strong>
+    {% endif %}
+    {% endif %}
     Nothing on this page is written or estimated by a language model &mdash; every
     figure comes from fitted statistical code.
   </div>
@@ -1521,7 +1541,8 @@
 {#- ===================== pages 2-5: players ===================== -#}
 {% for kind, team, label in pages %}
 {% if team %}
-<section class="page" id="p{{ loop.index }}">
+<section class="page" id="p{{ loop.index }}" role="tabpanel"
+         aria-labelledby="tab-p{{ loop.index }}" tabindex="0">
   <h2>{{ label }}
     <span class="sub" style="font-weight:400;">
       {% if kind == 'pitchers' %}{{ team.pitchers|length }} active{% else %}{{ team.batters|length }} active{% endif %}
@@ -1588,11 +1609,34 @@
 <script>
   const tabs = document.querySelectorAll('nav button');
   const pages = document.querySelectorAll('.page[id]');
-  tabs.forEach(tab => tab.addEventListener('click', () => {
-    tabs.forEach(t => t.setAttribute('aria-selected', String(t === tab)));
+  function selectTab(tab, { focus = false } = {}) {
+    tabs.forEach(t => {
+      const chosen = t === tab;
+      t.setAttribute('aria-selected', String(chosen));
+      // Roving tabindex: one stop for the whole tablist, so a keyboard user
+      // arrows between tabs instead of tabbing through every one of them.
+      t.setAttribute('tabindex', chosen ? '0' : '-1');
+    });
     pages.forEach(p => p.classList.toggle('active', p.id === tab.dataset.page));
+    if (focus) tab.focus();
     window.scrollTo({ top: 0 });
-  }));
+  }
+
+  tabs.forEach(tab => tab.addEventListener('click', () => selectTab(tab)));
+
+  document.querySelector('nav').addEventListener('keydown', event => {
+    const order = [...tabs];
+    const current = order.indexOf(document.activeElement);
+    if (current < 0) return;
+    const move = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
+    let next = null;
+    if (move) next = order[(current + move + order.length) % order.length];
+    else if (event.key === 'Home') next = order[0];
+    else if (event.key === 'End') next = order[order.length - 1];
+    if (!next) return;
+    event.preventDefault();
+    selectTab(next, { focus: true });
+  });
 
   // Per-box handedness switch for the zone maps.
   document.querySelectorAll('.hsw button').forEach(btn => {

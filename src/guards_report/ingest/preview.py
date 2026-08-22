@@ -1153,6 +1153,13 @@ def build_preview(
                     projection.first_five = projection_tonight.first_five(
                         f5_art, f5_features
                     )
+                    if projection.first_five is not None:
+                        # Give it the full-game total so the two models can be
+                        # checked against each other rather than only against
+                        # arithmetic.
+                        projection.first_five.full_game_total = (
+                            projection.score.get("expected_total")
+                        )
             except Exception as exc:  # noqa: BLE001
                 print(f"  warning: first-five skipped ({exc})", file=sys.stderr)
     except Exception as exc:

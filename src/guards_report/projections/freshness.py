@@ -123,6 +123,17 @@ def refresh_all(
     """
     season = on.year
     started = time.time()
+
+    # Generating twice in a day would otherwise refetch thirty team-seasons to
+    # discover nothing had changed. The survey is free and answers that.
+    standing = survey(root, season)
+    if standing.is_current(on):
+        standing.seconds = time.time() - started
+        standing.refreshed = ["already current"]
+        if verbose:
+            print("  every corpus already current; nothing fetched", flush=True)
+        return standing
+
     result = Freshness()
 
     # -- game corpus: one schedule request ---------------------------------
