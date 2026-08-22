@@ -154,6 +154,29 @@
   .tr { font-size:.7rem; font-weight:750; }
   .tr-up { color:var(--good); } .tr-down { color:var(--bad); } .tr-flat { color:var(--faint); }
 
+  /* ---------- glossary ---------- */
+  .gloss { margin-top:var(--sp-6); border-top:1px solid var(--border);
+           padding-top:var(--sp-3); }
+  .gloss > summary { cursor:pointer; font-size:.68rem; font-weight:750;
+    text-transform:uppercase; letter-spacing:.05em; color:var(--faint);
+    list-style:none; }
+  .gloss > summary::-webkit-details-marker { display:none; }
+  .gloss > summary::before { content:"B8 "; display:inline-block;
+    transition:transform .15s ease; }
+  .gloss[open] > summary::before { transform:rotate(90deg); }
+  .gloss dl { display:grid; grid-template-columns:auto 1fr;
+              gap:.3rem var(--sp-3); margin:var(--sp-3) 0 0; align-items:baseline; }
+  .gloss dt { font-size:.68rem; font-weight:750; color:var(--ink);
+              white-space:nowrap; }
+  .gloss dd { margin:0; font-size:.72rem; line-height:1.55; color:var(--muted); }
+  @media (max-width:640px) {
+    .gloss dl { grid-template-columns:1fr; gap:.1rem; }
+    .gloss dt { margin-top:var(--sp-2); }
+  }
+  @media (prefers-reduced-motion:reduce) {
+    .gloss > summary::before { transition:none; }
+  }
+
   /* ---------- player dossier ---------- */
   .ltags { display:flex; flex-wrap:wrap; gap:var(--sp-1); margin:0 0 var(--sp-2); }
   .ltag { font-size:.6rem; font-weight:700; text-transform:uppercase;
@@ -573,6 +596,31 @@
 
 {#- ============================ macros ============================ -#}
 
+{#- ===================== glossary =====================
+
+   Definitions live at the foot of the page they apply to rather than beside
+   the thing they define. Scattered inline they cost space on every box and are
+   read once at most; a reader who wants to know what Luck means will go and
+   look, and one who already knows should not have to scroll past the answer
+   thirteen times.
+
+   The projections page is the exception and keeps its notes inline: a
+   projection without its assumptions beside it invites exactly the unearned
+   trust this report exists to avoid.
+-#}
+{% macro glossary(entries) %}
+{% if entries %}
+<details class="gloss">
+  <summary>Definitions and method</summary>
+  <dl>
+    {%- for term, definition in entries %}
+    <dt>{{ term|safe }}</dt><dd>{{ definition|safe }}</dd>
+    {%- endfor %}
+  </dl>
+</details>
+{% endif %}
+{% endmacro %}
+
 {% macro pchips(box, keys) %}
 {#- A chip is either Savant's published percentile or one computed here for a
     player they do not publish. Both sit on the qualified scale, so the numbers
@@ -592,13 +640,6 @@
   </div>
   {% endfor %}
 </div>
-{% if ns.any_derived %}
-<div class="unqnote"><strong>*</strong> Computed here rather than published:
-this player has not qualified. Each one is placed on the same qualified-player
-scale as every other chip &mdash; it answers &ldquo;if he qualified, where would he
-rank&rdquo; &mdash; so a 60 means the same thing either way. The sample behind it is
-smaller.</div>
-{% endif %}
 {% endmacro %}
 
 {#- a value with its benchmark delta stacked underneath -#}
@@ -1692,11 +1733,7 @@ smaller.</div>
     </span>
   </h2>
   {% if kind == 'players' %}
-  <div class="note">{{ team.lineup_note }}
-    {% if team.opposing_hand %} Platoon rows show performance against
-    <strong>{{ 'left-handed' if team.opposing_hand == 'L' else 'right-handed' }}</strong> pitching,
-    the hand today's probable starter throws.{% endif %}
-    Rows on thin samples are dimmed; the PA column shows the denominator behind each.</div>
+  <div class="note">{{ team.lineup_note }}</div>
   {% endif %}
   <div class="boxes">
     {% if kind == 'pitchers' %}
@@ -1705,6 +1742,44 @@ smaller.</div>
       {% for box in team.batters %}{{ batter_box(box, bundle.league_hitting, bundle.savant_benchmarks) }}{% endfor %}
     {% endif %}
   </div>
+
+{% set fip_line %}Fielding Independent Pitching is scaled by a constant of
+      <strong>{{ bundle.league.fip_constant|rate2 }}</strong> so that league FIP equals league ERA.
+      Computed from {{ bundle.season }} totals across {{ bundle.league.totals.team_count }} clubs:
+      {{ bundle.league.totals.earned_runs|integer }} ER, {{ bundle.league.totals.outs|integer }} outs,
+      {{ bundle.league.totals.home_runs|integer }} HR, {{ bundle.league.totals.walks|integer }} BB,
+      {{ bundle.league.totals.hit_by_pitch|integer }} HBP, {{ bundle.league.totals.strikeouts|integer }} K.{% endset %}
+
+  {{ glossary([
+    ('Percentile',
+     'Where this player ranks among qualified players, 0 to 100, higher always
+      better. A chip marked with an asterisk was computed here rather than
+      published because he has not qualified &mdash; it answers &ldquo;if he
+      qualified, where would he rank&rdquo;, on the same scale as every other
+      chip, so a 60 means the same thing either way. The sample behind it is
+      smaller.'),
+    ('Run value',
+     'Runs above average, from the change in run expectancy on every pitch.
+      Batting, baserunning and fielding are separate because they answer
+      different questions; a glove-first shortstop and a bat-first corner can
+      total the same and share nothing else. Ranked as a rate and shrunk toward
+      average first, so a hot fortnight in fifty plate appearances does not
+      outrank a season.'),
+    ('Platoon rows',
+     'Performance against the hand today&rsquo;s probable starter throws, not
+      against all pitching.'),
+    ('Dimmed rows',
+     'A sample too thin to carry the rate beside it. The PA or BF column shows
+      the denominator, so the reader can judge it rather than take the dimming
+      on trust.'),
+    ('Expected stats',
+     'What the contact deserved rather than what it produced &mdash; built from
+      exit velocity and launch angle, so a lined out and a bloop single are
+      valued by how they were hit rather than by where they landed.'),
+    ('FIP constant',
+     fip_line),
+  ]) }}
+
 </section>
 {% endif %}
 {% endfor %}
@@ -1715,16 +1790,7 @@ smaller.</div>
   <p class="sub">Every figure is either reported directly by a source below or computed from one by a
     tested formula. Nothing was estimated or generated. The {{ bundle.provenance|length }} requests
     behind this report are listed with the time made and the SHA-256 of the exact bytes returned.</p>
-  <div class="note">
-    Derived pitching metrics use a FIP constant of <strong>{{ bundle.league.fip_constant|rate2 }}</strong>,
-    computed from {{ bundle.season }} league totals across {{ bundle.league.totals.team_count }} clubs:
-    {{ bundle.league.totals.earned_runs|integer }} ER, {{ bundle.league.totals.outs|integer }} outs,
-    {{ bundle.league.totals.home_runs|integer }} HR, {{ bundle.league.totals.walks|integer }} BB,
-    {{ bundle.league.totals.hit_by_pitch|integer }} HBP, {{ bundle.league.totals.strikeouts|integer }} K
-    — a league ERA of {{ bundle.league.league_era|rate2 }}. Team ranks and batting benchmarks come from
-    summed team totals; Statcast benchmarks are weighted by playing time. Zone maps and spray charts are
-    aggregated from pitch-level Statcast for the players in this game only.
-  </div>
+
   <details>
     <summary>Show all {{ bundle.provenance|length }} source requests</summary>
     <div class="scroll">
