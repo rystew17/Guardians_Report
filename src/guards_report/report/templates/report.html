@@ -161,7 +161,10 @@
     text-transform:uppercase; letter-spacing:.05em; color:var(--faint);
     list-style:none; }
   .gloss > summary::-webkit-details-marker { display:none; }
-  .gloss > summary::before { content:"B8 "; display:inline-block;
+  /* The character itself, not a CSS escape. Written as a backslash escape through a
+     Python heredoc it became an octal escape -- 0x15 followed by a literal
+     "B8" -- and rendered as a tofu box beside every glossary heading. */
+  .gloss > summary::before { content:"▸ "; display:inline-block;
     transition:transform .15s ease; }
   .gloss[open] > summary::before { transform:rotate(90deg); }
   .gloss dl { display:grid; grid-template-columns:auto 1fr;
@@ -1648,29 +1651,37 @@
 
   {#- ---------- track record ---------- -#}
   <h3 class="lab">How this model has actually done</h3>
+  {#- Wrapped like every other table on this page. It carries a bar chart in its
+      last column, so the table-wide min-width:max-content holds it wider than
+      the viewport -- which is correct inside a scroller and a page-wide
+      horizontal scrollbar without one. This was the only table on the page
+      missing the wrapper, and width:100% on the table masked that until the
+      bar column pushed past the phone viewport. -#}
+  <div class="scroll">
   <table class="ptrack">
-    <thead>
-      <tr><th class="l">Season</th><th>Accuracy</th><th>vs baseline</th>
-        <th class="l">&nbsp;</th></tr>
-    </thead>
-    <tbody>
-      {% for season, m in pj.metrics.per_season.items() %}
-      <tr>
-        <td class="l">{{ season }}</td>
-        <td>{{ (m.accuracy * 100)|round(1) }}%</td>
-        <td class="sub">{{ ((m.accuracy - wm.baseline_accuracy) * 100)|round(1) }}pt</td>
-        <td class="l">{{ accuracy_bar(m.accuracy, wm.baseline_accuracy) }}</td>
-      </tr>
-      {% endfor %}
-      <tr class="tot">
-        <td class="l"><strong>All held-out</strong></td>
-        <td><strong>{{ (wm.accuracy * 100)|round(1) }}%</strong></td>
-        <td><strong>{{ wm.lift_points|round(1) }}pt</strong></td>
-        <td class="l sub">beat the baseline in
-          {{ wm.seasons_beating_baseline }}/{{ wm.seasons }} seasons</td>
-      </tr>
-    </tbody>
-  </table>
+      <thead>
+        <tr><th class="l">Season</th><th>Accuracy</th><th>vs baseline</th>
+          <th class="l">&nbsp;</th></tr>
+      </thead>
+      <tbody>
+        {% for season, m in pj.metrics.per_season.items() %}
+        <tr>
+          <td class="l">{{ season }}</td>
+          <td>{{ (m.accuracy * 100)|round(1) }}%</td>
+          <td class="sub">{{ ((m.accuracy - wm.baseline_accuracy) * 100)|round(1) }}pt</td>
+          <td class="l">{{ accuracy_bar(m.accuracy, wm.baseline_accuracy) }}</td>
+        </tr>
+        {% endfor %}
+        <tr class="tot">
+          <td class="l"><strong>All held-out</strong></td>
+          <td><strong>{{ (wm.accuracy * 100)|round(1) }}%</strong></td>
+          <td><strong>{{ wm.lift_points|round(1) }}pt</strong></td>
+          <td class="l sub">beat the baseline in
+            {{ wm.seasons_beating_baseline }}/{{ wm.seasons }} seasons</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
   <div class="note">
     {#- The track record and the fitting method moved to the glossary below.
         What stays is the part that changes from one day to the next: how
