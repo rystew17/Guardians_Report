@@ -76,10 +76,13 @@ TEMPLATES: dict[str, tuple[str, ...]] = {
         "so anything said about his form would be invented",
     ),
     "pit.arsenal.best": (
-        "his {pitch} is the out pitch: a {whiff:.1%} whiff rate holding hitters to "
-        "a {xwoba3} expected wOBA, against {league3} on the pitch league-wide",
-        "leans on the {pitch} {usage:.0%} of the time and it earns it — "
-        "{xwoba3} expected against, {league3} for the league",
+        "leans on the {pitch} {usage:.0%} of the time and it earns it — a "
+        "{whiff:.1%} whiff rate and {xwoba3} expected against, {league3} league-wide",
+        # Only reach for "leans on" when the usage supports it. A pitch thrown
+        # six percent of the time is a show-me offering, not a foundation, and
+        # saying otherwise is the kind of small wrongness a reader notices.
+        "gets results from the {pitch} — {xwoba3} expected against, {league3} "
+        "for the league",
     ),
     "pit.arsenal.worst": (
         "the {pitch} is where he gets hurt: {xwoba3} expected against, "
@@ -96,6 +99,35 @@ TEMPLATES: dict[str, tuple[str, ...]] = {
         "falls from {first_pass:.1%} strikeouts the first time through to "
         "{late_pass:.1%} later, a steeper drop than the league's",
         "loses more than most on repeat looks: {first_pass:.1%} down to {late_pass:.1%}",
+    ),
+    "game.projection": (
+        "the model makes {favourite} a {probability:.1%} favourite, which is the "
+        "{percentile_ord} percentile of how confident it ever gets",
+        "{favourite} projects at {probability:.1%}, sitting at the {percentile_ord} "
+        "percentile of this model's own range",
+    ),
+    "game.driver": (
+        "what separates them is {label}, worth {size:.2f} log-odds toward {toward} "
+        "and the largest of {count} inputs",
+        "{label} does most of the work here — {size:.2f} log-odds toward {toward}",
+    ),
+    "game.score": (
+        "the run model expects {home} {home_runs3}, {away} {away_runs3} — {total:.1f} "
+        "on the night, with a {one_run:.0%} chance it comes down to one",
+        "expected score {home} {home_runs3}, {away} {away_runs3}, and {one_run:.0%} of "
+        "the time this is a one-run game",
+    ),
+    "game.first_five": (
+        "through five the model has {home} ahead {home_leads:.0%} of the time, "
+        "{away} {away_leads:.0%}, level the other {tied:.0%}",
+    ),
+    "game.strikeouts": (
+        "{leader} projects for {leader_k:.1f} strikeouts against {trailer_k:.1f} for "
+        "{trailer}, with a line at {leader_line:g}",
+    ),
+    "game.key_bat": (
+        "{name} is the bat the model likes most tonight — a {homer:.0%} chance to go "
+        "deep batting {slot} for {team}",
     ),
     "game.starters": (
         "{better} sends the better starter by the model's reckoning",
@@ -118,6 +150,22 @@ def _slots(finding: Finding) -> dict:
         detail["mean_abs"] = abs(finding.reference.mean)
     # The reference in the same units the value is printed in.
     detail["mean_pct"] = abs(finding.reference.mean)
+    if "percentile" in detail:
+        # "53th" is the kind of small wrongness that makes a reader stop
+        # trusting the rest of the line.
+        n = int(round(float(detail["percentile"])))
+        suffix = "th" if 11 <= n % 100 <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+        detail["percentile_ord"] = f"{n}{suffix}"
+    # A heavily used pitch can carry the stronger phrasing; a rare one cannot.
+    if finding.code == "pit.arsenal.best":
+        detail["heavy"] = float(detail.get("usage", 0.0)) >= 0.20
+    if finding.code == "game.driver":
+        from guards_report.projections.predict import FEATURE_LABELS
+
+        detail["label"] = FEATURE_LABELS.get(detail.get("name", ""), detail.get("name", "")).lower()
+    if finding.code == "game.score":
+        detail["home_runs3"] = f"{detail.get('home_runs', 0):.1f}"
+        detail["away_runs3"] = f"{detail.get('away_runs', 0):.1f}"
     if finding.code == "game.starters":
         detail["better"] = detail["home"] if finding.value > 0 else detail["away"]
     return detail
@@ -138,7 +186,13 @@ def render(finding: Finding, *, variant: int | None = None) -> str:
     options = TEMPLATES.get(finding.code)
     if not options:
         return ""
-    index = variant if variant is not None else hash((finding.code, finding.subject))
+    if finding.code == "pit.arsenal.best" and variant is None:
+        # Usage decides the phrasing rather than the hash, so a rarely thrown
+        # pitch never gets described as one he leans on.
+        usage = float(finding.detail.get("usage", 0.0))
+        index = 0 if usage >= 0.20 else 1
+    else:
+        index = variant if variant is not None else hash((finding.code, finding.subject))
     chosen = options[index % len(options)]
     variant_text = chosen
     slots = _slots(finding)

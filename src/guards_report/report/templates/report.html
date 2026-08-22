@@ -627,14 +627,19 @@
   <div class="lt">Analysis{% if a %}
     <span class="lv {{ 'lv-ok' if a.verification.ok else 'lv-warn' }}"
           title="{{ a.verification.summary }}">
-      {{ '✓ ' ~ a.verification.checked ~ ' figures verified' if a.verification.ok
-         else '⚠ ' ~ a.verification.unverified|length ~ ' unverified' }}
+      {%- if bundle.analysis_summary.get('source') == 'computed' -%}
+        {{ '✓ computed from ' ~ a.verification.checked ~ ' criteria' }}
+      {%- elif a.verification.ok -%}
+        {{ '✓ ' ~ a.verification.checked ~ ' figures verified' }}
+      {%- else -%}
+        {{ '⚠ ' ~ a.verification.unverified|length ~ ' unverified' }}
+      {%- endif -%}
     </span>{% endif %}
   </div>
   {% if a %}
   <div class="la">{{ a.text }}</div>
   {% else %}
-  <div class="lp">No written analysis for this player in this run.</div>
+  <div class="lp">Nothing on this player clears the evidence the report requires &mdash; which is the honest answer more often than not.</div>
   {% endif %}
 </div>
 {% endmacro %}

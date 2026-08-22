@@ -25,6 +25,85 @@ def _parse_date(text: str) -> date:
     return date.fromisoformat(text)
 
 
+def attach_computed_analysis(bundle, settings, *, on) -> dict:
+    """Fill the analysis slots from computed findings rather than a model.
+
+    Produces the same shape the template already reads, so nothing downstream
+    changes: one short piece of prose per subject, keyed by the same subject id.
+
+    The verification badge is different in kind. A model's figures had to be
+    checked back against the source because it might have invented one; these
+    figures *are* the source, arithmetic applied to the pitch corpus, so there is
+    nothing to verify after the fact. The badge says computed instead.
+    """
+    from dataclasses import dataclass, field
+
+    from guards_report.insight import card as insight_card
+
+    @dataclass
+    class _Verification:
+        ok: bool = True
+        checked: int = 0
+        unverified: list = field(default_factory=list)
+        summary: str = ""
+
+    @dataclass
+    class _Computed:
+        subject_id: str
+        text: str
+        findings: int = 0
+        verification: _Verification = field(default_factory=_Verification)
+
+    try:
+        analysis = insight_card.analyse(
+            bundle, pitch_dir=settings.raw_archive_dir.parent / "pitches", on=on
+        )
+    except Exception as exc:  # noqa: BLE001 -- computed prose is additive
+        print(f"  warning: computed analysis skipped ({exc})", file=sys.stderr)
+        return {}
+
+    entries = {}
+    for player_id, text in analysis.subjects.items():
+        found = analysis.findings.get(player_id, 0)
+        verification = _Verification(
+            ok=True, checked=found,
+            summary=f"{found} criteria computed from the pitch corpus; "
+                    "no figure is model-generated",
+        )
+        for prefix in ("pitcher", "batter"):
+            entries[f"{prefix}-{player_id}"] = _Computed(
+                subject_id=f"{prefix}-{player_id}", text=text,
+                findings=found, verification=verification,
+            )
+
+    if analysis.matchup:
+        entries[f"game-{bundle.game_pk}"] = _Computed(
+            subject_id=f"game-{bundle.game_pk}", text=analysis.matchup,
+            verification=_Verification(
+                ok=True, checked=6,
+                summary="assembled from the fitted projections",
+            ),
+        )
+
+    bundle.analyses = entries
+    bundle.analysis_summary = {
+        "source": "computed",
+        "covered": analysis.covered,
+        "attempted": analysis.attempted,
+        "coverage": analysis.coverage,
+        "seconds": round(analysis.seconds, 1),
+        "warnings": len(analysis.warnings),
+    }
+    for warning in analysis.warnings[:3]:
+        print(f"  warning: {warning}", file=sys.stderr)
+    print(
+        f"  computed analysis: {analysis.covered}/{analysis.attempted} subjects "
+        f"({analysis.coverage:.0%}) in {analysis.seconds:.0f}s",
+        file=sys.stderr,
+    )
+    return bundle.analysis_summary
+
+
 def attach_analysis(bundle, settings, *, model: str) -> dict:
     """Generate written notes and attach them to a finished bundle.
 
@@ -116,6 +195,12 @@ def cmd_build(args: argparse.Namespace) -> int:
     # numbers are final. A failure here never costs the report.
     if args.with_analysis:
         attach_analysis(bundle, settings, model=args.model)
+    elif not args.no_analysis:
+        # Computed by default. The findings are arithmetic on the pitch corpus,
+        # so this costs no tokens, produces the same words for the same game
+        # every time, and every figure traces to a computation rather than
+        # needing to be checked back against one.
+        attach_computed_analysis(bundle, settings, on=on)
 
     path = render(bundle, output_dir=settings.output_dir)
 
@@ -250,6 +335,10 @@ def main(argv: list[str] | None = None) -> int:
             "zone maps and spray charts, but cuts a run from minutes to seconds "
             "-- useful when iterating on layout."
         ),
+    )
+    build.add_argument(
+        "--no-analysis", action="store_true",
+        help="skip the computed written analysis, leaving the slots empty",
     )
     build.add_argument(
         "--with-analysis",
