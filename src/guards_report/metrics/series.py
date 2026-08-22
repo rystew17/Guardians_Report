@@ -161,7 +161,7 @@ class Performer:
 
 @dataclass
 class GameBox:
-    """One completed game, summarised the way a box score page shows it."""
+    """One completed game, summarized the way a box score page shows it."""
 
     game_pk: int
     game_date: date

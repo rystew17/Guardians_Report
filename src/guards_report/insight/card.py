@@ -21,7 +21,9 @@ from typing import Any
 import pandas as pd
 
 from guards_report.insight import batters as batter_evaluators
-from guards_report.insight import evaluators, matchup, render, select
+from guards_report.insight import dossier as dossier_module
+from guards_report.insight import evaluators, matchup, profile as profile_module
+from guards_report.insight import render, select
 
 # How many criteria each subject scans, which sets its significance floor. These
 # must track the evaluators actually called below: raising the count without
@@ -44,6 +46,7 @@ class CardAnalysis:
 
     matchup: str = ""
     subjects: dict[int, str] = field(default_factory=dict)
+    dossiers: dict[int, Any] = field(default_factory=dict)
     findings: dict[int, int] = field(default_factory=dict)
     seconds: float = 0.0
     covered: int = 0
@@ -63,6 +66,19 @@ def load_corpus(pitch_dir: Path, season: int) -> pd.DataFrame:
     if not frames:
         return pd.DataFrame(columns=COLUMNS)
     return pd.concat(frames, ignore_index=True)
+
+
+def load_references(models_dir: Path, season: int) -> dict:
+    """This season's graded populations, or empty frames if not yet built."""
+    out = {}
+    for kind, name in (("batter", "batter_profiles"), ("pitcher", "pitcher_profiles")):
+        path = Path(models_dir) / f"{name}.parquet"
+        if not path.exists():
+            out[kind] = pd.DataFrame()
+            continue
+        frame = pd.read_parquet(path)
+        out[kind] = frame[frame["season"] == season].reset_index(drop=True)
+    return out
 
 
 def analyse_pitcher(pitcher_id: int, surname: str, *, pitch_corpus, corpus) -> tuple[str, int]:
@@ -134,6 +150,40 @@ def analyse(bundle: Any, *, pitch_dir: Path, on: date | None = None) -> CardAnal
     home, away = bundle.home.abbreviation, bundle.away.abbreviation
     projection = getattr(bundle, "projection", None)
 
+    # Graded populations for the profiles, plus the leaderboards that carry the
+    # two tools the pitch corpus cannot see.
+    references = load_references(Path(pitch_dir).parent / "models", season)
+    populations = getattr(bundle, "savant_populations", {}) or {}
+    starters = {
+        "home": next((p for p in getattr(bundle.home, "pitchers", [])
+                      if getattr(p, "is_probable_starter", False)), None),
+        "away": next((p for p in getattr(bundle.away, "pitchers", [])
+                      if getattr(p, "is_probable_starter", False)), None),
+    }
+
+    def _row_for(frame, column: str, player_id: int) -> dict | None:
+        if frame is None or frame.empty or column not in frame.columns:
+            return None
+        hit = frame[frame[column] == int(player_id)]
+        return hit.iloc[0].to_dict() if len(hit) else None
+
+    def _profile_for(box, kind: str):
+        column = "batter" if kind == "batter" else "pitcher"
+        row = _row_for(references.get(kind), column, int(box.player_id))
+        if row is None:
+            return None
+        if kind == "batter":
+            return profile_module.build_batter(
+                box, row, references["batter"], populations)
+        return profile_module.build_pitcher(box, row, references["pitcher"])
+
+    # Each side's opponent starter, profiled once, so a matchup is one profile
+    # against another rather than a head-to-head line of nine at-bats.
+    opposing = {}
+    for side, other in (("home", "away"), ("away", "home")):
+        box = starters[other]
+        opposing[side] = (box, _profile_for(box, "pitcher") if box else None)
+
     # -- the game itself -----------------------------------------------------
     try:
         game_findings = (
@@ -146,7 +196,9 @@ def analyse(bundle: Any, *, pitch_dir: Path, on: date | None = None) -> CardAnal
         result.warnings.append(f"matchup: {type(exc).__name__}: {exc}")
 
     # -- everyone in it ------------------------------------------------------
-    for section in (bundle.home, bundle.away):
+    for side, section in (("home", bundle.home), ("away", bundle.away)):
+        opponent_box, opponent_profile = opposing.get(side, (None, None))
+
         for box in list(getattr(section, "pitchers", [])):
             result.attempted += 1
             try:
@@ -161,6 +213,14 @@ def analyse(bundle: Any, *, pitch_dir: Path, on: date | None = None) -> CardAnal
             if text:
                 result.subjects[int(box.player_id)] = text
                 result.covered += 1
+            try:
+                player = _profile_for(box, "pitcher")
+                if player is not None:
+                    result.dossiers[int(box.player_id)] = dossier_module.build(
+                        box, player, surname=_surname(box.name))
+            except Exception as exc:  # noqa: BLE001
+                result.warnings.append(
+                    f"{box.name} profile: {type(exc).__name__}: {exc}")
 
         for box in list(getattr(section, "batters", [])):
             result.attempted += 1
@@ -178,6 +238,16 @@ def analyse(bundle: Any, *, pitch_dir: Path, on: date | None = None) -> CardAnal
             if text:
                 result.subjects[int(box.player_id)] = text
                 result.covered += 1
+            try:
+                player = _profile_for(box, "batter")
+                if player is not None:
+                    result.dossiers[int(box.player_id)] = dossier_module.build(
+                        box, player, surname=_surname(box.name),
+                        opposing_starter=opponent_box,
+                        opposing_profile=opponent_profile)
+            except Exception as exc:  # noqa: BLE001
+                result.warnings.append(
+                    f"{box.name} profile: {type(exc).__name__}: {exc}")
 
     result.seconds = time.time() - started
     return result

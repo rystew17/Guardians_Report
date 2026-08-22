@@ -1,7 +1,7 @@
 """Pitch-level corpus — the finest grain the public data offers.
 
 The project has now failed the same way four times. Recent form, bullpen
-quality, offence/defence ratings and a defensive proxy were each built from past
+quality, offence/defense ratings and a defensive proxy were each built from past
 game results, and Elo is already an efficient summary of past game results, so
 each arrived collinear and contributed nothing. Measured across 25,192 games,
 L30 run differential correlates +0.129 with winning and +0.779 with Elo; remove
@@ -247,7 +247,7 @@ def fetch_range(
     """Pitches a club batted between two dates, inclusive.
 
     Savant still needs the club filter -- a bare date range returns an empty
-    document -- but with one supplied the window is honoured, which is what
+    document -- but with one supplied the window is honored, which is what
     makes an in-season top-up cheap.
     """
     params = {

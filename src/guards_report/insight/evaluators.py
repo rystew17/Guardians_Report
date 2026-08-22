@@ -328,7 +328,7 @@ def arsenal(
     if len(thrown) < minimum:
         return []
 
-    def summarise(frame: pd.DataFrame) -> pd.DataFrame:
+    def summarize(frame: pd.DataFrame) -> pd.DataFrame:
         swings = frame["description"].isin(SWINGS)
         misses = frame["description"].isin(MISSES)
         return pd.DataFrame({
@@ -338,8 +338,8 @@ def arsenal(
             "misses": misses.groupby(frame["pitch_name"]).sum(),
         })
 
-    mine = summarise(thrown)
-    theirs = summarise(league)
+    mine = summarize(thrown)
+    theirs = summarize(league)
     mine = mine[mine["n"] >= per_pitch]
     if mine.empty:
         return []

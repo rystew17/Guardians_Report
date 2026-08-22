@@ -79,7 +79,7 @@ class FirstFive:
     metrics: dict[str, Any] = field(default_factory=dict)
 
     @property
-    def favourite(self) -> str:
+    def favorite(self) -> str:
         return "home" if self.home_leads >= self.away_leads else "away"
 
     # Share of a game's runs that fall in the first five innings, measured at

@@ -191,6 +191,38 @@ def rebuild_derived(root: Path) -> int | None:
     return len(history)
 
 
+def rebuild_profiles(root: Path) -> int | None:
+    """Recompute the batter and pitcher reference populations.
+
+    A tool grade is a percentile among this season's qualified players, so the
+    population is as perishable as the corpus it comes from -- and staler in
+    effect, because a frozen reference silently re-ranks the whole league the
+    moment anyone's rate moves. Rebuilt beside the first-five table for exactly
+    that reason.
+    """
+    from guards_report.insight import profile as profile_module
+
+    directory = Path(root) / "pitches"
+    files = sorted(directory.glob("*.parquet"))
+    if not files:
+        return None
+
+    pitch = pd.concat(
+        [pd.read_parquet(path,
+                         columns=profile_module.PITCH_COLUMNS_FOR_PROFILES)
+         for path in files],
+        ignore_index=True,
+    )
+    models = Path(root) / "models"
+    models.mkdir(parents=True, exist_ok=True)
+
+    batters = profile_module.build_batter_reference(pitch)
+    pitchers_frame = profile_module.build_pitcher_reference(pitch)
+    batters.to_parquet(models / "batter_profiles.parquet", index=False)
+    pitchers_frame.to_parquet(models / "pitcher_profiles.parquet", index=False)
+    return len(batters) + len(pitchers_frame)
+
+
 def survey(root: Path, season: int) -> Freshness:
     """What is on disk right now, without fetching anything."""
     return Freshness(
@@ -293,6 +325,15 @@ def refresh_all(
                 print(f"  derived  {rebuilt:,} starts", flush=True)
     except Exception as exc:  # noqa: BLE001
         result.warnings.append(f"derived: {type(exc).__name__}: {exc}")
+
+    try:
+        graded = rebuild_profiles(root)
+        if graded is not None:
+            result.refreshed.append("profiles")
+            if verbose:
+                print(f"  profiles {graded:,} player-seasons", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        result.warnings.append(f"profiles: {type(exc).__name__}: {exc}")
 
     survey_after = survey(root, season)
     result.corpus_through = survey_after.corpus_through

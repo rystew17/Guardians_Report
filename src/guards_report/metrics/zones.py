@@ -14,7 +14,7 @@ which is how Savant and MLB present it and therefore what a reader already
 knows how to interpret.
 
 The values come from the source already computed. This module only reshapes
-them and attaches a colour scale; it does no averaging of its own, because a
+them and attaches a color scale; it does no averaging of its own, because a
 zone value is a rate over a denominator we are not given and therefore cannot
 be recombined correctly.
 """
@@ -46,7 +46,7 @@ class ZoneCell:
     raw: str
     value: float | None
     temp: str
-    # MLB ships a colour with every zone, already on its own hot/cold scale.
+    # MLB ships a color with every zone, already on its own hot/cold scale.
     # Using it rather than a scale of our own keeps the map identical to what
     # the same player looks like on MLB and Savant, and keeps the shading a
     # sourced value rather than an invented one.

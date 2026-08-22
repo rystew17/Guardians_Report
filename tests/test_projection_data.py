@@ -218,7 +218,7 @@ def test_the_column_sets_are_disjoint_from_neither_and_present_in_the_view():
 
 
 # ---------------------------------------------------------------------------
-# Offense and defence carried forward
+# Offense and defense carried forward
 # ---------------------------------------------------------------------------
 
 def _run_frame(rows: list[dict]) -> pd.DataFrame:

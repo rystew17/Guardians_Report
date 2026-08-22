@@ -1,7 +1,7 @@
 """Training and prediction must compute the same feature.
 
 This exists because they did not. `own_lineup` was built during training as a
-slot-weighted mean of batter *effects* -- deviations centred near zero -- while
+slot-weighted mean of batter *effects* -- deviations centered near zero -- while
 prediction returned the absolute run value, which is the league mean plus the
 same deviation. Roughly four tenths larger, against a fitted coefficient of
 +4.4, which multiplied projected runs by four and produced a nineteen-run game.

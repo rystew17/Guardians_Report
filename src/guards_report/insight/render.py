@@ -104,9 +104,9 @@ TEMPLATES: dict[str, tuple[str, ...]] = {
         "loses more than most on repeat looks: {first_pass:.1%} down to {late_pass:.1%}",
     ),
     "game.projection": (
-        "the model makes {favourite} a {probability:.1%} favourite, which is the "
+        "the model makes {favorite} a {probability:.1%} favorite, which is the "
         "{percentile_ord} percentile of how confident it ever gets",
-        "{favourite} projects at {probability:.1%}, sitting at the {percentile_ord} "
+        "{favorite} projects at {probability:.1%}, sitting at the {percentile_ord} "
         "percentile of this model's own range",
     ),
     "game.driver": (

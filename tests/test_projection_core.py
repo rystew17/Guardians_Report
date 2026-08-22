@@ -108,7 +108,7 @@ def test_a_new_season_regresses_ratings_toward_the_mean():
     """Carry is applied at the boundary, and it must pull toward 1500.
 
     A carry that pushed away from the mean would compound every year, and the
-    first place it would show is a preseason favourite rated 1900.
+    first place it would show is a preseason favorite rated 1900.
     """
     history = _games([_game(1, 2, 9, 1, season=2023)] * 20)
     earned = elo.fit_state(history, elo.EloParams(carry=0.75)).ratings[1]

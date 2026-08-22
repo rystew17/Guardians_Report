@@ -41,7 +41,7 @@ SAVANT_BASE = "https://baseballsavant.mlb.com"
 FORM_WINDOWS = (5, 15, 30)
 
 # Situational split codes understood by statsapi's statSplits endpoint. The
-# full catalogue runs to 602 codes; these are the ones that change a decision.
+# full catalog runs to 602 codes; these are the ones that change a decision.
 SPLIT_VS_LHP = "vl"
 SPLIT_VS_RHP = "vr"
 SPLIT_HOME = "h"

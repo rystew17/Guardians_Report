@@ -162,6 +162,12 @@ class ReportBundle:
     # the analysis layer is additive and never blocks a build.
     analyses: dict[str, Any] = field(default_factory=dict)
     analysis_summary: dict[str, Any] = field(default_factory=dict)
+    # League-wide leaderboard values, kept as populations rather than only as
+    # the means beside each box. A player's speed and defense have to be graded
+    # against every other player, and twenty-six men on one card is not a
+    # league -- so the arrays travel with the bundle rather than being refetched
+    # by whatever needs to rank against them.
+    savant_populations: dict[str, list[float]] = field(default_factory=dict)
     # League benchmarks for the Savant blocks, keyed by block name, so every
     # displayed stat has something to be measured against.
     savant_benchmarks: dict[str, dict[str, float | None]] = field(
@@ -788,6 +794,24 @@ def build_preview(
         "fielding": la.leaderboard_means(fielding_rows, FIELDING_FIELDS),
     }
 
+    def _population(rows, field_name: str) -> list[float]:
+        values = []
+        for row in rows:
+            raw = row.get(field_name)
+            try:
+                if raw not in (None, ""):
+                    values.append(float(raw))
+            except (TypeError, ValueError):
+                continue
+        return values
+
+    savant_populations = {
+        "sprint_speed": _population(sprint_rows, "sprint_speed"),
+        "outs_above_average": _population(fielding_rows, "outs_above_average"),
+        "fielding_runs_prevented": _population(
+            fielding_rows, "fielding_runs_prevented"),
+    }
+
     pitcher_arsenal = sv.group_by_player(pitcher_arsenal_rows)
     batter_arsenal = sv.group_by_player(batter_arsenal_rows)
     league_pitch_thrown = sv.league_average_by_pitch_type(pitcher_arsenal_rows)
@@ -1194,6 +1218,7 @@ def build_preview(
         league=league, league_hitting=league_hitting, league_pitching=league_pitching,
         provenance=[r.provenance() for r in archiver.written],
         savant_benchmarks=savant_benchmarks,
+        savant_populations=savant_populations,
         series_boxes=series_boxes,
         projection=projection,
         series=tc.parse_series(

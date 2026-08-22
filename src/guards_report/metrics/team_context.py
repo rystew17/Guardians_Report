@@ -119,7 +119,7 @@ class RankedStat:
 
     @property
     def rank_class(self) -> str:
-        """Bucket for colour coding. Rank 1 is always best, by construction."""
+        """Bucket for color coding. Rank 1 is always best, by construction."""
         if self.rank is None:
             return "rank-none"
         if self.rank <= 5:

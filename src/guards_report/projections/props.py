@@ -65,7 +65,7 @@ DEFAULT_STABILISATION = {
     "strikeout": 55,
 }
 
-# Pitchers stabilise on a different schedule, most sharply for home runs -- a
+# Pitchers stabilize on a different schedule, most sharply for home runs -- a
 # pitcher's home-run rate is mostly the hitters he faced and the park.
 PITCHER_STABILISATION = {
     "hit": 455,
@@ -145,7 +145,7 @@ def fit_rates(
 ) -> RateModel:
     """Shrunk career rates for every batter and pitcher in the frame.
 
-    The posterior mean under a beta prior centred on the league rate, which is
+    The posterior mean under a beta prior centered on the league rate, which is
     the same empirical-Bayes shrinkage the talent model uses and reduces to
     (successes + k*league) / (chances + k).
     """

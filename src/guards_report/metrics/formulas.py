@@ -290,7 +290,7 @@ def siera(
     from Statcast batted-ball data.
 
     The squared net-ground-ball term flips sign depending on whether the
-    pitcher leans ground-ball or fly-ball. That piecewise behaviour is part of
+    pitcher leans ground-ball or fly-ball. That piecewise behavior is part of
     the published specification, not a simplification on our side.
     """
     if plate_appearances == 0:

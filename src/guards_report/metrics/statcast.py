@@ -315,7 +315,7 @@ HOME_Y = 198.27
 @dataclass
 class SprayPoint:
     x: float          # feet, negative toward left field
-    y: float          # feet, toward centre field
+    y: float          # feet, toward center field
     outcome: str      # single | double | triple | home_run | out
     bb_type: str
     exit_velocity: float | None

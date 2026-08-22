@@ -88,8 +88,8 @@ def refresh(model: OutcomeModel, *, on: date, cache_dir: Path) -> tuple[OutcomeM
                     elo_state.ratings[team] - elo.MEAN_RATING
                 )
             for team in list(od):
-                offence, defence = od[team]
-                od[team] = (offence * od_params.carry, defence * od_params.carry)
+                offence, defense = od[team]
+                od[team] = (offence * od_params.carry, defense * od_params.carry)
             carried += 1
 
         games = current_season_games(season, cache_dir=cache_dir)

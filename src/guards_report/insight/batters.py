@@ -128,7 +128,7 @@ def spray_tendency(
     *, batter_id: int, plate: pd.DataFrame, league_pull: pd.Series,
     minimum: int = 50,
 ) -> list[Finding]:
-    """Whether he pulls the ball, which decides where a defence stands.
+    """Whether he pulls the ball, which decides where a defense stands.
 
     Spray angle is computed from the landing coordinates and signed by
     handedness, so "pull" means the same thing for a left-handed hitter as a
@@ -164,7 +164,7 @@ def plate_discipline(
 ) -> list[Finding]:
     """Whether he swings at pitches he should not, and whether he connects.
 
-    Chase rate is the clearest single read on approach and it stabilises fast,
+    Chase rate is the clearest single read on approach and it stabilizes fast,
     so it survives shrinkage where a batting average would not.
     """
     own = plate[plate["batter"] == int(batter_id)]

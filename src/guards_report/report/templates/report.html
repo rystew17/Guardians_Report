@@ -154,6 +154,29 @@
   .tr { font-size:.7rem; font-weight:750; }
   .tr-up { color:var(--good); } .tr-down { color:var(--bad); } .tr-flat { color:var(--faint); }
 
+  /* ---------- player dossier ---------- */
+  .ltags { display:flex; flex-wrap:wrap; gap:var(--sp-1); margin:0 0 var(--sp-2); }
+  .ltag { font-size:.6rem; font-weight:700; text-transform:uppercase;
+          letter-spacing:.04em; padding:.14rem .42rem; border-radius:4px;
+          background:var(--panel); color:var(--muted);
+          border:1px solid var(--border); white-space:nowrap; }
+  /* A definition list because that is what this is -- three named parts, each
+     answering a different question. The labels carry the structure so the
+     reader can go straight to the one they came for. */
+  .lparts { display:grid; grid-template-columns:auto 1fr; gap:.2rem var(--sp-2);
+            margin:0 0 var(--sp-2); align-items:baseline; }
+  .lparts dt { font-size:.6rem; font-weight:750; text-transform:uppercase;
+               letter-spacing:.05em; color:var(--faint); white-space:nowrap; }
+  .lparts dd { margin:0; font-size:.82rem; line-height:1.5; color:var(--ink); }
+  /* The evaluator sentence sits beneath the note as supporting detail, so it
+     is set quieter than the part it supports. */
+  .lsub { font-size:.78rem; color:var(--muted); padding-top:var(--sp-1);
+          border-top:1px solid var(--border); }
+  @media (max-width:640px) {
+    .lparts { grid-template-columns:1fr; gap:.05rem; }
+    .lparts dt { margin-top:var(--sp-1); }
+  }
+
   /* ---------- percentile chips ---------- */
   .pcts { display:grid; grid-template-columns:repeat(auto-fit,minmax(58px,1fr)); gap:var(--sp-1); }
   .pchip { text-align:center; border-radius:6px; padding:.3rem .2rem; border:1px solid var(--border); }
@@ -161,7 +184,7 @@
                font-variant-numeric:tabular-nums; }
   .pchip .pl { display:block; font-size:.56rem; text-transform:uppercase;
                letter-spacing:.03em; color:var(--muted); margin-top:.05rem; }
-  /* Text colour follows the chip's lightness, not its meaning. The ramp is
+  /* Text color follows the chip's lightness, not its meaning. The ramp is
      diverging -- red at one end, blue at the other, pale through the middle --
      so white text held across all five put 2.56:1 on the orange chip and 2.74:1
      on the pale blue, both well under the 4.5:1 a label this size needs. Dark
@@ -686,7 +709,25 @@
     </span>{% endif %}
   </div>
   {% if a %}
-  <div class="la">{{ a.text }}</div>
+    {%- if a.labels %}
+    <div class="ltags">
+      {%- for label in a.labels %}<span class="ltag">{{ label }}</span>{% endfor -%}
+    </div>
+    {%- endif %}
+    {%- if a.parts %}
+    {#- The three-part note, in reading order: who he is, how he is going,
+        how tonight sets up. Not sorted by significance -- "hitting .190 over
+        ten games" means something different about a slugger than about a
+        fringe bat, so the profile has to come first for the rest to land. -#}
+    <dl class="lparts">
+      {%- for name, text in a.parts %}
+      <dt>{{ name }}</dt><dd>{{ text }}</dd>
+      {%- endfor %}
+    </dl>
+    {%- endif %}
+    {%- if a.text %}
+    <div class="la{{ ' lsub' if a.parts }}">{{ a.text }}</div>
+    {%- endif %}
   {% else %}
   <div class="lp">Nothing on this player clears the evidence the report requires &mdash; which is the honest answer more often than not.</div>
   {% endif %}
@@ -1217,14 +1258,14 @@
     team &mdash; a real edge, and a small one. Across
     {{ '{:,}'.format(lr.n_games) }} games since 2015,
     {{ (lr.one_run_game * 100)|round(0)|int }}% were decided by a single run. Read
-    the spread, not the centre.
+    the spread, not the center.
   </div>
 
   {#- ---------- the call, and how sure it is by this model's standards ---------- -#}
   <h3 class="lab">The call</h3>
   {% if rd.sentence %}
   <p class="pread">
-    <strong>{{ pj.favourite }} {{ (pj.confidence * 100)|round(1) }}%</strong>
+    <strong>{{ pj.favorite }} {{ (pj.confidence * 100)|round(1) }}%</strong>
     &mdash; {{ rd.sentence }}{% if rd.note %}; {{ rd.note }}{% endif %}.
   </p>
   {% endif %}
@@ -1258,7 +1299,7 @@
         <strong>{{ pj.confidence_percentile|round(0)|int|rank_ordinal }} percentile</strong> of every call this model has ever made. Its range across
         {{ '{:,}'.format(lr.n_games) }} games runs from a coin flip to about 83%, and
         six nights in ten land between 45% and 65% &mdash; so most nights this page
-        will say the home team is a slight favourite, and that is the honest answer.
+        will say the home team is a slight favorite, and that is the honest answer.
       </p>
     </figure>
 
@@ -1269,7 +1310,7 @@
         Updated after every game since 2015 and carried forward through
         {{ pj.ratings_note.ratings_through }}. It supplies about 59% of the movement
         in the win model &mdash; more than every starter input combined &mdash; and
-        already contains much of what a bullpen or a defence contributes, which is
+        already contains much of what a bullpen or a defense contributes, which is
         why those added nothing when tested separately.
       </p>
     </figure>
@@ -1316,7 +1357,7 @@
         be checked against each other by eye rather than on trust.
       </p>
       <p>
-        The two tallest bars sit either side of centre. That is where most of
+        The two tallest bars sit either side of center. That is where most of
         baseball's unpredictability lives, and it is the reason a model this well
         calibrated still only reaches
         {{ (wm.accuracy * 100)|round(1) }}% &mdash; a one-run game is close to a coin
@@ -1491,7 +1532,7 @@
     identical hitters. Rates are shrunk toward the league by how much evidence
     supports them &mdash; hit rate only settles after roughly 475 plate appearances,
     home-run rate after 193, so a hot fortnight moves these less than it might seem
-    it should. Rows in grey rest on thin samples.
+    it should. Rows in gray rest on thin samples.
     <br>Measured against 2024&ndash;25, hit totals run about 0.02 high on average and
     0.05 high in the ninth slot. That gradient is a property of the method rather
     than a defect: shrinking every rate toward the league mean necessarily

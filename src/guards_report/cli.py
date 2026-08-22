@@ -53,6 +53,13 @@ def attach_computed_analysis(bundle, settings, *, on) -> dict:
         text: str
         findings: int = 0
         verification: _Verification = field(default_factory=_Verification)
+        # The three-part note, when the player qualified for one. The template
+        # leads with these and keeps `text` beneath as the supporting detail --
+        # the evaluator sentence says what is unusual about him, which is worth
+        # having once the reader knows who he is.
+        parts: list = field(default_factory=list)
+        tier: str = ""
+        labels: list = field(default_factory=list)
 
     try:
         analysis = insight_card.analyse(
@@ -63,8 +70,11 @@ def attach_computed_analysis(bundle, settings, *, on) -> dict:
         return {}
 
     entries = {}
-    for player_id, text in analysis.subjects.items():
+    subjects = set(analysis.subjects) | set(analysis.dossiers)
+    for player_id in subjects:
+        text = analysis.subjects.get(player_id, "")
         found = analysis.findings.get(player_id, 0)
+        note = analysis.dossiers.get(player_id)
         verification = _Verification(
             ok=True, checked=found,
             summary=f"{found} criteria computed from the pitch corpus; "
@@ -74,6 +84,9 @@ def attach_computed_analysis(bundle, settings, *, on) -> dict:
             entries[f"{prefix}-{player_id}"] = _Computed(
                 subject_id=f"{prefix}-{player_id}", text=text,
                 findings=found, verification=verification,
+                parts=list(note.parts) if note else [],
+                tier=note.tier if note else "",
+                labels=list(note.labels) if note else [],
             )
 
     if analysis.matchup:
@@ -93,12 +106,14 @@ def attach_computed_analysis(bundle, settings, *, on) -> dict:
         "coverage": analysis.coverage,
         "seconds": round(analysis.seconds, 1),
         "warnings": len(analysis.warnings),
+        "profiled": len(analysis.dossiers),
     }
     for warning in analysis.warnings[:3]:
         print(f"  warning: {warning}", file=sys.stderr)
     print(
         f"  computed analysis: {analysis.covered}/{analysis.attempted} subjects "
-        f"({analysis.coverage:.0%}) in {analysis.seconds:.0f}s",
+        f"({analysis.coverage:.0%}), {len(analysis.dossiers)} profiled, "
+        f"in {analysis.seconds:.0f}s",
         file=sys.stderr,
     )
     return bundle.analysis_summary

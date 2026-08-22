@@ -175,7 +175,7 @@ def recent_regulars(
     """Best guess at a lineup when none has been posted.
 
     The most frequent starter in each slot over the club's last few games. This
-    is a guess and is labelled as one -- it is right about the shape of a lineup
+    is a guess and is labeled as one -- it is right about the shape of a lineup
     and wrong about exactly who is resting today, which is the very thing the
     posted card would tell us.
     """

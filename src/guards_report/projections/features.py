@@ -40,7 +40,7 @@ from guards_report.projections import elo
 #
 # Dropping it improved log loss (0.67687 -> 0.67668) and left every coefficient
 # interpretable. The defensive signal RA/9 was standing in for is measured
-# properly at team level in the defence block instead.
+# properly at team level in the defense block instead.
 STARTER_METRICS = ("fip", "k_pct", "bb_pct", "ip_per_start")
 
 MIN_PRIOR_IP = 10.0

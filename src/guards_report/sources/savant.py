@@ -204,7 +204,7 @@ def percentile_rankings(
     """League percentile ranks (0-100) for the headline Statcast metrics.
 
     These are what Savant's familiar red-and-blue player sliders show. They are
-    already normalised to the league, so they communicate context far faster
+    already normalized to the league, so they communicate context far faster
     than a raw rate does.
     """
     return _leaderboard(

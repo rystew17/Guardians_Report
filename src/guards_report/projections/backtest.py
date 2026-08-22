@@ -137,7 +137,7 @@ def walk_forward(frame, *, min_train_seasons: int = 3) -> Iterator[tuple[Any, An
 
 
 def summarize(per_season: dict[int, Metrics]) -> dict[str, float]:
-    """Pool fold results, reporting spread as well as centre.
+    """Pool fold results, reporting spread as well as center.
 
     The standard deviation across folds is the honest part: a mean log loss that
     looks like an improvement but swings wildly year to year has not established

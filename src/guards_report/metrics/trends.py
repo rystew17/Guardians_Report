@@ -10,7 +10,7 @@ costs no extra requests, since the game logs are already fetched.
 Sample size is the more serious one. A .203 OPS in 39 plate appearances renders
 with the same visual weight as a 500-PA line unless something is done about it,
 which invites confident conclusions from noise. We attach a reliability band to
-every rate so the renderer can de-emphasise thin samples rather than hide them.
+every rate so the renderer can de-emphasize thin samples rather than hide them.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from guards_report.metrics.windows import GameLogRow, _to_int
 # ---------------------------------------------------------------------------
 # Sample size
 # ---------------------------------------------------------------------------
-# Thresholds are the widely used points at which a rate stabilises -- the
+# Thresholds are the widely used points at which a rate stabilizes -- the
 # sample where roughly half the observed variation is signal. They are rules of
 # thumb, not precise constants, so they are used only to grade confidence for
 # display and never to alter a number.

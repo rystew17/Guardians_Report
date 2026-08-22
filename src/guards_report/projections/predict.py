@@ -73,7 +73,7 @@ def lineup_value(batters, talent, *, weights, stands=None):
     """Slot-weighted mean of the lineup's batter *effects*.
 
     Effects, not absolute run values. Training builds this column from
-    `running_scores`, which returns deviations from the league mean centred near
+    `running_scores`, which returns deviations from the league mean centered near
     zero; adding the intercept here instead would hand the model a number four
     tenths larger than anything it was fitted on. With a coefficient of +4.4 that
     is not a small drift -- it multiplies projected runs by four.
@@ -165,7 +165,7 @@ class Projection:
         return abs(self.win_probability - self.implied_win_probability) < 0.10
 
     @property
-    def favourite(self) -> str:
+    def favorite(self) -> str:
         return self.home.team if self.win_probability >= 0.5 else self.away.team
 
     @property
@@ -403,7 +403,7 @@ def read_of(projection: Projection) -> dict[str, Any]:
     if not rows:
         return {}
 
-    favoured = projection.favourite
+    favoured = projection.favorite
     top = rows[0]
     second = rows[1] if len(rows) > 1 else None
     label = FEATURE_LABELS.get(top["name"], top["name"])
@@ -456,5 +456,5 @@ def read_of(projection: Projection) -> dict[str, Any]:
         "top_share": top_share,
         "starter_push": starter_push,
         "rating_push": rating_push,
-        "favourite": favoured,
+        "favorite": favoured,
     }

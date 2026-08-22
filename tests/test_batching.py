@@ -71,7 +71,7 @@ def test_unparseable_reply_yields_nothing_rather_than_guessing():
 
 
 # ---------------------------------------------------------------------------
-# Batching behaviour
+# Batching behavior
 # ---------------------------------------------------------------------------
 
 

@@ -122,10 +122,10 @@ def delta_html(entry: dict[str, Any] | None, *, style: str = "rate3") -> Markup:
 def zone_cell_style(grid: ZoneGrid, cell: ZoneCell) -> str:
     """Background shading for one heat-map cell.
 
-    Prefers the colour MLB supplies with the zone, so the map matches what the
+    Prefers the color MLB supplies with the zone, so the map matches what the
     same player looks like on MLB and Savant and the shading stays a sourced
     value. Falls back to a blue-to-red scale over the player's own range only
-    when the source omits a colour.
+    when the source omits a color.
     """
     if cell.color:
         # MLB sends these at .55 alpha for overlay on a white field; opaque
@@ -144,7 +144,7 @@ def zone_cell_style(grid: ZoneGrid, cell: ZoneCell) -> str:
 
 
 def _opaque(color: str) -> str:
-    """Raise an rgba() colour's alpha so it reads clearly as a filled cell."""
+    """Raise an rgba() color's alpha so it reads clearly as a filled cell."""
     text = color.strip()
     if not text.startswith("rgba"):
         return text
@@ -231,7 +231,7 @@ def statcast_zone_style(chart: Any, code: str) -> str:
 
     Scaled to the player's own range so the map answers "where is he strong
     relative to himself". Cells with almost no sample behind them stay neutral
-    rather than being painted a confident colour on three plate appearances.
+    rather than being painted a confident color on three plate appearances.
 
     Swing and strikeout rates are inverted: a high chase rate is a weakness,
     and colouring it red would tell the reader the opposite of the truth.
@@ -267,7 +267,7 @@ def zone_value(chart: Any, code: str) -> str:
     return rate3(value)
 
 
-# Outcome colours for the spray chart. Outs stay quiet so hits carry the eye.
+# Outcome colors for the spray chart. Outs stay quiet so hits carry the eye.
 SPRAY_COLORS = {
     "out": ("#9aa4af", 2.3),
     "single": ("#2f7d4f", 3.4),
@@ -561,7 +561,7 @@ def waterfall_svg(
     label_w, pad, gutter = 210, 8, 54
     values = [r["contribution"] for r in major]
 
-    # A centred zero line is only worth its cost when the chart actually
+    # A centered zero line is only worth its cost when the chart actually
     # diverges. When every input pushes the same way -- which is common, since
     # one club is usually better on most counts -- centring throws away half the
     # canvas and squeezes the bars into the remainder.
@@ -590,7 +590,7 @@ def waterfall_svg(
         y = pad + i * row
         bar = max(span * abs(value) / peak, 1.0)
         favours_home = value > 0
-        colour = HOME_INK if favours_home else AWAY_INK
+        color = HOME_INK if favours_home else AWAY_INK
         x = axis if favours_home else axis - bar
         label = r.get("_label") or FEATURE_LABELS.get(r["name"], r["name"])
         if r.get("imputed"):
@@ -612,7 +612,7 @@ def waterfall_svg(
         )
         parts.append(
             f'<rect x="{x:.1f}" y="{y + 5:.1f}" width="{bar:.1f}" '
-            f'height="{row - 10}" rx="1.5" fill="{colour}" opacity="{opacity}">'
+            f'height="{row - 10}" rx="1.5" fill="{color}" opacity="{opacity}">'
             f'<title>{label}: {value:+.3f} log-odds toward '
             f'{home if favours_home else away}</title></rect>'
         )
@@ -630,7 +630,7 @@ def waterfall_svg(
         f'stroke="var(--ink)" stroke-width="1" opacity="0.55"/>'
     )
     # Only name the directions the chart actually uses; a one-sided chart
-    # labelled with both invites the reader to look for bars that are not there.
+    # labeled with both invites the reader to look for bars that are not there.
     if diverges:
         parts.append(
             f'<text class="sgl" x="{axis - 8:.1f}" y="{base + 15:.1f}" '
@@ -689,14 +689,14 @@ def margin_svg(
         x = left + i * step
         y = top + plot_h - bar
         favours_home = m > 0
-        colour = HOME_INK if favours_home else AWAY_INK
+        color = HOME_INK if favours_home else AWAY_INK
         # One-run games are the single most likely outcome band in baseball and
         # the reason this model cannot do better; they get the emphasis.
         opacity = "0.95" if abs(m) == 1 else "0.6"
         edge = "&ge;" if m == limit else ("&le;" if m == -limit else "")
         parts.append(
             f'<rect x="{x + 1:.1f}" y="{y:.1f}" width="{step - 2:.1f}" '
-            f'height="{bar:.1f}" rx="1.5" fill="{colour}" opacity="{opacity}">'
+            f'height="{bar:.1f}" rx="1.5" fill="{color}" opacity="{opacity}">'
             f'<title>{home if favours_home else away} by {edge}{abs(m)}: '
             f'{p * 100:.1f}%</title></rect>'
         )
@@ -760,14 +760,14 @@ def runs_by_side_svg(
     ]
     for runs in range(limit + 1):
         x = left + runs * step
-        for offset, rows, colour, team in (
+        for offset, rows, color, team in (
             (0, home_rows, HOME_INK, home), (bar_w + 1, away_rows, AWAY_INK, away)
         ):
             p = rows.get(runs, 0.0)
             bar = plot_h * (p / peak)
             parts.append(
                 f'<rect x="{x + 1 + offset:.1f}" y="{top + plot_h - bar:.1f}" '
-                f'width="{bar_w:.1f}" height="{bar:.1f}" rx="1" fill="{colour}" '
+                f'width="{bar_w:.1f}" height="{bar:.1f}" rx="1" fill="{color}" '
                 f'opacity="0.8"><title>{team} scores '
                 f'{"9+" if runs == limit else runs}: {p * 100:.1f}%</title></rect>'
             )
@@ -778,14 +778,14 @@ def runs_by_side_svg(
                 f'{f"{runs}+" if runs == limit else runs}</text>'
             )
 
-    for i, (team, colour, mu) in enumerate((
+    for i, (team, color, mu) in enumerate((
         (home, HOME_INK, projection.score["exp_home_runs"]),
         (away, AWAY_INK, projection.score["exp_away_runs"]),
     )):
         x = left + i * 210
         parts.append(
             f'<rect x="{x}" y="{height - 13}" width="9" height="7" rx="1" '
-            f'fill="{colour}" opacity="0.8"/>'
+            f'fill="{color}" opacity="0.8"/>'
         )
         parts.append(
             f'<text class="sgl" x="{x + 13}" y="{height - 6}">'
@@ -905,7 +905,7 @@ def rate_compare(tonight: float, typical: float, *, width: int = 110) -> Markup:
 
 
 def elo_scale_svg(projection: Any, home: str, away: str, *, width: int = 520) -> Markup:
-    """Both clubs on the rating scale, with the league centred.
+    """Both clubs on the rating scale, with the league centered.
 
     Kept prominent because it earns it: the team rating supplies 59% of the
     movement in the win model, more than every starter input combined.
@@ -930,15 +930,15 @@ def elo_scale_svg(projection: Any, home: str, away: str, *, width: int = 520) ->
         f'<text class="sgl" x="{x_of(1500):.1f}" y="{axis + 18}" '
         f'text-anchor="middle">league average</text>',
     ]
-    for rating, label, colour in (
+    for rating, label, color in (
         (projection.home.elo, home, HOME_INK),
         (projection.away.elo, away, AWAY_INK),
     ):
         x = x_of(rating)
-        parts.append(f'<circle cx="{x:.1f}" cy="{axis}" r="5.5" fill="{colour}"/>')
+        parts.append(f'<circle cx="{x:.1f}" cy="{axis}" r="5.5" fill="{color}"/>')
         parts.append(
             f'<text class="elolab" x="{x:.1f}" y="{axis - 13}" '
-            f'text-anchor="middle" fill="{colour}">{label} {rating:.0f}</text>'
+            f'text-anchor="middle" fill="{color}">{label} {rating:.0f}</text>'
         )
     parts.append("</svg>")
     return Markup("".join(parts))
@@ -988,11 +988,11 @@ def three_way_bar(first_five: Any, home: str, away: str, *, width: int = 600) ->
         (first_five.home_leads, HOME_INK, f"{home} {first_five.home_leads * 100:.0f}%"),
     )
     x = 0.0
-    for share, colour, text in segments:
+    for share, color, text in segments:
         span = width * max(share, 0.0)
         parts.append(
             f'<rect x="{x:.1f}" y="0" width="{max(span, 1):.1f}" height="{height}" '
-            f'fill="{colour}" opacity="0.85"><title>{text}</title></rect>'
+            f'fill="{color}" opacity="0.85"><title>{text}</title></rect>'
         )
         if span > 58:
             parts.append(

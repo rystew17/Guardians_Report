@@ -84,15 +84,15 @@ def _detail(findings, code) -> dict:
 def test_the_favourite_is_the_side_the_probability_actually_favours():
     home = matchup.from_projection(_Projection(win_probability=0.567), "CLE", "COL")
     away = matchup.from_projection(_Projection(win_probability=0.433), "CLE", "COL")
-    assert _detail(home, "game.projection")["favourite"] == "CLE"
-    assert _detail(away, "game.projection")["favourite"] == "COL"
+    assert _detail(home, "game.projection")["favorite"] == "CLE"
+    assert _detail(away, "game.projection")["favorite"] == "COL"
 
 
 def test_confidence_is_the_distance_from_a_coin_flip_not_the_home_probability():
     """0.433 is not 43% confidence — it is 57% confidence in the away side.
 
     Reporting the raw home number as the strength of the call would describe
-    every away favourite as a game the model is unsure about.
+    every away favorite as a game the model is unsure about.
     """
     findings = matchup.from_projection(_Projection(win_probability=0.433), "CLE", "COL")
     assert _detail(findings, "game.projection")["probability"] == pytest.approx(0.567)
@@ -203,7 +203,7 @@ def test_the_key_bat_is_the_best_chance_across_both_lineups():
 def test_a_thin_projection_cannot_be_the_key_bat():
     """A callup with four plate appearances will out-project everyone.
 
-    The props layer marks those thin, and the matchup note has to honour it —
+    The props layer marks those thin, and the matchup note has to honor it —
     naming the least-known hitter on the card as the man to watch is precisely
     the small-sample failure this package exists to prevent.
     """
@@ -238,7 +238,7 @@ def test_the_paragraph_reads_in_reading_order_not_significance_order():
         "away": _Strikeouts(name="Hughes", expected=9.9),
     }), "CLE", "COL")
 
-    # Lowercased because a finding that opens its sentence gets capitalised,
+    # Lowercased because a finding that opens its sentence gets capitalized,
     # so the driver label's case depends on which template variant it drew.
     text = matchup.paragraph(list(reversed(findings))).lower()
     # Every probe is content common to all of a finding's phrasings. Which

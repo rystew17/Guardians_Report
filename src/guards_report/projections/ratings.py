@@ -1,6 +1,6 @@
 """Team rating systems — candidate backbones for the outcome models.
 
-Standard Elo rates a team with one number. That is a real modelling assumption,
+Standard Elo rates a team with one number. That is a real modeling assumption,
 and on this problem a questionable one: a club that scores six and allows five
 gets the same rating as one that scores four and allows three, but they are not
 the same opponent, and they are certainly not the same opponent *for a given
@@ -14,7 +14,7 @@ inherited:
 * `run_elo`   — one scalar per team, updated on run differential rather than
                 the binary result, so a one-run win and a blowout are not
                 treated as identical evidence.
-* `off_def`   — two ratings per team, offence and defence, in runs-per-game
+* `off_def`   — two ratings per team, offence and defense, in runs-per-game
                 units. Predicts each side's runs separately, which is the
                 structure the score model needs anyway.
 
@@ -88,17 +88,17 @@ def run_elo(frame, params: RunEloParams) -> tuple[np.ndarray, np.ndarray]:
 
 
 def off_def(frame, params: OffDefParams) -> dict[str, np.ndarray]:
-    """Separate offence and defence ratings, in runs per game.
+    """Separate offence and defense ratings, in runs per game.
 
     Each side's expected runs come from one team's offence meeting the other's
-    defence, which is the structure the game actually has. Updating offence and
-    defence from the *same* residual is deliberate: when a team scores seven,
+    defense, which is the structure the game actually has. Updating offence and
+    defense from the *same* residual is deliberate: when a team scores seven,
     the evidence is genuinely ambiguous between a good offence and a bad
-    opposing defence, and splitting the credit evenly is the honest encoding of
+    opposing defense, and splitting the credit evenly is the honest encoding of
     that ambiguity rather than a claim about which it was.
     """
     offence: dict[int, float] = {}
-    defence: dict[int, float] = {}
+    defense: dict[int, float] = {}
     seasons: dict[int, int] = {}
 
     n = len(frame)
@@ -121,14 +121,14 @@ def off_def(frame, params: OffDefParams) -> dict[str, np.ndarray]:
         h, a, s = int(home_ids[i]), int(away_ids[i]), int(season[i])
         for team in (h, a):
             if team not in offence:
-                offence[team], defence[team], seasons[team] = 0.0, 0.0, s
+                offence[team], defense[team], seasons[team] = 0.0, 0.0, s
             elif seasons[team] != s:
                 offence[team] *= params.carry
-                defence[team] *= params.carry
+                defense[team] *= params.carry
                 seasons[team] = s
 
-        eh = league + offence[h] + defence[a] + params.hfa
-        ea = league + offence[a] + defence[h]
+        eh = league + offence[h] + defense[a] + params.hfa
+        ea = league + offence[a] + defense[h]
         eh, ea = max(eh, 0.5), max(ea, 0.5)
 
         exp_home[i], exp_away[i] = eh, ea
@@ -137,11 +137,11 @@ def off_def(frame, params: OffDefParams) -> dict[str, np.ndarray]:
         ah, aa = float(home_runs[i]), float(away_runs[i])
         res_h, res_a = ah - eh, aa - ea
 
-        # Home scoring is evidence about home offence and away defence alike.
+        # Home scoring is evidence about home offence and away defense alike.
         offence[h] += params.k_off * res_h
-        defence[a] += params.k_def * res_h
+        defense[a] += params.k_def * res_h
         offence[a] += params.k_off * res_a
-        defence[h] += params.k_def * res_a
+        defense[h] += params.k_def * res_a
 
         league = decay * league + (1 - decay) * ((ah + aa) / 2.0)
 
@@ -154,9 +154,9 @@ def off_def(frame, params: OffDefParams) -> dict[str, np.ndarray]:
 
 
 def final_off_def(frame, params: OffDefParams) -> dict[int, tuple[float, float]]:
-    """Offence/defence ratings after walking the frame, for live prediction."""
+    """Offence/defense ratings after walking the frame, for live prediction."""
     offence: dict[int, float] = {}
-    defence: dict[int, float] = {}
+    defense: dict[int, float] = {}
     seasons: dict[int, int] = {}
     league = LEAGUE_MEAN_RUNS
 
@@ -164,20 +164,20 @@ def final_off_def(frame, params: OffDefParams) -> dict[int, tuple[float, float]]
         h, a, s = int(row.home_team_id), int(row.away_team_id), int(row.season)
         for team in (h, a):
             if team not in offence:
-                offence[team], defence[team], seasons[team] = 0.0, 0.0, s
+                offence[team], defense[team], seasons[team] = 0.0, 0.0, s
             elif seasons[team] != s:
                 offence[team] *= params.carry
-                defence[team] *= params.carry
+                defense[team] *= params.carry
                 seasons[team] = s
 
-        eh = max(league + offence[h] + defence[a] + params.hfa, 0.5)
-        ea = max(league + offence[a] + defence[h], 0.5)
+        eh = max(league + offence[h] + defense[a] + params.hfa, 0.5)
+        ea = max(league + offence[a] + defense[h], 0.5)
         res_h, res_a = float(row.home_runs) - eh, float(row.away_runs) - ea
 
         offence[h] += params.k_off * res_h
-        defence[a] += params.k_def * res_h
+        defense[a] += params.k_def * res_h
         offence[a] += params.k_off * res_a
-        defence[h] += params.k_def * res_a
+        defense[h] += params.k_def * res_a
         league = 0.999 * league + 0.001 * ((row.home_runs + row.away_runs) / 2.0)
 
-    return {t: (offence[t], defence[t]) for t in offence}
+    return {t: (offence[t], defense[t]) for t in offence}

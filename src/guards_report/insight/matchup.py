@@ -42,7 +42,7 @@ def from_projection(projection: Any, home: str, away: str) -> list[Finding]:
 
     findings: list[Finding] = []
     win = float(projection.win_probability)
-    favourite = home if win >= 0.5 else away
+    favorite = home if win >= 0.5 else away
     confidence = max(win, 1 - win)
 
     reference = projection.reference or {}
@@ -53,7 +53,7 @@ def from_projection(projection: Any, home: str, away: str) -> list[Finding]:
         value=confidence - 0.5,
         reference=Reference(mean=0.0, sd=spread, population="model_history"),
         detail={
-            "favourite": favourite,
+            "favorite": favorite,
             "probability": confidence,
             "percentile": float(getattr(projection, "confidence_percentile", 50.0)),
             "coherent": bool(projection.coherent),

@@ -181,7 +181,7 @@ def as_of_table(logs, *, league_hr_fb: float = 0.135):
         )
         out.loc[mask, "fip"] = out.loc[mask, "fip"] + constant
 
-    # The defence playing behind him. Positive means more runs are scoring than
+    # The defense playing behind him. Positive means more runs are scoring than
     # his fielding-independent line accounts for.
     out["era_minus_fip"] = out["era"] - out["fip"]
     out["ra9_minus_fip"] = out["ra9"] - out["fip"]
