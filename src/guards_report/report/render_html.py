@@ -395,13 +395,17 @@ def _add_table_semantics(html: str) -> str:
 
     A `<th>` inside `<thead>` labels a column; one elsewhere labels its row.
     """
-    def scope_for(match: re.Match) -> str:
-        return match.group(0).replace("<th", '<th scope="col"', 1)
-
-    def in_body(match: re.Match) -> str:
-        return match.group(0).replace("<th", '<th scope="row"', 1)
-
-    html = re.sub(r"<th(?![^>]*scope=)", '<th scope="col"', html)
+    # `<th` is a prefix of `<thead`, so a pattern that does not require a
+    # delimiter after it rewrites every opening `<thead>` into
+    # `<th scope="col"ead>`. Browsers recover from that by closing the malformed
+    # cell and starting the table with a stray empty header row -- which renders
+    # as a thin band above the real header and is easy to read as a style
+    # choice. It had corrupted all 218 table headers in the document, and the
+    # only visible trace was that band.
+    #
+    # The lookahead for whitespace or `>` is the whole fix; the negative
+    # lookahead below only avoids double-scoping a cell that already has one.
+    html = re.sub(r"<th(?=[\s>])(?![^>]*scope=)", '<th scope="col"', html)
     return html
 
 

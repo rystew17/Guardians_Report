@@ -154,6 +154,15 @@
   .tr { font-size:.7rem; font-weight:750; }
   .tr-up { color:var(--good); } .tr-down { color:var(--bad); } .tr-flat { color:var(--faint); }
 
+  /* Paired comparison tables: fixed layout so the offense and run-prevention
+     blocks share one column grid. `min-width` in rem rather than max-content,
+     because max-content is what let each table pick its own widths. */
+  .tcmp { table-layout:fixed; min-width:26rem; }
+  .tcmp col.m { width:34%; }
+  .tcmp col.v { width:17%; }
+  .tcmp col.r { width:16%; }
+  .tcmp td.l, .tcmp th.l { overflow:hidden; text-overflow:ellipsis; }
+
   /* ---------- glossary ---------- */
   .gloss { margin-top:var(--sp-6); border-top:1px solid var(--border);
            padding-top:var(--sp-3); }
@@ -1296,7 +1305,15 @@
   {% for group, label in [('hitting','Offense'), ('pitching','Run prevention')] %}
   <h4>{{ label }} — league rank of 30</h4>
   <div class="scroll">
-    <table>
+    {#- These two tables sit one above the other and are read as a pair, so
+        their columns have to line up. Left to size themselves they do not:
+        "Runs allowed/G" is wider than "Runs/G", which pushes every later column
+        right in the second table only. A fixed layout with declared widths
+        makes both agree regardless of what the labels happen to be. -#}
+    <table class="tcmp">
+      <colgroup>
+        <col class="m"><col class="v"><col class="r"><col class="v"><col class="r">
+      </colgroup>
       <thead><tr><th class="l">Metric</th><th>{{ bundle.away.abbreviation }}</th><th>Rank</th>
         <th>{{ bundle.home.abbreviation }}</th><th>Rank</th></tr></thead>
       <tbody>
