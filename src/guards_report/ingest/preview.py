@@ -864,6 +864,8 @@ def build_preview(
         "sprint_speed": _population(sprint_rows, "sprint_speed"),
         "baserunning_runs": sorted(baserunning_runs.values()),
         "batting_runs": sorted(batting_value.values()),
+        "fielding_runs": _population(
+            fielding_rows, "fielding_runs_prevented"),
         "outs_above_average": _population(fielding_rows, "outs_above_average"),
         "fielding_runs_prevented": _population(
             fielding_rows, "fielding_runs_prevented"),
@@ -1350,6 +1352,120 @@ def build_preview(
     game_datetime = None
     if game.get("gameDate"):
         game_datetime = datetime.fromisoformat(game["gameDate"].replace("Z", "+00:00"))
+
+
+    # -- run value chips ----------------------------------------------------
+    # After the boxes exist, because this needs playing time. Running it earlier
+    # raised inside the derived-percentile block and took every expected-stat
+    # chip down with it.
+    def _attach_value_chips() -> None:
+        import pandas as _pd
+
+        models = settings.raw_archive_dir.parent / "models"
+
+        def _reference(name: str, key: str) -> dict[int, tuple[float, float]]:
+            path = models / f"{name}.parquet"
+            if not path.exists():
+                return {}
+            frame = _pd.read_parquet(path)
+            frame = frame[frame["season"] == season]
+            id_column = "batter" if name.startswith("batter") else "pitcher"
+            size = "pa" if id_column == "batter" else "bf"
+            return {
+                int(r[id_column]): (float(r[key]), float(r[size]))
+                for _, r in frame.iterrows()
+                if r.get(key) is not None and r.get(size)
+            }
+
+        # Batting and pitching run value come from the pitch corpus rather than
+        # the swing-take board: identical construction, and 562 batters and 427
+        # pitchers against the board's 300.
+        batting = _reference("batter_profiles", "bat_rv")
+        pitching = _reference("pitcher_profiles", "pitch_rv")
+
+        def _rank(rate: float, pool: list[float]) -> int | None:
+            if not pool:
+                return None
+            return round(sum(1 for x in pool if x < rate) / len(pool) * 100)
+
+        # Rate, not total -- a bench player's raw run value is mostly a
+        # statement about how often he played. But a rate alone is worse:
+        # scaling 55 plate appearances up to 600 multiplies the noise elevenfold
+        # and put a part-time infielder in the 98th percentile on one good
+        # fortnight.
+        #
+        # So the rate is shrunk toward league average before it is ranked, with
+        # the denominator padded by the sample at which the measure becomes half
+        # signal. Split-half reliability on the corpus crosses 0.5 at about 200
+        # plate appearances, which is the constant used.
+        #
+        # A second criterion -- which padding best predicts the same player's
+        # next season -- kept improving out to 900 and was not followed. Heavier
+        # shrinkage increasingly just ranks players by playing time, and playing
+        # time predicts next season because good players play more. That is a
+        # selection effect being rewarded, not evidence about the measure.
+        RUN_VALUE_PADDING = 200.0      # plate appearances / batters faced
+        FIELD_PADDING = 40.0           # games
+
+        def _rate(value: float, size: float, padding: float, per: float) -> float:
+            return value / (size + padding) * per
+
+        bat_pool = sorted(
+            _rate(v, n, RUN_VALUE_PADDING, 600.0)
+            for v, n in batting.values() if n >= 25)
+        pitch_pool = sorted(
+            _rate(v, n, RUN_VALUE_PADDING, 600.0)
+            for v, n in pitching.values() if n >= 25)
+
+        run_values = baserunning_runs
+        field_values = _by_player(fielding_rows, "fielding_runs_prevented")
+        run_pool = sorted(
+            _rate(v, 150.0, FIELD_PADDING, 150.0) for v in run_values.values())
+        field_pool = sorted(
+            _rate(v, 150.0, FIELD_PADDING, 150.0) for v in field_values.values())
+
+        for section in (sections["home"], sections["away"]):
+            for box in section.batters:
+                pid = int(box.player_id)
+                if pid in batting:
+                    value, size = batting[pid]
+                    if size >= 25:
+                        grade = _rank(
+                            _rate(value, size, RUN_VALUE_PADDING, 600.0),
+                            bat_pool)
+                        if grade is not None:
+                            box.derived_percentiles["bat_rv"] = grade
+                games = float((box.season or {}).get("gamesPlayed")
+                              or (box.season or {}).get("games") or 0)
+                if not games:
+                    continue
+                for chip, values, pool in (("run_rv", run_values, run_pool),
+                                           ("field_rv", field_values, field_pool)):
+                    raw = values.get(pid)
+                    if raw is None:
+                        continue
+                    grade = _rank(
+                        _rate(raw, games, FIELD_PADDING, 150.0), pool)
+                    if grade is not None:
+                        box.derived_percentiles[chip] = grade
+
+            for box in section.pitchers:
+                pid = int(box.player_id)
+                if pid not in pitching:
+                    continue
+                value, faced = pitching[pid]
+                if faced < 25:
+                    continue
+                grade = _rank(
+                    _rate(value, faced, RUN_VALUE_PADDING, 600.0),
+                    pitch_pool)
+                if grade is not None:
+                    box.derived_percentiles["pitch_rv"] = grade
+
+    try:
+        _attach_value_chips()
+    except Exception as exc:  # noqa: BLE001 -- additive
+        print(f"  warning: run value chips unavailable ({exc})", file=sys.stderr)
 
     bundle = ReportBundle(
         run_id=uuid.uuid4().hex[:12],

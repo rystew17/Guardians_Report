@@ -794,8 +794,8 @@ smaller.</div>
   </div>
   {% endif %}
 
-  {% if box.percentiles %}
-  {{ pchips(box, [('xera','xERA'),('xwoba','xwOBA'),('xba','xBA'),('xslg','xSLG'),
+  {% if box.percentiles or box.derived_percentiles %}
+  {{ pchips(box, [('pitch_rv','Run Val'),('xera','xERA'),('xwoba','xwOBA'),('xba','xBA'),('xslg','xSLG'),
       ('k_percent','K%'),('bb_percent','BB%'),('whiff_percent','Whiff'),('chase_percent','Chase'),
       ('brl_percent','Barrel'),('hard_hit_percent','HardHit'),('exit_velocity','ExitVelo'),
       ('fb_velocity','FB velo'),('fb_spin','FB spin'),('curve_spin','CB spin')]) }}
@@ -923,8 +923,11 @@ smaller.</div>
   </div>
   {% endif %}
 
-  {% if box.percentiles %}
-  {{ pchips(box, [('xwoba','xwOBA'),('xba','xBA'),('xslg','xSLG'),('xiso','xISO'),('xobp','xOBP'),
+  {#- Gated on either source: a player Savant does not publish still has chips
+      now, and the old guard hid the whole grid for exactly those players. -#}
+  {% if box.percentiles or box.derived_percentiles %}
+  {{ pchips(box, [('bat_rv','Bat RV'),('run_rv','Run RV'),('field_rv','Field RV'),
+      ('xwoba','xwOBA'),('xba','xBA'),('xslg','xSLG'),('xiso','xISO'),('xobp','xOBP'),
       ('brl_percent','Barrel'),('exit_velocity','ExitVelo'),('max_ev','MaxEV'),('hard_hit_percent','HardHit'),
       ('k_percent','K%'),('bb_percent','BB%'),('whiff_percent','Whiff'),('chase_percent','Chase'),
       ('sprint_speed','Speed'),('arm_strength','Arm')]) }}
