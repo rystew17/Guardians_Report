@@ -1,7 +1,8 @@
 """Turning findings into sentences.
 
 Templates, not generation. Each `code` carries several phrasings and the variant
-is chosen by hashing the subject, so a given player always reads the same way --
+is chosen by a stable hash of the subject, so a given player always reads the
+same way, in this run and in every later one --
 deterministic, and it avoids the detectable rhythm that fifty-three
 identically-shaped sentences would create.
 
@@ -12,6 +13,8 @@ report.
 """
 
 from __future__ import annotations
+
+import zlib
 
 from guards_report.insight.types import Finding
 
@@ -135,6 +138,19 @@ TEMPLATES: dict[str, tuple[str, ...]] = {
 }
 
 
+def _variant_index(finding: Finding) -> int:
+    """A stable choice of phrasing for this finding.
+
+    Deliberately not the builtin `hash`. Python salts string hashing per
+    process, so `hash(("game.driver", 0))` differs between runs of the same
+    build -- which meant the same game produced a different sentence each time
+    the report was generated. That is exactly the property this package was
+    written to have and the reason the analysis stopped being generated, so it
+    has to come from a hash that does not move.
+    """
+    return zlib.crc32(f"{finding.code}:{finding.subject}".encode())
+
+
 def _slots(finding: Finding) -> dict:
     detail = dict(finding.detail)
     detail.setdefault("value", finding.value)
@@ -192,7 +208,7 @@ def render(finding: Finding, *, variant: int | None = None) -> str:
         usage = float(finding.detail.get("usage", 0.0))
         index = 0 if usage >= 0.20 else 1
     else:
-        index = variant if variant is not None else hash((finding.code, finding.subject))
+        index = variant if variant is not None else _variant_index(finding)
     chosen = options[index % len(options)]
     variant_text = chosen
     slots = _slots(finding)

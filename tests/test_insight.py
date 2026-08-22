@@ -228,3 +228,30 @@ def test_two_findings_pointing_opposite_ways_are_joined_with_a_contrast():
 
 def test_no_findings_produce_no_sentence():
     assert render.sentence([]) == ""
+
+def test_the_same_finding_reads_the_same_way_in_a_fresh_process():
+    """The whole reason the analysis stopped being generated.
+
+    Phrasing is chosen from a hash of the finding, and Python salts string
+    hashing per process -- so the builtin `hash` gave the same game a different
+    sentence on every build. It looked deterministic because a single test run
+    shares one seed. Subprocesses are the only way to see it.
+    """
+    import subprocess
+    import sys
+
+    script = (
+        "from guards_report.insight import render;"
+        "from guards_report.insight.types import Finding, Reference;"
+        "print(render.render(Finding("
+        "subject=12345, subject_kind='batter', code='bat.rate.hit', family='contact',"
+        "kind='skill', value=0.31,"
+        "reference=Reference(mean=0.25, sd=0.03, population='league'),"
+        "evidence=500, stabilisation=100, detail={'rate': 0.31})))"
+    )
+    runs = {
+        subprocess.run([sys.executable, "-c", script], capture_output=True,
+                       text=True, check=True).stdout.strip()
+        for _ in range(4)
+    }
+    assert len(runs) == 1, f"phrasing moved between processes: {runs}"

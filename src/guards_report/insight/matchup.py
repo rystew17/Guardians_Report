@@ -86,6 +86,12 @@ def from_projection(projection: Any, home: str, away: str) -> list[Finding]:
         if abs(c.get("contribution", 0.0)) > 0.01
     ]
     if contributions:
+        # Sorted here rather than trusted from the caller. The projection page
+        # happens to hand these over largest-first, so reading element zero
+        # produced the right answer and would have kept producing it until the
+        # day that ordering changed -- at which point the sentence names the
+        # wrong driver, with the wrong number, and still reads perfectly.
+        contributions.sort(key=lambda c: -abs(float(c.get("contribution", 0.0))))
         top = contributions[0]
         findings.append(_finding(
             code="game.driver", family="driver", kind="matchup",
