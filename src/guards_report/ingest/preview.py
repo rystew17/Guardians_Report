@@ -107,6 +107,11 @@ class PlayerBox:
     # unqualified figures they are rather than passing them off as
     # published ones.
     derived_percentiles: dict[str, float] = field(default_factory=dict)
+    # Chips computed here for a player who *has* qualified. The asterisk
+    # means "this player has not qualified", so it must not appear on a
+    # regular's card merely because Savant publishes no percentile for the
+    # measure -- which is true of every run value.
+    qualified_chips: set = field(default_factory=set)
 
     # Every requested situational split, keyed by situation code.
     situational: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -1410,19 +1415,52 @@ def build_preview(
         def _rate(value: float, size: float, padding: float, per: float) -> float:
             return value / (size + padding) * per
 
+        # The pool is qualified players, not everyone with a plate appearance.
+        # Ranking against all 562 batters put a qualified regular at the 74th
+        # percentile where Savant's own page said 57 -- the extra 300 names are
+        # part-timers who drag the distribution down and inflate everyone above
+        # them. Every other chip on this grid is already ranked this way; the run
+        # value chips were the exception and were wrong for it.
+        QUALIFIED_PA = 300
+        QUALIFIED_BF = 300
+
         bat_pool = sorted(
             _rate(v, n, RUN_VALUE_PADDING, 600.0)
-            for v, n in batting.values() if n >= 25)
+            for v, n in batting.values() if n >= QUALIFIED_PA)
         pitch_pool = sorted(
             _rate(v, n, RUN_VALUE_PADDING, 600.0)
-            for v, n in pitching.values() if n >= 25)
+            for v, n in pitching.values() if n >= QUALIFIED_BF)
 
         run_values = baserunning_runs
-        field_values = _by_player(fielding_rows, "fielding_runs_prevented")
+        field_values = _by_player(fielding_rows, "outs_above_average")
+        # Baserunning has a proper denominator on the board -- opportunities to
+        # take an extra base -- which beats games played, because a man who
+        # never reaches first has no chances to convert and should not be graded
+        # as though he declined them.
+        run_chances = _by_player(baserun_rows, "n_opp_xb")
+
+        # Fielding is ranked on outs above average, which is the figure Savant
+        # displays beside its own percentile and the one already shown on this
+        # card. There is no denominator on the board, so this is a season total
+        # and partly a statement about playing time; nothing the source
+        # publishes offers a way around that.
+        #
+        # It lands a few points high against the player page -- 95 where Savant
+        # says 90 for one regular here -- because Savant ranks within a
+        # qualified subset whose threshold it does not publish, and the low
+        # playing-time fielders this pool keeps sit near zero and lift everyone
+        # above them. Ranking within position, within outfielders, or on runs
+        # prevented instead were each tried and all landed further away.
+        #
+        # The earlier version scaled each player by his own games while building
+        # the pool as though everyone had played 150. Individuals were divided
+        # by roughly 170 and the pool by 190, so every player was measured on a
+        # more generous scale than the field he was ranked against -- which put
+        # a regular at the 97th percentile where his own page said 90.
         run_pool = sorted(
-            _rate(v, 150.0, FIELD_PADDING, 150.0) for v in run_values.values())
-        field_pool = sorted(
-            _rate(v, 150.0, FIELD_PADDING, 150.0) for v in field_values.values())
+            _rate(v, run_chances.get(pid, 0.0) or 0.0, 20.0, 60.0)
+            for pid, v in run_values.items())
+        field_pool = sorted(field_values.values())
 
         for section in (sections["home"], sections["away"]):
             for box in section.batters:
@@ -1435,19 +1473,29 @@ def build_preview(
                             bat_pool)
                         if grade is not None:
                             box.derived_percentiles["bat_rv"] = grade
+                            if size >= QUALIFIED_PA:
+                                box.qualified_chips.add("bat_rv")
                 games = float((box.season or {}).get("gamesPlayed")
                               or (box.season or {}).get("games") or 0)
                 if not games:
                     continue
-                for chip, values, pool in (("run_rv", run_values, run_pool),
-                                           ("field_rv", field_values, field_pool)):
-                    raw = values.get(pid)
-                    if raw is None:
-                        continue
+                raw = run_values.get(pid)
+                if raw is not None:
                     grade = _rank(
-                        _rate(raw, games, FIELD_PADDING, 150.0), pool)
+                        _rate(raw, run_chances.get(pid, 0.0) or 0.0, 20.0, 60.0),
+                        run_pool)
                     if grade is not None:
-                        box.derived_percentiles[chip] = grade
+                        box.derived_percentiles["run_rv"] = grade
+                        box.qualified_chips.add("run_rv")
+
+                raw = field_values.get(pid)
+                if raw is not None:
+                    grade = _rank(raw, field_pool)
+                    if grade is not None:
+                        box.derived_percentiles["field_rv"] = grade
+                        # Appearing on the board is Savant's own qualification
+                        # decision, so it is not this report's to second-guess.
+                        box.qualified_chips.add("field_rv")
 
             for box in section.pitchers:
                 pid = int(box.player_id)
@@ -1461,6 +1509,8 @@ def build_preview(
                     pitch_pool)
                 if grade is not None:
                     box.derived_percentiles["pitch_rv"] = grade
+                    if faced >= QUALIFIED_BF:
+                        box.qualified_chips.add("pitch_rv")
 
     try:
         _attach_value_chips()

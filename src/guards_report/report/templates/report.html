@@ -632,7 +632,11 @@
   {% for key, label in keys %}
   {% set published = box.percentiles.get(key) %}
   {% set v = published if published not in (None, '') else derived.get(key) %}
-  {% set is_derived = published in (None, '') and derived.get(key) is not none %}
+  {#- The asterisk means the player has not qualified, not that the number was
+      computed here. Savant publishes no run value percentile at all, so keying
+      the mark off "we computed it" put an asterisk on every regular's card. -#}
+  {% set is_derived = published in (None, '') and derived.get(key) is not none
+                      and key not in (box.qualified_chips or []) %}
   {% if is_derived %}{% set ns.any_derived = true %}{% endif %}
   <div class="pchip {{ v|percentile_class }}{{ ' pchip-unq' if is_derived }}"
        {% if is_derived %}title="Computed here — {{ label }} on the qualified-player scale. Savant does not publish a percentile for this player."{% endif %}>
@@ -1759,12 +1763,17 @@
       chip, so a 60 means the same thing either way. The sample behind it is
       smaller.'),
     ('Run value',
-     'Runs above average, from the change in run expectancy on every pitch.
+     'Runs above average. Batting and pitching come from the change in run
+      expectancy on every pitch, baserunning from what a runner gained taking
+      extra bases and stealing, fielding from outs above average. They are
+      separate because they answer different questions: a glove-first shortstop
+      and a bat-first corner can total the same and share nothing else.
+      Computed here rather than read from a player page, and within a few
+      percentile points of it &mdash; Savant ranks against a qualified subset
+      whose threshold it does not publish.
       Batting, baserunning and fielding are separate because they answer
-      different questions; a glove-first shortstop and a bat-first corner can
-      total the same and share nothing else. Ranked as a rate and shrunk toward
-      average first, so a hot fortnight in fifty plate appearances does not
-      outrank a season.'),
+      Ranked as a rate and shrunk toward average first, so a hot fortnight in
+      fifty plate appearances does not outrank a season.'),
     ('Platoon rows',
      'Performance against the hand today&rsquo;s probable starter throws, not
       against all pitching.'),
