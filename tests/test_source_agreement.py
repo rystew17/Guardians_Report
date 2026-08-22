@@ -427,7 +427,10 @@ def test_our_run_value_percentile_matches_the_player_page(pitching):
     pool = sorted(frame[frame[size] >= floor][key])
     # The heaviest workloads, because those are the players Savant publishes a
     # percentile for at all.
-    sample = frame.nlargest(8, size)
+    # Four pages, not eight. The offline fixture in
+    # `test_run_value_calibration.py` carries the regression; this only
+    # has to notice Savant moving, and each page is 2.3 MB.
+    sample = frame.nlargest(4, size)
 
     errors = []
     for _, row in sample.iterrows():
@@ -439,7 +442,7 @@ def test_our_run_value_percentile_matches_the_player_page(pitching):
         equal = sum(1 for x in pool if x == value)
         errors.append(abs((below + equal / 2) / len(pool) * 100 - published))
 
-    if len(errors) < 4:
+    if len(errors) < 3:
         pytest.skip(f"only {len(errors)} published percentiles available")
     assert np.median(errors) <= 4.0, (
         f"median {np.median(errors):.1f} points from the published percentile")
