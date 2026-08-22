@@ -169,3 +169,55 @@ def test_choose_returns_something_even_when_everything_is_blocked():
 
 def test_no_options_yields_no_phrase_rather_than_an_error():
     assert voice.choose((), "k") == ""
+
+
+# ---------------------------------------------------------------------------
+# Matchup phrasings
+# ---------------------------------------------------------------------------
+
+def test_no_matchup_variant_asks_for_a_slot_the_writers_do_not_supply():
+    """A variant needing an unsupplied slot is a silent blank.
+
+    `matchup_phrase` swallows the KeyError and returns "", so the note simply
+    loses a sentence -- no error, no warning, and only for the players who
+    happen to draw that variant. A variant using *fewer* slots is fine; one
+    reaching for a slot nobody passes is not.
+    """
+    import re
+
+    supplied = {"p", "b", "hand"}
+    for code, variants in voice.MATCHUP_PHRASES.items():
+        for variant in variants:
+            wanted = set(re.findall(r"\{(\w+)\}", variant))
+            assert wanted <= supplied, (
+                f"{code} wants {wanted - supplied}, which no writer passes")
+
+
+def test_every_matchup_renders_with_the_slots_its_callers_supply():
+    """Both writers pass p, b and hand; nothing may need more than those."""
+    supplied = {"p": "Bibee", "b": "Ramirez", "hand": " against right-handers"}
+    for code in voice.MATCHUP_PHRASES:
+        for i in range(6):
+            text = voice.matchup_phrase(code, i, **supplied)
+            assert text, f"{code} produced nothing on variant {i}"
+            assert "{" not in text, f"{code} left an unfilled slot: {text}"
+
+
+def test_a_batter_phrasing_never_leaks_into_a_pitcher_matchup():
+    """The two writers key off the prefix, so the sets must stay disjoint."""
+    batter = {c for c in voice.MATCHUP_PHRASES if c.startswith("bat.")}
+    pitcher = {c for c in voice.MATCHUP_PHRASES if c.startswith("pit.")}
+    assert batter and pitcher
+    assert batter | pitcher == set(voice.MATCHUP_PHRASES)
+
+
+def test_an_unknown_matchup_code_is_silent_rather_than_fatal():
+    assert voice.matchup_phrase("not.a.real.code", 1, p="X", b="Y") == ""
+
+
+def test_the_same_pairing_reads_the_same_way_every_time():
+    first = voice.matchup_phrase("bat.overmatched", 4242, p="A", b="B")
+    assert all(
+        voice.matchup_phrase("bat.overmatched", 4242, p="A", b="B") == first
+        for _ in range(30)
+    )

@@ -1163,3 +1163,103 @@ def derived_percentiles(row: dict, reference, *, minimum_pa: int = 25) -> dict:
             continue
         out[chip] = round(100.0 - grade if lower_better else grade)
     return out
+
+
+# --------------------------------------------------------------------------
+# The lineup a pitcher actually faces
+# --------------------------------------------------------------------------
+# A batter faces one pitcher; a pitcher faces nine. Writing nine pairings
+# produces a table, not a read, so the lineup is aggregated into a single
+# opposing profile with the same tool grades a batter carries -- and then the
+# pitcher is matched against that.
+#
+# Weighted by expected plate appearances rather than averaged flat. The leadoff
+# hitter comes up about four and a half times and the ninth hitter about three
+# and a half, so a flat mean overstates the bottom of the order by roughly a
+# fifth of a turn. The weights are the same slot distribution the props model
+# already uses.
+#
+# Graded against the hand the pitcher throws. A lineup's profile moves
+# materially by handedness, and while a platoon split is noisy for one hitter it
+# is stable across nine -- aggregating is exactly the operation that makes the
+# split usable.
+
+# Expected plate appearances by batting order slot, from the props model.
+SLOT_WEIGHT = {
+    1: 4.65, 2: 4.55, 3: 4.44, 4: 4.34, 5: 4.23,
+    6: 4.12, 7: 4.01, 8: 3.90, 9: 3.79,
+}
+DEFAULT_WEIGHT = 4.2
+
+
+@dataclass
+class LineupProfile:
+    """Nine hitters as one opponent."""
+
+    tools: dict[str, Tool] = field(default_factory=dict)
+    hitters: int = 0
+    weighted_pa: float = 0.0
+    hand: str = ""
+    # How many of the nine clear a bar, per tool. The aggregate says what the
+    # lineup is like on average; this says how many of them are actually a
+    # problem, which is the more useful number when the average hides a split
+    # between four dangerous bats and five easy outs.
+    counts: dict[str, int] = field(default_factory=dict)
+
+    def grade(self, name: str) -> float:
+        tool = self.tools.get(name)
+        return tool.grade if tool and np.isfinite(tool.grade) else float("nan")
+
+
+def lineup_profile(
+    batters: list, reference, populations: dict, *, hand: str = "",
+) -> LineupProfile:
+    """Aggregate a lineup into one opposing profile.
+
+    Only hitters with a real sample contribute. A bench bat with forty plate
+    appearances would otherwise pull the aggregate toward whatever his forty
+    happened to look like, and the aggregate is meant to describe the lineup
+    rather than its noisiest member.
+    """
+    if reference is None or getattr(reference, "empty", True):
+        return LineupProfile(hand=hand)
+
+    weighted: dict[str, list[tuple[float, float]]] = {}
+    counts: dict[str, int] = {}
+    total_weight = 0.0
+    used = 0
+
+    for box in batters or []:
+        row = reference[reference["batter"] == int(getattr(box, "player_id", 0))]
+        if not len(row):
+            continue
+        row = row.iloc[0].to_dict()
+        if float(row.get("pa") or 0) < 80:
+            continue
+
+        slot = getattr(box, "batting_order", None)
+        weight = SLOT_WEIGHT.get(int(slot), DEFAULT_WEIGHT) if slot else DEFAULT_WEIGHT
+        tools = grade_tools(row, reference, BATTER_TOOLS)
+        for name, tool in tools.items():
+            if not np.isfinite(tool.grade):
+                continue
+            weighted.setdefault(name, []).append((tool.grade, weight))
+            if tool.grade >= HIGH:
+                counts[name] = counts.get(name, 0) + 1
+        total_weight += weight
+        used += 1
+
+    aggregate = {}
+    for name, pairs in weighted.items():
+        values = np.array([p[0] for p in pairs], dtype=float)
+        weights = np.array([p[1] for p in pairs], dtype=float)
+        grade = float(np.average(values, weights=weights))
+        label = BATTER_TOOLS.get(name, (name, ()))[0]
+        aggregate[name] = Tool(
+            name=name, label=label, grade=grade, z=(grade - 50.0) / 25.0,
+        )
+
+    return LineupProfile(
+        tools=aggregate, hitters=used, weighted_pa=total_weight,
+        hand=hand, counts=counts,
+    )

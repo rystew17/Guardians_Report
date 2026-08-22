@@ -219,8 +219,165 @@ class Voice:
         self._remember("blurb", phrase)
         return phrase
 
+    def matchup(self, code: str, *key: Any, **slots: Any) -> str:
+        phrase = matchup_phrase(
+            code, *key, avoid=self._recent.get("matchup", []), **slots)
+        if phrase:
+            self._remember("matchup", phrase)
+        return phrase
+
     def form(self, direction: str, *key: Any) -> str:
         phrase = form_phrase(
             direction, *key, avoid=self._recent.get("form", []))
         self._remember("form", phrase)
         return phrase
+
+
+# --------------------------------------------------------------------------
+# Matchup phrasings
+# --------------------------------------------------------------------------
+# The same discipline as the value and tool bands: several ways to say one
+# thing, never several things. Each entry is a format string over the same
+# slots, so swapping one for another changes the wording and nothing else.
+#
+# `{p}` is the pitcher's surname, `{b}` the batter's, `{hand}` an optional
+# handedness clause. A phrasing that used a slot the caller does not supply
+# would raise at render time, so every variant in a set takes the same slots.
+
+MATCHUP_PHRASES: dict[str, tuple[str, ...]] = {
+    # -- batter against a starter ---------------------------------------
+    "bat.overmatched": (
+        "{p} misses bats and {b} does not make much contact, which is the worst "
+        "version of this for him",
+        "{b} swings through pitches and {p} is the man to make him pay for it",
+        "this is the bad one for {b}: a swing-and-miss arm against a hitter who "
+        "already misses",
+    ),
+    "bat.contact_vs_stuff": (
+        "{p}'s swing-and-miss against one of the harder men in the league to "
+        "strike out",
+        "{p} gets his strikeouts, but {b} is a difficult place to look for one",
+        "the strikeout is {p}'s business and {b} does not give many away",
+    ),
+    "bat.contact_vs_soft": (
+        "a contact hitter against a pitcher who does not miss bats, so the ball "
+        "is going to be in play",
+        "neither man is trying to avoid contact here; expect the ball put in "
+        "play",
+        "{b} makes contact and {p} allows it, which puts this on the defense",
+    ),
+    "bat.both_weak": (
+        "{b} swings through a lot, but {p} is not the man to punish it",
+        "a hitter who misses against a pitcher who cannot make him",
+        "{b}'s swing-and-miss goes unpunished by an arm that does not chase it",
+    ),
+    "bat.grounder_vs_grounder": (
+        "{p} keeps it on the ground and {b} already hits it there",
+        "a sinkerballer against a hitter who beats it into the dirt anyway",
+        "both men are working toward the same ground ball",
+    ),
+    "bat.grounder_vs_loft": (
+        "{b} wants it in the air and {p} will not let him have it",
+        "{p} keeps the ball down, which is the one place {b} cannot use it",
+        "a hitter who lifts against a pitcher who does not let him",
+    ),
+    "bat.air_vs_loft": (
+        "{p} lets the ball get airborne, which is exactly where {b} wants it",
+        "{b} hits it in the air and {p} gives that up",
+        "the ball gets up against {p}, and up is where {b} does his damage",
+    ),
+    "bat.power_vs_soft": (
+        "{b}'s power against a pitcher who gives up hard contact is the danger "
+        "here",
+        "{p} has been squared up all year and {b} is the man to do it",
+        "hard contact is available against {p}, and {b} is who takes it",
+    ),
+    "bat.power_vs_suppress": (
+        "{p} has kept the barrel off the ball all year, which is the one thing "
+        "{b} needs",
+        "{b} needs to square one up and {p} has not allowed many",
+        "power against a pitcher who has not given any up",
+    ),
+    "bat.zone_vs_chase": (
+        "{p} pounds the zone and {b} chases, so the free pass is unlikely to "
+        "arrive",
+        "{b} will not be walked here; {p} is around the plate too often",
+        "a chaser against a strike-thrower, which is no way to reach first for "
+        "free",
+    ),
+    "bat.wild_vs_patient": (
+        "{p} is around the zone less than most and {b} will make him prove it",
+        "{b} takes his walks and {p} hands them out",
+        "patience against a pitcher who struggles to find the plate",
+    ),
+    "bat.both_wild": (
+        "neither man is disciplined here — {p} misses the zone and {b} swings "
+        "at it anyway",
+        "{p} cannot find the plate and {b} will not make him",
+        "a wild arm against a free swinger, which usually resolves itself",
+    ),
+
+    # -- pitcher against a lineup ---------------------------------------
+    "pit.stuff_vs_weak_contact": (
+        "{p} misses bats and this lineup does not make much contact{hand}",
+        "a swing-and-miss arm against a lineup that swings and misses{hand}",
+        "this is a good place for {p} to look for strikeouts{hand}",
+    ),
+    "pit.soft_vs_contact": (
+        "a contact lineup against a pitcher who does not miss bats — the ball "
+        "is going to be in play all night",
+        "neither side is avoiding contact; this one goes to the defense",
+        "{p} does not miss bats and this lineup does not miss pitches",
+    ),
+    "pit.stuff_vs_contact": (
+        "{p}'s swing-and-miss against a lineup that puts the bat on it",
+        "a strikeout arm against nine men who are hard to strike out",
+        "{p} will have to work harder than usual for his whiffs",
+    ),
+    "pit.grounder_vs_loft": (
+        "they want the ball in the air and {p} keeps it down",
+        "a lineup built to lift against a pitcher who will not let it",
+        "{p}'s ground game against a lineup trying to get underneath it",
+    ),
+    "pit.air_vs_loft": (
+        "a lineup that elevates against a pitcher who lets the ball get "
+        "airborne",
+        "they hit it in the air and {p} gives that up, which is the risk here",
+        "{p} lets the ball get up, and this lineup is built to use that",
+    ),
+    "pit.power_vs_soft": (
+        "this lineup has real power and {p} has been hit hard all year",
+        "{p} gives up loud contact to a lineup that can punish it",
+        "the barrels are there for the taking against {p}",
+    ),
+    "pit.weak_power_vs_suppress": (
+        "little power here to trouble a pitcher who keeps the barrel off the "
+        "ball",
+        "{p} suppresses hard contact and this lineup does not generate much",
+        "neither the lineup nor {p} is likely to produce much loud contact",
+    ),
+    "pit.wild_vs_patient": (
+        "a patient lineup against a pitcher who has trouble finding the zone, "
+        "which is how short outings start",
+        "{p} misses the zone and this lineup is content to watch him do it",
+        "walks are the risk: a patient lineup against a pitcher without command",
+    ),
+    "pit.zone_vs_chase": (
+        "{p} throws strikes and they chase, so the walks are unlikely to come",
+        "a strike-thrower against a lineup that expands, which is a quick night",
+        "{p} is around the plate and this lineup does not make pitchers work",
+    ),
+}
+
+
+def matchup_phrase(code: str, *key: Any, avoid: Sequence[str] | None = None,
+                   **slots: Any) -> str:
+    """One phrasing of a matchup, filled in and stable for this pairing."""
+    options = MATCHUP_PHRASES.get(code)
+    if not options:
+        return ""
+    chosen = choose(options, code, *key, avoid=avoid)
+    try:
+        return chosen.format(**slots)
+    except (KeyError, IndexError):
+        return ""

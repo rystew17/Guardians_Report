@@ -124,6 +124,18 @@ def _as_a(label: str) -> str:
     return f"{article} {label.lower()}"
 
 
+def _say(voice, code: str, *key, **slots) -> str:
+    """One phrasing of a matchup, through the shared vocabulary.
+
+    Routed through `voice` when the card supplies one so consecutive players do
+    not draw the same wording, and through the module directly otherwise.
+    """
+    slots.setdefault("hand", "")
+    if voice is not None:
+        return voice.matchup(code, *key, **slots)
+    return voice_module.matchup_phrase(code, *key, **slots)
+
+
 def write_profile(player: prof.PlayerProfile, *, surname: str, voice=None) -> str:
     """Part one: what kind of player he is, and whether he is any good.
 
@@ -327,7 +339,7 @@ def write_form(box: Any, player: prof.PlayerProfile, *, surname: str,
 def write_matchup(
     box: Any, player: prof.PlayerProfile, *, surname: str,
     opposing_starter: Any = None, opposing_profile: prof.PlayerProfile | None = None,
-    projection_line: dict | None = None,
+    projection_line: dict | None = None, voice=None,
 ) -> str:
     """Part three: how tonight sets up against this specific opponent.
 
@@ -367,59 +379,35 @@ def write_matchup(
 
         if np.isfinite(contact) and np.isfinite(stuff):
             if stuff >= prof.HIGH and contact <= prof.LOW:
-                notes.append(
-                    f"{their_surname} misses bats and {surname} does not make "
-                    "much contact, which is the worst version of this for him")
+                notes.append(_say(voice, "bat.overmatched", player.player_id, p=their_surname, b=surname))
             elif contact >= prof.HIGH and stuff >= prof.HIGH:
-                notes.append(
-                    f"{their_surname}'s swing-and-miss against one of the "
-                    "harder men in the league to strike out")
+                notes.append(_say(voice, "bat.contact_vs_stuff", player.player_id, p=their_surname, b=surname))
             elif contact >= prof.HIGH and stuff <= prof.MID_LO:
-                notes.append(
-                    f"a contact hitter against a pitcher who does not miss "
-                    "bats, so the ball is going to be in play")
+                notes.append(_say(voice, "bat.contact_vs_soft", player.player_id, p=their_surname, b=surname))
             elif contact <= prof.LOW and stuff <= prof.MID_LO:
-                notes.append(
-                    f"{surname} swings through a lot, but {their_surname} is "
-                    "not the man to punish it")
+                notes.append(_say(voice, "bat.both_weak", player.player_id, p=their_surname, b=surname))
 
         if np.isfinite(loft) and np.isfinite(grounders):
             if grounders >= prof.HIGH and loft <= prof.LOW:
-                notes.append(
-                    f"{their_surname} keeps it on the ground and {surname} "
-                    "already hits it there")
+                notes.append(_say(voice, "bat.grounder_vs_grounder", player.player_id, p=their_surname, b=surname))
             elif grounders >= prof.HIGH and loft >= prof.HIGH:
-                notes.append(
-                    f"{surname} wants it in the air and {their_surname} will "
-                    "not let him have it")
+                notes.append(_say(voice, "bat.grounder_vs_loft", player.player_id, p=their_surname, b=surname))
             elif grounders <= prof.LOW and loft >= prof.HIGH:
-                notes.append(
-                    f"{their_surname} lets the ball get airborne, which is "
-                    f"exactly where {surname} wants it")
+                notes.append(_say(voice, "bat.air_vs_loft", player.player_id, p=their_surname, b=surname))
 
         if np.isfinite(power) and np.isfinite(suppress):
             if power >= prof.HIGH and suppress <= prof.LOW:
-                notes.append(
-                    f"{surname}'s power against a pitcher who gives up hard "
-                    "contact is the danger here")
+                notes.append(_say(voice, "bat.power_vs_soft", player.player_id, p=their_surname, b=surname))
             elif power >= prof.HIGH and suppress >= prof.HIGH:
-                notes.append(
-                    f"{their_surname} has kept the barrel off the ball all "
-                    f"year, which is the one thing {surname} needs")
+                notes.append(_say(voice, "bat.power_vs_suppress", player.player_id, p=their_surname, b=surname))
 
         if np.isfinite(command) and np.isfinite(chase):
             if command >= prof.HIGH and chase <= prof.LOW:
-                notes.append(
-                    f"{their_surname} pounds the zone and {surname} chases, so "
-                    "the free pass is unlikely to arrive")
+                notes.append(_say(voice, "bat.zone_vs_chase", player.player_id, p=their_surname, b=surname))
             elif command <= prof.LOW and chase >= prof.HIGH:
-                notes.append(
-                    f"{their_surname} is around the zone less than most and "
-                    f"{surname} will make him prove it")
+                notes.append(_say(voice, "bat.wild_vs_patient", player.player_id, p=their_surname, b=surname))
             elif command <= prof.LOW and chase <= prof.LOW:
-                notes.append(
-                    f"neither man is disciplined here — {their_surname} misses "
-                    f"the zone and {surname} swings at it anyway")
+                notes.append(_say(voice, "bat.both_wild", player.player_id, p=their_surname, b=surname))
 
         pieces.extend(notes[:2])
 
@@ -446,6 +434,8 @@ def build(
     box: Any, player: prof.PlayerProfile, *, surname: str,
     opposing_starter: Any = None, opposing_profile: prof.PlayerProfile | None = None,
     projection_line: dict | None = None, voice=None,
+    opposing_lineup: Any = None, key_bat: dict | None = None,
+    starter: bool = False,
 ) -> Dossier:
     """All three parts for one player.
 
@@ -457,10 +447,135 @@ def build(
         player_id=player.player_id, kind=player.kind,
         profile=write_profile(player, surname=surname, voice=voice),
         form=write_form(box, player, surname=surname, voice=voice),
-        matchup=write_matchup(
-            box, player, surname=surname, opposing_starter=opposing_starter,
-            opposing_profile=opposing_profile, projection_line=projection_line),
+        # A pitcher's opponent is a lineup, not a man, so the two take
+        # different writers rather than one that pretends nine hitters are one.
+        matchup=(
+            write_pitcher_matchup(
+                player, opposing_lineup, surname=surname, key_bat=key_bat,
+                voice=voice, starter=starter)
+            if player.kind == "pitcher" else
+            write_matchup(
+                box, player, surname=surname, opposing_starter=opposing_starter,
+                opposing_profile=opposing_profile,
+                projection_line=projection_line, voice=voice)),
         tier=player.tier,
         labels=[m.label for m in player.matches],
         thin=player.thin,
     )
+
+
+# --------------------------------------------------------------------------
+# The pitcher's matchup: one against nine
+# --------------------------------------------------------------------------
+# The batter's version pairs two profiles. This one cannot, because the other
+# side is a lineup, and nine pairings is a table rather than a read.
+#
+# So it says three things, in this order: where his best pitch meets their worst
+# hitting, how many of them are actually a problem, and who the dangerous bat is.
+# The middle one matters most and is the one a per-hitter list buries -- an
+# average tells you what the lineup is like, and a count tells you whether the
+# average is hiding four dangerous bats behind five easy outs.
+
+
+def write_pitcher_matchup(
+    player: prof.PlayerProfile, lineup: Any, *, surname: str,
+    opponent: str = "", key_bat: dict | None = None, voice=None,
+    starter: bool = False,
+) -> str:
+    """Part three for a pitcher: how tonight's lineup sets up against him.
+
+    How the lineup is built is a fact about the lineup, not about the man
+    facing it, so the count of dangerous bats and the name of the worst one go
+    to the starter only. Printed on all thirteen arms it is the same sentence
+    thirteen times, and a reliever who may face four hitters has little use for
+    a tally of nine.
+    """
+    if lineup is None or not getattr(lineup, "tools", None):
+        return ""
+
+    pieces: list[str] = []
+    hand_note = ""
+    if getattr(lineup, "hand", ""):
+        hand_note = (" against right-handers" if lineup.hand == "R"
+                     else " against left-handers")
+
+    stuff = player.tools.get("stuff")
+    grounders = player.tools.get("grounders")
+    command = player.tools.get("command")
+    suppress = player.tools.get("suppress")
+
+    def g(tool) -> float:
+        return tool.grade if tool and np.isfinite(tool.grade) else float("nan")
+
+    their_contact = lineup.grade("contact")
+    their_power = lineup.grade("power")
+    their_loft = lineup.grade("loft")
+    their_discipline = lineup.grade("discipline")
+
+    # -- 1. where the two profiles actually meet ----------------------------
+    pairings = []
+    if np.isfinite(g(stuff)) and np.isfinite(their_contact):
+        if g(stuff) >= prof.HIGH and their_contact <= prof.MID_LO:
+            pairings.append(_say(voice, "pit.stuff_vs_weak_contact", player.player_id, p=surname, hand=hand_note))
+        elif g(stuff) <= prof.MID_LO and their_contact >= prof.HIGH:
+            pairings.append(_say(voice, "pit.soft_vs_contact", player.player_id, p=surname, hand=hand_note))
+        elif g(stuff) >= prof.HIGH and their_contact >= prof.HIGH:
+            pairings.append(_say(voice, "pit.stuff_vs_contact", player.player_id, p=surname, hand=hand_note))
+
+    if np.isfinite(g(grounders)) and np.isfinite(their_loft):
+        if g(grounders) >= prof.HIGH and their_loft >= prof.HIGH:
+            pairings.append(_say(voice, "pit.grounder_vs_loft", player.player_id, p=surname, hand=hand_note))
+        elif g(grounders) <= prof.LOW and their_loft >= prof.HIGH:
+            pairings.append(_say(voice, "pit.air_vs_loft", player.player_id, p=surname, hand=hand_note))
+
+    if np.isfinite(g(suppress)) and np.isfinite(their_power):
+        if their_power >= prof.HIGH and g(suppress) <= prof.LOW:
+            pairings.append(_say(voice, "pit.power_vs_soft", player.player_id, p=surname, hand=hand_note))
+        elif their_power <= prof.MID_LO and g(suppress) >= prof.HIGH:
+            pairings.append(_say(voice, "pit.weak_power_vs_suppress", player.player_id, p=surname, hand=hand_note))
+
+    if np.isfinite(g(command)) and np.isfinite(their_discipline):
+        if g(command) <= prof.LOW and their_discipline >= prof.HIGH:
+            pairings.append(_say(voice, "pit.wild_vs_patient", player.player_id, p=surname, hand=hand_note))
+        elif g(command) >= prof.HIGH and their_discipline <= prof.MID_LO:
+            pairings.append(_say(voice, "pit.zone_vs_chase", player.player_id, p=surname, hand=hand_note))
+    pieces.extend(pairings[:2])
+
+    # -- 2. how many of them are actually a problem -------------------------
+    # The count, not the average. A lineup can grade average on power because
+    # four men can leave the yard and five cannot, and the pitcher only has to
+    # survive the four.
+    total = getattr(lineup, "hitters", 0)
+    counts = getattr(lineup, "counts", {}) or {}
+    threats = [] if not starter else []
+    if starter:
+        for name, phrase in (("power", "hit for real power"),
+                             ("contact", "are hard to strike out"),
+                             ("discipline", "will not chase for him")):
+            n = counts.get(name, 0)
+            # The denominator is the men actually counted, not nine. Before a
+            # lineup is posted the whole available bench is in the aggregate,
+            # and calling that "of the nine" states a batting order that does
+            # not exist yet -- an invented precision, and the easiest kind to
+            # miss because the sentence reads perfectly either way.
+            if total and n >= 3:
+                threats.append((n, f"{n} of the {total} {phrase}"))
+    if threats and starter:
+        threats.sort(reverse=True)
+        pieces.append(threats[0][1])
+
+    # -- 3. the bat to be careful with --------------------------------------
+    if starter and key_bat and key_bat.get("name"):
+        chance = key_bat.get("homer")
+        slot = key_bat.get("slot")
+        detail = []
+        if chance:
+            detail.append(f"a {chance:.0%} chance to go deep")
+        if slot:
+            detail.append(f"batting {int(slot)}")
+        tail = f" — {', '.join(detail)}" if detail else ""
+        pieces.append(f"{key_bat['name']} is the one to be careful with{tail}")
+
+    if not pieces:
+        return ""
+    return ". ".join(p[0].upper() + p[1:] for p in pieces) + "."

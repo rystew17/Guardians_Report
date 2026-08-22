@@ -189,6 +189,39 @@ def analyse(bundle: Any, *, pitch_dir: Path, on: date | None = None) -> CardAnal
         box = starters[other]
         opposing[side] = (box, _profile_for(box, "pitcher") if box else None)
 
+    # And the reverse. A batter faces one pitcher; a pitcher faces nine, so the
+    # lineup he will see is aggregated into a single opponent with the same
+    # tool grades a hitter carries. Graded against the hand he throws: a
+    # lineup's profile moves by handedness, and nine hitters is enough sample to
+    # make the split usable where one hitter is not.
+    lineups: dict[str, Any] = {}
+    for side, other in (("home", "away"), ("away", "home")):
+        section = bundle.away if other == "away" else bundle.home
+        try:
+            lineups[side] = profile_module.lineup_profile(
+                list(getattr(section, "batters", [])),
+                references.get("batter"), populations,
+                hand=(getattr(starters[side], "hand", "") or ""),
+            )
+        except Exception as exc:  # noqa: BLE001
+            result.warnings.append(f"lineup profile: {type(exc).__name__}: {exc}")
+            lineups[side] = None
+
+    # The bat the projection likes most tonight, so the note can name the man
+    # rather than leave the reader to go and find him.
+    key_bat = None
+    if projection is not None:
+        try:
+            found = matchup.key_player(projection, home, away)
+            if found:
+                detail = found[0].detail
+                key_bat = {
+                    "name": detail.get("name"), "homer": detail.get("homer"),
+                    "slot": detail.get("slot"), "team": detail.get("team"),
+                }
+        except Exception:  # noqa: BLE001 -- naming a hitter is not essential
+            key_bat = None
+
     # -- the game itself -----------------------------------------------------
     try:
         game_findings = (
@@ -221,9 +254,18 @@ def analyse(bundle: Any, *, pitch_dir: Path, on: date | None = None) -> CardAnal
             try:
                 player = _profile_for(box, "pitcher")
                 if player is not None:
+                    # The key bat belongs to the *other* club, so it is only
+                    # offered to the pitcher who has to face him.
+                    theirs = None
+                    if key_bat and key_bat.get("team") not in (
+                        None, section.abbreviation
+                    ):
+                        theirs = key_bat
                     result.dossiers[int(box.player_id)] = dossier_module.build(
                         box, player, surname=_surname(box.name),
-                        voice=card_voice)
+                        opposing_lineup=lineups.get(side),
+                        key_bat=theirs, voice=card_voice,
+                        starter=bool(getattr(box, "is_probable_starter", False)))
             except Exception as exc:  # noqa: BLE001
                 result.warnings.append(
                     f"{box.name} profile: {type(exc).__name__}: {exc}")
