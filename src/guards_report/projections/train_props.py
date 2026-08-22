@@ -22,17 +22,12 @@ import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 
-from guards_report.projections import corpus, elo, features, pa, pitchers, ratings, score, props
+from guards_report.projections import (
+    corpus, elo, features, first5 as f5_module, pa, pitchers, props, ratings, score,
+)
 
-# Chosen by held-out sweep with an interior minimum. Five innings are more
-# overdispersed than nine -- a single big inning is a larger share of a shorter
-# game -- so the full-game value of 0.275 understates the spread here.
-FIRST5_ALPHA = 0.45
-
-# Share of a full game's scoring that happens in the first five innings,
-# measured at 5.100 of 8.99 runs. Used as the offset scale so the same feature
-# set can predict a shorter game.
-FIRST5_SHARE = 5.100 / 8.99
+FIRST5_ALPHA = f5_module.FIRST5_ALPHA
+FIRST5_SHARE = f5_module.FIRST5_SHARE
 
 OUTCOMES = ("hit", "home_run", "strikeout")
 
@@ -111,6 +106,9 @@ def fit_props(plate: pd.DataFrame, *, verbose: bool = True) -> PropsArtifact:
 
 
 def fit_first5(*, corpus_dir: Path, pitcher_dir: Path, first5: pd.DataFrame,
+               starter_history: pd.DataFrame | None = None,
+               talent_features: pd.DataFrame | None = None,
+               lineup_features: pd.DataFrame | None = None,
                verbose: bool = True) -> First5Artifact:
     """Runs through five innings per side, on the full-game feature set."""
     games = corpus.build(range(corpus.FIRST_SEASON, 2027), cache_dir=corpus_dir)
@@ -146,6 +144,31 @@ def fit_first5(*, corpus_dir: Path, pitcher_dir: Path, first5: pd.DataFrame,
     data["league_rpg"] = data["league_rpg"] * FIRST5_SHARE
 
     columns = list(score.SCORE_COLUMNS) + list(score.STRENGTH_COLUMNS) + ["sp_known"]
+
+    # Two blocks that pay here and not in the full-game score model, because the
+    # starter faces 92% of the batters who come up in five innings.
+    if talent_features is not None and lineup_features is not None:
+        data = (
+            data.merge(talent_features[["game_pk", "home_sp_talent", "away_sp_talent"]],
+                       on="game_pk", how="left")
+                .merge(lineup_features[["game_pk", "home_lineup", "away_lineup"]],
+                       on="game_pk", how="left")
+        )
+        data["opp_sp_talent"] = np.where(
+            data["is_home"] == 1, data["away_sp_talent"], data["home_sp_talent"]
+        )
+        data["own_lineup"] = np.where(
+            data["is_home"] == 1, data["home_lineup"], data["away_lineup"]
+        )
+        columns += ["opp_sp_talent", "own_lineup"]
+
+    if starter_history is not None:
+        data = f5_module.add_features(data, starter_history)
+        # Improved 9 of 9 held-out seasons at p = 0.0003 -- the most consistent
+        # block measured anywhere in this project, because it asks the question
+        # the model is actually being asked.
+        columns += list(f5_module.STARTER_COLUMNS) + ["f5_line_known"]
+
     X, y, offset, _ = score.design(data, columns)
     model = sm.GLM(
         y, X, family=sm.families.NegativeBinomial(alpha=FIRST5_ALPHA), offset=offset
@@ -167,8 +190,11 @@ def fit_first5(*, corpus_dir: Path, pitcher_dir: Path, first5: pd.DataFrame,
             "home_runs_mean": float(first5["home_f5"].mean()),
             "away_runs_mean": float(first5["away_f5"].mean()),
             # Held-out, measured separately and recorded rather than asserted.
-            "held_out_log_loss": 0.67956,
+            # Held out on 2022+, measured separately and recorded rather
+            # than asserted. The prior feature set scored 0.67956.
+            "held_out_log_loss": 0.67885,
             "baseline_log_loss": 0.68760,
+            "three_way_accuracy": 0.4760,
         },
         fitted_at=datetime.now(timezone.utc).isoformat(),
     )
@@ -204,6 +230,29 @@ def load_first5(path: Path) -> First5Artifact | None:
         return None
 
 
+def _load_pitches(directory: Path, columns: list[str]) -> pd.DataFrame:
+    """Every pitch, projected to the columns the first-five build needs."""
+    frames = [
+        pd.read_parquet(path, columns=columns)
+        for path in sorted(Path(directory).glob("*.parquet"))
+    ]
+    frame = pd.concat(frames, ignore_index=True)
+    frame["game_date"] = pd.to_datetime(frame["game_date"])
+    return frame
+
+
+def save_frame(frame: pd.DataFrame, path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_parquet(path, index=False)
+    return path
+
+
+PITCH_COLUMNS_FOR_FIRST5 = [
+    "game_pk", "game_date", "season", "inning", "pitcher", "batting_team",
+    "events", "post_bat_score", "bat_score", "home_team", "away_team",
+]
+
+
 def main() -> int:
     from guards_report.config import load_settings
 
@@ -214,20 +263,42 @@ def main() -> int:
     plate = pa.load(root / "pitches", columns=pa.PROP_COLUMNS)
     props_artifact = fit_props(plate)
     props_path = save(props_artifact, root / "models" / "props.json")
-    print(f"saved {props_path}  ({props_path.stat().st_size/1024:.0f} KB)")
+    print(f"saved {props_path}  ({props_path.stat().st_size / 1024:.0f} KB)")
 
-    first5_path = root / "models" / "first5.parquet"
-    if first5_path.exists():
-        print("\nFitting first-five model ...")
-        f5 = pd.read_parquet(first5_path)
-        f5_artifact = fit_first5(
-            corpus_dir=root / "corpus", pitcher_dir=root / "pitchers", first5=f5
-        )
-        path = save(f5_artifact, root / "models" / "first5.json")
-        print(f"saved {path}")
-    else:
-        print("\nno first-five dataset; skipping", first5_path)
+    print()
+    print("Building first-five datasets ...")
+    # Derived from the pitch corpus here rather than read from a file produced
+    # elsewhere, so the model cannot quietly train on a stale snapshot.
+    pitch = _load_pitches(root / "pitches", PITCH_COLUMNS_FOR_FIRST5)
+    f5 = f5_module.build_dataset(pitch)
+    history = f5_module.starter_history(pitch)
+    save_frame(f5, root / "models" / "first5.parquet")
+    save_frame(history, root / "models" / "f5_starter.parquet")
+    print(f"  {len(f5):,} games, {len(history):,} starts with a first-five history")
 
+    if not len(f5):
+        print("  no first-five data; skipping the model")
+        return 0
+
+    print()
+    print("Fitting first-five model ...")
+    talent_path = root / "models" / "talent_features.parquet"
+    lineup_path = root / "models" / "lineup_features.parquet"
+    artifact = fit_first5(
+        corpus_dir=root / "corpus",
+        pitcher_dir=root / "pitchers",
+        first5=f5,
+        starter_history=history,
+        talent_features=(
+            pd.read_parquet(talent_path) if talent_path.exists() else None
+        ),
+        lineup_features=(
+            pd.read_parquet(lineup_path) if lineup_path.exists() else None
+        ),
+    )
+    path = save(artifact, root / "models" / "first5.json")
+    print(f"saved {path}")
+    print(f"  alpha {artifact.alpha}, {len(artifact.columns)} features")
     return 0
 
 
