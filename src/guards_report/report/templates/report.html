@@ -1331,13 +1331,11 @@
   {% set rd = projection_read(pj) %}
 
   <div class="note">
-    These are likelihoods over outcomes, not a forecast of what will happen. The
-    models are right about {{ (wm.accuracy * 100)|round(1) }}% of the time against a
-    {{ (wm.baseline_accuracy * 100)|round(1) }}% baseline of always picking the home
-    team &mdash; a real edge, and a small one. Across
-    {{ '{:,}'.format(lr.n_games) }} games since 2015,
-    {{ (lr.one_run_game * 100)|round(0)|int }}% were decided by a single run. Read
-    the spread, not the center.
+    Read the spread, not the center. {{ (lr.one_run_game * 100)|round(0)|int }}% of
+    games are decided by a single run, which is why even a good call here sits
+    close to a coin flip &mdash; the model beats always-picking-the-home-team by
+    {{ ((wm.accuracy - wm.baseline_accuracy) * 100)|round(1) }} points, a real
+    edge and a small one.
   </div>
 
   {#- ---------- the call, and how sure it is by this model's standards ---------- -#}
@@ -1496,12 +1494,10 @@
   </table>
   </div>
   <div class="note">
-    The most likely single scoreline is
+    Ignore the exact scoreline. Three rounded finals cover 70% of all games, so
     {{ bundle.home.abbreviation }} {{ sc.modal_score.home }}&ndash;{{ sc.modal_score.away }}
-    {{ bundle.away.abbreviation }}, and it is worth almost nothing: the model's
-    expected-runs figure moves only about a fifth as much as real scoring does, so
-    three rounded scorelines cover 70% of all games. The shape above is the useful
-    output; the exact final is not.
+    {{ bundle.away.abbreviation }} being the single most likely one says almost
+    nothing. The shape is the output worth reading.
   </div>
 
   {#- ---------- inputs ---------- -#}
@@ -1560,10 +1556,8 @@
     {% endfor %}
   </div>
   <div class="note">
-    Held out on 9,718 starts the model never saw, it calls
-    <strong>P(5 or more)</strong> at a log loss of 0.612 against 0.692 for the base
-    rate &mdash; the largest edge of any model in this report. Totals still run about
-    0.15 strikeouts high on average.
+    The strongest model in this report. Trust the over/under probabilities more
+    than the totals beside them, which run about a sixth of a strikeout high.
   </div>
   {% endif %}
 
@@ -1605,19 +1599,10 @@
   {% endif %}
   {% endfor %}
   <div class="note">
-    Expected totals for the game, not just whether it happens once. The batting
-    order is doing real work: the leadoff spot takes 4.50 plate appearances against
-    3.47 for the ninth, which is worth about a quarter of a hit between two
-    identical hitters. Rates are shrunk toward the league by how much evidence
-    supports them &mdash; hit rate only settles after roughly 475 plate appearances,
-    home-run rate after 193, so a hot fortnight moves these less than it might seem
-    it should. Rows in gray rest on thin samples.
-    <br>Measured against 2024&ndash;25, hit totals run about 0.02 high on average and
-    0.05 high in the ninth slot. That gradient is a property of the method rather
-    than a defect: shrinking every rate toward the league mean necessarily
-    over-rates below-average hitters, and the bottom of the order is where they
-    bat. Home runs carry a fitted correction; hits do not, because no single
-    factor fixes a gradient and a per-slot one would hide it.
+    Where a man bats matters as much as who he is. The leadoff spot gets 4.50
+    plate appearances to the ninth hitter's 3.47, which is a quarter of a hit
+    between two identical bats. A hot fortnight moves these less than it looks
+    like it should, by design. Rows in gray rest on thin samples.
   </div>
   {% endif %}
   <h3 class="lab">Probable starters</h3>
@@ -1653,9 +1638,7 @@
   <div class="note">
     {{ pj.home.starter_name or 'TBD' }} for {{ bundle.home.abbreviation }},
     {{ pj.away.starter_name or 'TBD' }} for {{ bundle.away.abbreviation }}.
-    Strikeout rate is the strongest pitching input the model uses. Earned run
-    average was tested and dropped &mdash; next to FIP it added nothing measurable.
-    Park factor was kept but contributes essentially none of the movement.
+    Strikeout rate carries more of this than anything else the model reads.
     {% if pj.missing %}
     <br><strong>Incomplete inputs:</strong> {{ pj.missing|join('; ') }}. Missing
     values fall back to the league mean, so the projection is flatter than it would
@@ -1689,13 +1672,13 @@
     </tbody>
   </table>
   <div class="note">
-    Measured only on seasons the model never saw while being fitted, across
-    {{ '{:,}'.format(wm.n_games) }} games. The baseline is always picking the home
-    team, which wins {{ (wm.baseline_accuracy * 100)|round(1) }}% of the time.
-    Coefficients fitted on games through {{ pj.ratings_note.fitted_through }}{% if pj.ratings_note and pj.ratings_note.games_applied %}; team ratings carried
-    forward through {{ pj.ratings_note.ratings_through }} over
-    {{ '{:,}'.format(pj.ratings_note.games_applied) }} games played since, so both
-    clubs are rated on current form{% endif %}.
+    {#- The track record and the fitting method moved to the glossary below.
+        What stays is the part that changes from one day to the next: how
+        current the inputs are, and whether anything is behind. -#}
+    {% if pj.ratings_note and pj.ratings_note.games_applied %}Both clubs are
+    rated on current form &mdash; ratings carried forward over
+    {{ '{:,}'.format(pj.ratings_note.games_applied) }} games since the
+    coefficients were fitted.{% endif %}
     {% if pj.freshness %}
     Every source was refreshed before this ran: games and starts through
     {{ pj.freshness.corpus_through }}, pitch-level data through
@@ -1706,9 +1689,7 @@
     {%- if pj.freshness.fitted_ages %}
     {%- set stale_fits = pj.freshness.fitted_ages.items()|selectattr('1', 'gt', 14)|list %}
     {%- set oldest = pj.freshness.fitted_ages.values()|max %}
-    The models themselves are refitted on their own schedule rather than per
-    report &mdash; two reports of one game must not disagree &mdash; and the oldest
-    fit here is {{ oldest }} day{{ 's' if oldest != 1 }} old.
+    Oldest fit {{ oldest }} day{{ 's' if oldest != 1 }} old.
     {%- if stale_fits %}
     <strong>{{ stale_fits|length }} of them {{ 'is' if stale_fits|length == 1 else 'are' }}
     over a fortnight old and due to be refitted.</strong>
@@ -1719,9 +1700,51 @@
     stale.</strong>
     {% endif %}
     {% endif %}
-    Nothing on this page is written or estimated by a language model &mdash; every
-    figure comes from fitted statistical code.
+    No figure on this page is written or estimated by a language model.
   </div>
+
+  {{ glossary([
+    ('How to read these',
+     'Every figure is a probability over outcomes, not a call on what will
+      happen. A 57% favorite loses this game more than two times in five, and
+      the report is built so that is visible rather than buried.'),
+    ('Track record',
+     'Measured only on seasons the model never saw while being fitted, across
+      {:,} games. It picks the winner {}% of the time against {}% for always
+      taking the home team. The starter strikeout model is the strongest here:
+      on 9,718 held-out starts it calls the over/under at a log loss of 0.612
+      against 0.692 for the base rate.'.format(
+        wm.n_games, (wm.accuracy * 100)|round(1), (wm.baseline_accuracy * 100)|round(1))),
+    ('Why the exact score is not shown as a call',
+     'The expected-runs figure moves about a fifth as much as real scoring does,
+      so three rounded scorelines cover 70% of all games. The distribution is
+      honest about that; a single predicted final would not be.'),
+    ('Shrinkage',
+     'A rate is pulled toward the league average by how much evidence stands
+      behind it. Hit rate only settles after roughly 475 plate appearances and
+      home-run rate after 193, so a hot fortnight moves a projection far less
+      than it appears it should. That is the correction working, not the model
+      ignoring form.'),
+    ('Known biases',
+     'Starter strikeout totals run about 0.15 high. Hit totals run 0.02 high
+      overall and 0.05 high in the ninth slot &mdash; a gradient that follows
+      from shrinkage rather than a defect in it, since pulling every rate toward
+      the mean necessarily over-rates below-average hitters and the bottom of
+      the order is where they bat. Home runs carry a fitted correction; hits do
+      not, because no single factor fixes a gradient and a per-slot one would
+      hide it.'),
+    ('Inputs',
+     'Strikeout rate is the strongest pitching input. Earned run average was
+      tested and dropped &mdash; next to FIP it added nothing measurable. Park
+      factor was kept and contributes almost none of the movement. Where an
+      input is missing the league mean stands in, which flattens the projection
+      rather than guessing.'),
+    ('Refit schedule',
+     'The models are refitted on their own schedule rather than per report, so
+      two reports of one game cannot disagree. Team ratings are carried forward
+      daily between fits, which is why both clubs are rated on current form even
+      when the coefficients are weeks old.'),
+  ]) }}
 </section>
 {% endif %}
 
