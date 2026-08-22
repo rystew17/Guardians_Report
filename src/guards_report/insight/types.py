@@ -66,6 +66,21 @@ class Finding:
     detail: dict[str, Any] = field(default_factory=dict)
     window: tuple[date, date] | None = None
 
+    # Whether this finding claims something about the population, or merely
+    # describes the subject.
+    #
+    # Phase B found this distinction the hard way. "His best pitch is the
+    # sweeper, .199 expected wOBA against a .300 league" is descriptive: it is
+    # true whatever the spread of the league, it makes no claim to be unusual,
+    # and gating it behind a multiple-comparisons floor silenced every pitcher
+    # on the card. "He is trending up" or "he is elite" is inferential -- it
+    # asserts a departure from the population, and scanning forty criteria for
+    # the most extreme one is precisely how that becomes false.
+    #
+    # The floor applies to the second kind. The first is ranked by how much it
+    # departs from the reference, but printed on its own merits.
+    inferential: bool = True
+
     @property
     def z_raw(self) -> float:
         return self.reference.z(self.value)

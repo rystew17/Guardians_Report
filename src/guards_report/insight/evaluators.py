@@ -290,3 +290,128 @@ def starter_edge(
         detail={"home": home_name, "away": away_name,
                 "home_talent": float(home_talent), "away_talent": float(away_talent)},
     )]
+
+
+# ---------------------------------------------------------------------------
+# 6. Full arsenal — best and worst offering, with whiff and usage
+# ---------------------------------------------------------------------------
+
+# A swing that misses. Statcast records the outcome of every pitch, so a whiff
+# rate is a count over swings rather than a leaderboard figure that only exists
+# at season granularity.
+SWINGS = frozenset({
+    "swinging_strike", "swinging_strike_blocked", "foul", "foul_tip",
+    "hit_into_play", "foul_bunt", "missed_bunt",
+})
+MISSES = frozenset({"swinging_strike", "swinging_strike_blocked", "missed_bunt"})
+
+
+def arsenal(
+    *, pitcher_id: int, pitches: pd.DataFrame, league: pd.DataFrame,
+    minimum: int = 150, per_pitch: int = 40,
+) -> list[Finding]:
+    """Every offering a pitcher throws often enough to judge.
+
+    Emits one finding per pitch type rather than picking a winner, so selection
+    and contrast detection can decide what is worth saying. A pitcher whose best
+    and worst offerings are both extreme is a more interesting subject than one
+    who is uniformly good, and that only becomes visible with both on the table.
+
+    Judged within pitch type. A .280 expected wOBA on a slider is not the same
+    achievement as on a four-seamer, and comparing across types would rank pitch
+    types rather than pitchers.
+    """
+    if pitches.empty or "pitch_name" not in pitches.columns:
+        return []
+
+    thrown = pitches[pitches["pitcher"] == int(pitcher_id)]
+    if len(thrown) < minimum:
+        return []
+
+    def summarise(frame: pd.DataFrame) -> pd.DataFrame:
+        swings = frame["description"].isin(SWINGS)
+        misses = frame["description"].isin(MISSES)
+        return pd.DataFrame({
+            "xwoba": frame.groupby("pitch_name")["estimated_woba_using_speedangle"].mean(),
+            "n": frame.groupby("pitch_name").size(),
+            "swings": swings.groupby(frame["pitch_name"]).sum(),
+            "misses": misses.groupby(frame["pitch_name"]).sum(),
+        })
+
+    mine = summarise(thrown)
+    theirs = summarise(league)
+    mine = mine[mine["n"] >= per_pitch]
+    if mine.empty:
+        return []
+
+    findings: list[Finding] = []
+    for pitch_name, row in mine.iterrows():
+        if pitch_name not in theirs.index:
+            continue
+        reference_row = theirs.loc[pitch_name]
+        # Spread of the league's per-pitcher figures, not of individual pitches,
+        # since the subject here is a pitcher rather than a pitch.
+        spread = float(
+            league[league["pitch_name"] == pitch_name]
+            .groupby("pitcher")["estimated_woba_using_speedangle"].mean().std()
+        ) or 0.05
+
+        whiff = float(row["misses"] / row["swings"]) if row["swings"] else 0.0
+        league_whiff = (
+            float(reference_row["misses"] / reference_row["swings"])
+            if reference_row["swings"] else 0.0
+        )
+        findings.append(Finding(
+            subject=int(pitcher_id),
+            subject_kind="pitcher",
+            code="pit.arsenal.pitch",
+            # Family per pitch type, so selection can pair a good one against a
+            # bad one instead of treating the arsenal as a single trait.
+            family=f"arsenal_{pitch_name}",
+            kind="skill",
+            # Lower expected wOBA is better, so negate to make positive good.
+            value=-float(row["xwoba"]),
+            reference=Reference(
+                mean=-float(reference_row["xwoba"]), sd=spread,
+                population=f"league_{pitch_name}", n=int(reference_row["n"]),
+            ),
+            evidence=int(row["n"]),
+            stabilisation=120,
+            inferential=False,
+            detail={
+                "pitch": str(pitch_name),
+                "xwoba": float(row["xwoba"]),
+                "league": float(reference_row["xwoba"]),
+                "thrown": int(row["n"]),
+                "usage": float(row["n"] / len(thrown)),
+                "whiff": whiff,
+                "league_whiff": league_whiff,
+            },
+        ))
+    return findings
+
+
+def no_track_record(
+    *, player_id: int, evidence: int, side: str = "pitcher", minimum: int = 40,
+) -> list[Finding]:
+    """That there is nothing to say, said deliberately.
+
+    A player with no recent record is not an average player, and filling the gap
+    with a league prior would assert something nobody measured. The absence is
+    itself the most useful thing on the line.
+    """
+    if evidence >= minimum:
+        return []
+    return [Finding(
+        subject=int(player_id),
+        subject_kind=side,
+        code=f"{side[:3]}.absent",
+        family="evidence",
+        kind="weakness",
+        value=0.0,
+        reference=Reference(mean=0.0, sd=1.0, population="none"),
+        evidence=0,
+        stabilisation=1,
+        inferential=False,
+        detail={"seen": int(evidence)},
+    )]

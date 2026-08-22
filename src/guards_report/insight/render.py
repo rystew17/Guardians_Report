@@ -20,7 +20,7 @@ from guards_report.insight.types import Finding
 # not carry.
 TEMPLATES: dict[str, tuple[str, ...]] = {
     "bat.rate.hit": (
-        "reaches at a {rate:.3f} clip against a league {mean:.3f}",
+        "reaches at a {rate3} clip against a league {mean3}",
         "gets a hit in {rate:.1%} of plate appearances, league {mean:.1%}",
     ),
     "bat.rate.home_run": (
@@ -32,16 +32,32 @@ TEMPLATES: dict[str, tuple[str, ...]] = {
         "goes down on strikes in {rate:.1%} of plate appearances, league {mean:.1%}",
     ),
     "bat.trend.window": (
-        "has hit {value:.3f} over his last {games} games, against {baseline:.3f} on the season",
-        "is at {value:.3f} across {games} games now, {baseline:.3f} otherwise",
+        "has hit {value3} over his last {games} games, against {baseline3} on the season",
+        "is at {value3} across {games} games now, {baseline3} otherwise",
     ),
     "pit.trend.window": (
-        "has run a {value:.3f} rate over his last {games} outings, {baseline:.3f} on the season",
+        "has run a {value3} rate over his last {games} outings, {baseline3} on the season",
+    ),
+    "pit.absent": (
+        "has no recent record to grade — {seen} plate appearances in the window, "
+        "so anything said about his form would be invented",
+    ),
+    "pit.arsenal.best": (
+        "his {pitch} is the out pitch: a {whiff:.1%} whiff rate holding hitters to "
+        "a {xwoba3} expected wOBA, against {league3} on the pitch league-wide",
+        "leans on the {pitch} {usage:.0%} of the time and it earns it — "
+        "{xwoba3} expected against, {league3} for the league",
+    ),
+    "pit.arsenal.worst": (
+        "the {pitch} is where he gets hurt: {xwoba3} expected against, "
+        "{league3} league, and he still throws it {usage:.0%} of the time",
+        "hitters have found the {pitch}, tagging it for {xwoba3} against a "
+        "{league3} league mark",
     ),
     "pit.arsenal.pitch": (
-        "his {pitch} has held hitters to a {xwoba:.3f} expected wOBA, league {league:.3f} on the pitch",
+        "his {pitch} has held hitters to a {xwoba3} expected wOBA, league {league3} on the pitch",
         "throws the {pitch} {usage:.0%} of the time and it has been worth it: "
-        "{xwoba:.3f} expected against, league {league:.3f}",
+        "{xwoba3} expected against, league {league3}",
     ),
     "pit.weak.order": (
         "falls from {first_pass:.1%} strikeouts the first time through to "
@@ -70,14 +86,30 @@ def _slots(finding: Finding) -> dict:
     return detail
 
 
-def render(finding: Finding) -> str:
-    """One sentence fragment for this finding, chosen deterministically."""
+def _rate(value: float) -> str:
+    """Baseball's convention: three decimals, no leading zero."""
+    text = format(float(value), ".3f")
+    return text[1:] if text.startswith("0.") else text
+
+
+def render(finding: Finding, *, variant: int | None = None) -> str:
+    """One sentence fragment for this finding, chosen deterministically.
+
+    `variant` lets a caller vary the phrasing when two findings on one line
+    would otherwise use the same template, which reads as a stutter.
+    """
     options = TEMPLATES.get(finding.code)
     if not options:
         return ""
-    variant = options[hash((finding.code, finding.subject)) % len(options)]
+    index = variant if variant is not None else hash((finding.code, finding.subject))
+    chosen = options[index % len(options)]
+    variant_text = chosen
+    slots = _slots(finding)
+    for key in ("xwoba", "league", "value", "baseline", "mean", "rate"):
+        if key in slots and isinstance(slots[key], (int, float)):
+            slots[f"{key}3"] = _rate(float(slots[key]))
     try:
-        return variant.format(**_slots(finding))
+        return variant_text.format(**slots)
     except (KeyError, ValueError, TypeError):
         return ""
 
@@ -88,14 +120,36 @@ def sentence(findings: list[Finding], *, subject: str = "") -> str:
     Two findings become a sentence with a contrast; three get a semicolon. More
     than that reads as a list, which is what selection exists to prevent.
     """
-    parts = [p for p in (render(f) for f in findings) if p]
+    # Vary the phrasing when two findings share a template, so a line does not
+    # repeat its own construction.
+    parts, used = [], {}
+    for finding in findings:
+        seen = used.get(finding.code, 0)
+        text = render(finding, variant=seen if seen else None)
+        used[finding.code] = seen + 1
+        if text:
+            parts.append(text)
     if not parts:
         return ""
 
-    lead = f"{subject} " if subject else ""
+    def attach(fragment: str) -> str:
+        """Join the subject to a fragment without producing "Smith his slider".
+
+        Templates are written to follow a name directly, but some start with a
+        possessive because they read better alone. Turning that into the
+        subject's own possessive is the difference between a sentence and a
+        stutter.
+        """
+        if not subject:
+            return fragment
+        if fragment.startswith("his "):
+            return f"{subject}'s {fragment[4:]}"
+        return f"{subject} {fragment}"
+
+    lead = ""
     if len(parts) == 1:
-        return f"{lead}{parts[0]}."
+        return attach(parts[0]) + "."
     if len(parts) == 2:
         joiner = ", but " if findings[0].direction != findings[1].direction else ", and "
-        return f"{lead}{parts[0]}{joiner}{parts[1]}."
-    return f"{lead}{parts[0]}; {parts[1]}; {parts[2]}."
+        return attach(parts[0]) + joiner + parts[1] + "."
+    return attach(parts[0]) + f"; {parts[1]}; {parts[2]}."

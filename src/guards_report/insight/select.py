@@ -40,25 +40,48 @@ def select(
         criteria if criteria is not None else len(findings)
     )
 
-    ranked = sorted(
-        (f for f in findings if f.significance >= threshold),
-        key=lambda f: -f.significance,
-    )
+    # The floor is a guard against claiming an unusual departure that is really
+    # noise. A descriptive finding claims no such thing -- a pitcher's best pitch
+    # is his best pitch whatever the league spread -- so it is ranked alongside
+    # the rest but not gated.
+    eligible = [
+        f for f in findings
+        if not f.inferential or f.significance >= threshold
+    ]
+    ranked = sorted(eligible, key=lambda f: -f.significance)
 
     chosen: list[Finding] = []
     families: set[str] = set()
     kinds: dict[str, int] = {}
 
-    for finding in ranked:
+    def take(finding: Finding) -> bool:
         if len(chosen) >= limit:
-            break
+            return False
         if finding.family in families:
-            continue
+            return False
         if kinds.get(finding.kind, 0) >= per_kind:
-            continue
+            return False
         chosen.append(finding)
         families.add(finding.family)
         kinds[finding.kind] = kinds.get(finding.kind, 0) + 1
+        return True
+
+    # Lead with the strongest finding, then deliberately reach for one pointing
+    # the other way. Two strengths read as a list; a strength and a weakness
+    # read as a scouting note, because the tension is the information -- what he
+    # does well is only useful next to where he can be got at.
+    if ranked:
+        take(ranked[0])
+        opposite = next(
+            (f for f in ranked[1:] if f.direction != ranked[0].direction), None
+        )
+        if opposite is not None:
+            take(opposite)
+
+    for finding in ranked:
+        if len(chosen) >= limit:
+            break
+        take(finding)
 
     return chosen
 
