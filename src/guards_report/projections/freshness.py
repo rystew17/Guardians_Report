@@ -138,6 +138,23 @@ def _latest(directory: Path, pattern: str, column: str = "game_date") -> date | 
     return max(stamps).date() if stamps else None
 
 
+def _note_stale_fits(result: "Freshness") -> None:
+    """Warn about fits that have aged out.
+
+    Called on both paths deliberately. The short-circuit is taken precisely when
+    every corpus is current, which is the ordinary case -- so a check that only
+    ran on the refreshing path would stay silent about a model that had been
+    sitting untouched for two months, on every single day that nothing else was
+    wrong.
+    """
+    for name, age in result.fitted_ages.items():
+        if age > REFIT_AFTER_DAYS:
+            result.warnings.append(
+                f"{name} was fitted {age} days ago; its coefficients predate "
+                "roughly a fortnight of baseball and it should be refitted"
+            )
+
+
 def rebuild_derived(root: Path) -> int | None:
     """Recompute the first-five starter table from the pitch corpus.
 
@@ -208,6 +225,7 @@ def refresh_all(
     if standing.is_current(on):
         standing.seconds = time.time() - started
         standing.refreshed = ["already current"]
+        _note_stale_fits(standing)
         if verbose:
             print("  every corpus already current; nothing fetched", flush=True)
         return standing
@@ -287,12 +305,7 @@ def refresh_all(
     # A corpus that reaches past the date being projected has leaked, and that
     # matters more than being behind: it would let a model see the game it is
     # predicting.
-    for name, age in result.fitted_ages.items():
-        if age > REFIT_AFTER_DAYS:
-            result.warnings.append(
-                f"{name} was fitted {age} days ago; its coefficients predate "
-                "roughly a fortnight of baseball and it should be refitted"
-            )
+    _note_stale_fits(result)
 
     for name, days in result.stale_days(on).items():
         if days is not None and days < 0:
