@@ -404,6 +404,29 @@ SLOT_PA_DISTRIBUTION = {
 UNKNOWN_SLOT_PA = {2: 0.04, 3: 0.19, 4: 0.56, 5: 0.20, 6: 0.02}
 
 
+# A starter's strikeout rate falls sharply each time through the order --
+# measured 0.2394, 0.2107, 0.1966 across the three passes, or 1.09x, 0.96x and
+# 0.90x his overall rate. He faces roughly 2.4 passes, so applying one flat rate
+# overstates the late plate appearances and inflates the total.
+TIMES_THROUGH_FACTOR = {1: 1.0917, 2: 0.9607, 3: 0.8967, 4: 0.8967}
+
+# Relievers strike out more than starters -- 0.2323 against 0.2193 -- so a league
+# rate blended across both is the wrong baseline for a starting pitcher. Using
+# it overstates a 22-batter start by about 0.12 strikeouts before any other
+# adjustment.
+STARTER_LEAGUE_FACTOR = 0.9758
+
+# How far to pull each side's rate toward the league before combining them.
+# log5 assumes the batter's and pitcher's rates are independent given the
+# league; they are not quite, because an extreme record is partly extreme for
+# having been built against soft opposition. Over twenty-two plate appearances
+# that overshoot compounds, and the top quintile of starts was projected 0.72
+# strikeouts high before this. Chosen by held-out log loss with an interior
+# minimum, not by minimising bias -- bias alone would over-shrink and spoil the
+# probabilities the report actually publishes.
+MATCHUP_SHRINK = 0.75
+
+
 @dataclass
 class CountProjection:
     """A full distribution over how many times something happens tonight."""
@@ -521,18 +544,31 @@ def starter_strikeouts(
     """
     stands = stands or {}
     if not lineup_ids:
-        rate = rates.pitcher_rate(pitcher_id)
+        rate = rates.pitcher_rate(pitcher_id) * STARTER_LEAGUE_FACTOR
         return count_distribution(rate, {int(round(expected_bf)): 1.0}, limit=limit)
 
     # Times through the order: whole passes, then a partial one at the top.
     passes, remainder = divmod(max(expected_bf, 0.0), len(lineup_ids))
     probabilities: list[float] = []
+    def toward_league(value: float) -> float:
+        return rates.league + MATCHUP_SHRINK * (value - rates.league)
+
     for index, batter in enumerate(lineup_ids):
-        rate = rates.matchup(batter, pitcher_id)
+        rate = log5(
+            toward_league(rates.batter_rate(batter)),
+            toward_league(rates.pitcher_rate(pitcher_id)),
+            rates.league,
+        )
         if platoon:
             rate = adjust(rate, platoon.get(f"{stands.get(batter, 'R')}{throws}", 1.0))
+        # The league rate this was built from blends starters with relievers,
+        # who strike out more; a starting pitcher sits below it.
+        rate = adjust(rate, STARTER_LEAGUE_FACTOR)
         turns = int(passes) + (1 if index < int(round(remainder)) else 0)
-        probabilities.extend([rate] * turns)
+        for turn in range(1, turns + 1):
+            probabilities.append(
+                adjust(rate, TIMES_THROUGH_FACTOR.get(turn, TIMES_THROUGH_FACTOR[3]))
+            )
 
     # Convolve, which is exact and cheap at this size.
     distribution = np.zeros(len(probabilities) + 1)

@@ -139,6 +139,13 @@ class Projection:
     # How current the talent estimates are, reported for the same reason as
     # the ratings: a frozen estimate presented as live is the failure mode.
     talent_note: dict[str, Any] = field(default_factory=dict)
+    # How current each corpus was when this was built, so the page can state it
+    # rather than implying the numbers are live.
+    freshness: dict[str, Any] = field(default_factory=dict)
+    # Per-batter totals and starter strikeouts, keyed home/away.
+    player_props: dict[str, Any] = field(default_factory=dict)
+    strikeouts: dict[str, Any] = field(default_factory=dict)
+    first_five: Any = None
     # Per-feature push on the log-odds, and where tonight sits in the model's
     # own historical spread. Both exist so the page can show why, and how
     # unusual, rather than only what.

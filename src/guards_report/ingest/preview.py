@@ -642,6 +642,17 @@ def _current_series_boxes(
     return boxes, payloads
 
 
+def _f5_history(settings):
+    """The stored first-five starter table, or None when it has not been built."""
+    try:
+        import pandas as pd
+
+        path = settings.raw_archive_dir.parent / "models" / "f5_starter.parquet"
+        return pd.read_parquet(path) if path.exists() else None
+    except Exception:  # noqa: BLE001 -- an absent table degrades the block only
+        return None
+
+
 def _plate_appearances(settings, on):
     """This season's plate appearances, for carrying talent forward.
 
@@ -969,9 +980,23 @@ def build_preview(
     # Loaded from a stored fit rather than trained here: a report must not
     # re-estimate a model, or two reports of the same game would disagree.
     projection = None
+    freshness_note = None
     try:
+        from guards_report.projections import freshness as projection_freshness
         from guards_report.projections import model as projection_model
         from guards_report.projections import predict as projection_predict
+        from guards_report.projections import tonight as projection_tonight
+        from guards_report.projections import train_props as projection_props
+
+        root = settings.raw_archive_dir.parent
+        # One explicit refresh before anything reads from disk. Each corpus
+        # skips a season it already has cached, which is right for a finished
+        # season and wrong for the one in progress -- without this the first
+        # report of the year writes a snapshot and every later report projects
+        # from it while looking perfectly current.
+        freshness_note = projection_freshness.refresh_all(root, on=on, verbose=False)
+        for warning in freshness_note.warnings:
+            print(f"  warning: {warning}", file=sys.stderr)
 
         fitted = projection_model.load(
             settings.raw_archive_dir.parent / "models" / "game_outcome.json"
@@ -1019,6 +1044,117 @@ def build_preview(
                 on=on,
             )
             projection.ratings_note = ratings_note
+            projection.freshness = {
+                "corpus_through": str(freshness_note.corpus_through),
+                "pitchers_through": str(freshness_note.pitchers_through),
+                "pitches_through": str(freshness_note.pitches_through),
+                "requests": freshness_note.requests,
+                "seconds": round(freshness_note.seconds, 1),
+                "current": freshness_note.is_current(on),
+            }
+
+            # Props and first-five are separate artifacts with separate failure
+            # modes: losing one should quieten a section, not the page.
+            try:
+                plate = _plate_appearances(settings, on)
+                props_art = projection_props.load_props(root / "models" / "props.json")
+                if props_art is not None and plate is not None:
+                    stands = (
+                        plate.drop_duplicates("batter")
+                        .set_index("batter")["stand"].to_dict()
+                    )
+                    names = {
+                        b.player_id: b.name
+                        for side in (home_section, away_section)
+                        for b in side.batters
+                    }
+                    for side, other, key in (
+                        (home_section, away_section, "home"),
+                        (away_section, home_section, "away"),
+                    ):
+                        card = _posted_lineup(side)
+                        opposing = next(
+                            (p for p in other.pitchers if p.is_probable_starter), None
+                        )
+                        projection.player_props[key] = projection_tonight.batter_props(
+                            props_art, plate, on=on, lineup=card, names=names,
+                            opposing_starter=getattr(opposing, "player_id", None),
+                            opposing_throws=getattr(opposing, "hand", "R") or "R",
+                            stands=stands, home_team=home_section.abbreviation,
+                        )
+                        own_starter = next(
+                            (p for p in side.pitchers if p.is_probable_starter), None
+                        )
+                        if own_starter is not None:
+                            projection.strikeouts[key] = (
+                                projection_tonight.starter_strikeouts(
+                                    props_art, plate, on=on,
+                                    pitcher_id=own_starter.player_id,
+                                    name=own_starter.name,
+                                    opposing_lineup=_posted_lineup(other),
+                                    stands=stands,
+                                    throws=getattr(own_starter, "hand", "R") or "R",
+                                )
+                            )
+            except Exception as exc:  # noqa: BLE001
+                print(f"  warning: player props skipped ({exc})", file=sys.stderr)
+
+            # First five innings, from the same inputs Model B uses. The
+            # starter faces 92% of the batters who come up in five innings, so
+            # his columns carry most of the weight here.
+            try:
+                f5_art = projection_props.load_first5(root / "models" / "first5.json")
+                if f5_art is not None:
+                    f5_features = {"league_rpg": projection.league_rpg}
+                    for prefix, batting, fielding in (
+                        ("home_", projection.home, projection.away),
+                        ("away_", projection.away, projection.home),
+                    ):
+                        f5_features.update({
+                            f"{prefix}off_rpg": batting.offense_rpg,
+                            f"{prefix}opp_off_rpg": fielding.offense_rpg,
+                            f"{prefix}opp_sp_fip": fielding.starter_fip,
+                            f"{prefix}opp_sp_k": fielding.starter_k_pct,
+                            f"{prefix}opp_sp_bb": fielding.starter_bb_pct,
+                            f"{prefix}opp_sp_ip": fielding.starter_ip_per_start,
+                            f"{prefix}park_factor": projection.park_factor,
+                            f"{prefix}is_home": 1.0 if prefix == "home_" else 0.0,
+                            f"{prefix}elo_diff": batting.elo - fielding.elo,
+                            f"{prefix}od_exp_runs": (
+                                projection.league_rpg
+                                + batting.offense_rating + fielding.defense_rating
+                                + (0.16 if prefix == "home_" else 0.0)
+                            ),
+                            f"{prefix}sp_known": (
+                                1.0 if fielding.starter_fip is not None else 0.0
+                            ),
+                            f"{prefix}opp_sp_talent": fielding.starter_talent,
+                            f"{prefix}own_lineup": batting.lineup_value,
+                            f"{prefix}f5_line_known": 0.0,
+                        })
+                        # The opposing starter's own first-five record, which is
+                        # the block that improved 9 of 9 held-out seasons.
+                        opposing_box = next(
+                            (
+                                b for b in (
+                                    away_section if prefix == "home_" else home_section
+                                ).pitchers if b.is_probable_starter
+                            ),
+                            None,
+                        )
+                        line = projection_tonight.starter_first_five(
+                            _f5_history(settings),
+                            getattr(opposing_box, "player_id", None),
+                            on=on,
+                        )
+                        f5_features.update(
+                            {f"{prefix}{k}": v for k, v in line.items()}
+                        )
+                    projection.first_five = projection_tonight.first_five(
+                        f5_art, f5_features
+                    )
+            except Exception as exc:  # noqa: BLE001
+                print(f"  warning: first-five skipped ({exc})", file=sys.stderr)
     except Exception as exc:
         # A projection is an addition to the report, never a precondition for
         # it. Say what failed and carry on.

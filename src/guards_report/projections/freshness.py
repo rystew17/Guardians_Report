@@ -1,0 +1,191 @@
+"""Bring every corpus current before a report is built.
+
+The projection layer reads four caches, and until this module existed three of
+them silently froze. `corpus.build`, `pitchers.build` and `pitches.build` all
+skip a season whose file is already on disk, which is exactly right for a
+finished season and exactly wrong for the one in progress: the first report of
+the year writes a snapshot, and every report after it trains and projects on
+that same snapshot while appearing perfectly current.
+
+That failure has now appeared three times in this project in different clothes --
+Elo ratings frozen at the previous September, a talent model fitted on completed
+seasons and never carried forward, and a pull loop whose range stopped short of
+the current year. It never raises. The report renders, the numbers look
+plausible, and they describe a league that has moved on.
+
+So refreshing is one explicit step with one report of what it did, rather than a
+property each caller has to remember. Everything downstream reads from disk and
+can assume the disk is current, and the page states the date each corpus reaches
+rather than implying it is live.
+
+Cost is bounded and mostly the pitch corpus: one schedule request for the game
+corpus, a handful for the pitcher logs, and thirty for the pitch corpus, which
+fetches only the days since it was last written.
+"""
+
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass, field
+from datetime import date
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+
+from guards_report.projections import corpus, pitchers, pitches
+
+
+@dataclass
+class Freshness:
+    """What each corpus reaches, and what it cost to get there."""
+
+    corpus_through: date | None = None
+    pitchers_through: date | None = None
+    pitches_through: date | None = None
+    requests: int = 0
+    seconds: float = 0.0
+    refreshed: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+    def stale_days(self, on: date) -> dict[str, int | None]:
+        """Days between each corpus and the date being projected."""
+        return {
+            name: (on - value).days if value else None
+            for name, value in (
+                ("corpus", self.corpus_through),
+                ("pitchers", self.pitchers_through),
+                ("pitches", self.pitches_through),
+            )
+        }
+
+    def is_current(self, on: date, *, tolerance: int = 1) -> bool:
+        """Whether everything reaches the day before the game.
+
+        One day of tolerance, because a corpus can only contain games that have
+        finished, and the report is built before tonight's has been played.
+        """
+        return all(
+            value is not None and value >= 0 and value <= tolerance
+            for value in self.stale_days(on).values()
+        )
+
+    def line(self) -> str:
+        parts = [
+            f"corpus {self.corpus_through}",
+            f"pitchers {self.pitchers_through}",
+            f"pitches {self.pitches_through}",
+        ]
+        return (
+            " | ".join(parts)
+            + f"  ({self.requests} requests, {self.seconds:.0f}s)"
+            + (f"  WARNINGS: {len(self.warnings)}" if self.warnings else "")
+        )
+
+
+def _latest(directory: Path, pattern: str, column: str = "game_date") -> date | None:
+    files = sorted(Path(directory).glob(pattern))
+    if not files:
+        return None
+    stamps = []
+    for path in files:
+        try:
+            values = pd.read_parquet(path, columns=[column])[column]
+        except Exception:  # noqa: BLE001 -- a missing column is not fatal here
+            continue
+        if len(values):
+            stamps.append(pd.to_datetime(values).max())
+    return max(stamps).date() if stamps else None
+
+
+def survey(root: Path, season: int) -> Freshness:
+    """What is on disk right now, without fetching anything."""
+    return Freshness(
+        corpus_through=_latest(root / "corpus", f"*{season}*.parquet"),
+        pitchers_through=_latest(root / "pitchers", f"*{season}*.parquet"),
+        pitches_through=_latest(root / "pitches", f"{season}_*.parquet"),
+    )
+
+
+def refresh_all(
+    root: Path,
+    *,
+    on: date,
+    verbose: bool = True,
+    skip_pitches: bool = False,
+) -> Freshness:
+    """Refetch the in-progress season across every corpus.
+
+    Ordered cheapest first, and each step is independently guarded: a failure in
+    one corpus leaves the others refreshed and is reported rather than raised. A
+    report built on slightly stale pitch data is worth having; one that fails to
+    build because Savant was briefly unreachable is not.
+    """
+    season = on.year
+    started = time.time()
+    result = Freshness()
+
+    # -- game corpus: one schedule request ---------------------------------
+    try:
+        games = corpus.build(
+            range(season, season + 1), cache_dir=root / "corpus", refresh=True
+        )
+        result.requests += 1
+        result.refreshed.append("corpus")
+        if verbose:
+            print(f"  corpus   {len(games):,} games", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        result.warnings.append(f"corpus: {type(exc).__name__}: {exc}")
+
+    # -- pitcher logs: batched by pitcher id -------------------------------
+    try:
+        full = corpus.build(
+            range(corpus.FIRST_SEASON, season + 1), cache_dir=root / "corpus"
+        ).query("game_type == 'R'")
+        current = full[full["season"] == season].reset_index(drop=True)
+        if len(current):
+            logs = pitchers.build(
+                current, cache_dir=root / "pitchers", refresh=True
+            )
+            result.requests += 3          # batched; a handful of calls
+            result.refreshed.append("pitchers")
+            if verbose:
+                print(f"  pitchers {len(logs):,} starts", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        result.warnings.append(f"pitchers: {type(exc).__name__}: {exc}")
+
+    # -- pitch corpus: incremental, one request per club --------------------
+    if not skip_pitches:
+        try:
+            full = corpus.build(
+                range(corpus.FIRST_SEASON, season + 1), cache_dir=root / "corpus"
+            ).query("game_type == 'R'")
+            teams = pitches.season_teams(full, season)
+            added = pitches.refresh_current_season(
+                season, teams, cache_dir=root / "pitches",
+                through=on, verbose=False,
+            )
+            result.requests += len(teams)
+            result.refreshed.append("pitches")
+            if verbose:
+                print(f"  pitches  +{sum(added.values()):,} new", flush=True)
+        except Exception as exc:  # noqa: BLE001
+            result.warnings.append(f"pitches: {type(exc).__name__}: {exc}")
+
+    survey_after = survey(root, season)
+    result.corpus_through = survey_after.corpus_through
+    result.pitchers_through = survey_after.pitchers_through
+    result.pitches_through = survey_after.pitches_through
+    result.seconds = time.time() - started
+
+    # A corpus that reaches past the date being projected has leaked, and that
+    # matters more than being behind: it would let a model see the game it is
+    # predicting.
+    for name, days in result.stale_days(on).items():
+        if days is not None and days < 0:
+            result.warnings.append(
+                f"{name} contains games on or after {on}; a projection built "
+                "from it would see its own outcome"
+            )
+
+    return result

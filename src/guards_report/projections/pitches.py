@@ -281,6 +281,24 @@ def fetch_range(
     return frame
 
 
+def _align_dtypes(fresh: pd.DataFrame, stored: pd.DataFrame) -> pd.DataFrame:
+    """Cast newly fetched rows to the dtypes already on disk.
+
+    Only the stored frame has seen a full season, so only it has enough evidence
+    to have typed every column correctly. A top-up inherits those decisions
+    rather than making its own from a few days of rows.
+    """
+    aligned = fresh.copy()
+    for column, dtype in stored.dtypes.items():
+        if column not in aligned.columns:
+            aligned[column] = pd.NA
+        if pd.api.types.is_numeric_dtype(dtype):
+            aligned[column] = pd.to_numeric(aligned[column], errors="coerce")
+        elif not pd.api.types.is_numeric_dtype(aligned[column].dtype):
+            aligned[column] = aligned[column].astype(object)
+    return aligned[[c for c in stored.columns if c in aligned.columns]]
+
+
 def refresh_current_season(
     season: int, teams, *, cache_dir: Path, through: date | None = None,
     verbose: bool = True,
@@ -322,7 +340,17 @@ def refresh_current_season(
         if not fresh.empty:
             fresh["game_date"] = pd.to_datetime(fresh["game_date"]).dt.date
 
-        combined = fresh if existing is None else pd.concat([existing, fresh])
+        if existing is None:
+            combined = fresh
+        else:
+            # The stored dtypes win. A short window can leave a genuinely
+            # numeric column looking textual -- `pitcher_days_until_next_game`
+            # is empty for the most recent start, so a few days of rows can be
+            # almost entirely blank and fail the numeric test that the full
+            # season passed. Concatenating the two then hands Arrow a column
+            # that is double on disk and string in memory, and the write fails.
+            fresh = _align_dtypes(fresh, existing)
+            combined = pd.concat([existing, fresh])
         before = 0 if existing is None else len(existing)
         # keep="last" so a revised copy of a pitch replaces the one on disk.
         combined = combined.drop_duplicates(
