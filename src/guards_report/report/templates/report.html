@@ -425,6 +425,21 @@
 @media (max-width:720px){
   .pcols.split{grid-template-columns:1fr}
 }
+
+.twbar{width:100%;height:auto}
+.twlab{font:600 .72rem var(--sans);fill:#fff}
+.kdist,.pbarmini,.hspread{display:block}
+.pbarmini,.hspread{vertical-align:middle}
+.pprops{width:100%;border-collapse:collapse;margin:.3rem 0 .2rem;
+        font-variant-numeric:tabular-nums}
+.pprops th{font:600 .68rem/1.3 var(--sans);letter-spacing:.04em;
+           text-transform:uppercase;color:var(--faint);text-align:right;
+           padding:.3rem .45rem;border-bottom:1px solid var(--border);
+           white-space:nowrap}
+.pprops td{font:.82rem/1.4 var(--sans);text-align:right;padding:.3rem .45rem;
+           border-bottom:1px solid var(--border)}
+.pprops th.l,.pprops td.l{text-align:left}
+.pprops tr.rel-noise td{opacity:.72}
 </style>
 </head>
 <body>
@@ -1312,6 +1327,115 @@
   </div>
 
   {#- ---------- inputs ---------- -#}
+  {#- ---------- first five innings ---------- -#}
+  {% if pj.first_five %}
+  {% set f5 = pj.first_five %}
+  <h3 class="lab">First five innings</h3>
+  <div class="pcols split">
+    <figure class="pfig">
+      {{ three_way_bar(f5, bundle.home.abbreviation, bundle.away.abbreviation) }}
+    </figure>
+    <div class="pexp">
+      <p>
+        A separate model, fitted on runs through five rather than scaled down from
+        the full game. It has to be three-way: <strong>15.0%</strong> of games are
+        level after five, where a full game has no ties at all, so one result in
+        six would otherwise have nowhere to go.
+      </p>
+      <p>
+        The starter is nearly the whole story here &mdash; he faces
+        <strong>92.3%</strong> of the batters who come up in the first five, and
+        every one of them in 72.4% of games. That is why his own first-five record
+        carries more weight in this model than his season line does.
+      </p>
+      <p class="sub">
+        Held out, it beats always picking the home side by
+        {{ ((f5.metrics.baseline_log_loss - f5.metrics.held_out_log_loss) * 1000)|round(1) }}
+        thousandths of a nat, and calls the three-way result correctly
+        {{ (f5.metrics.three_way_accuracy * 100)|round(1) }}% of the time.
+        {% if not f5.coherent %}
+        <strong>The three probabilities do not sum to one &mdash; treat this as unreliable.</strong>
+        {% endif %}
+      </p>
+    </div>
+  </div>
+  {% endif %}
+
+  {#- ---------- starter strikeouts ---------- -#}
+  {% if pj.strikeouts %}
+  <h3 class="lab">Starter strikeouts</h3>
+  <div class="pcols">
+    {% for side, label in [('home', bundle.home.abbreviation), ('away', bundle.away.abbreviation)] %}
+    {% set k = pj.strikeouts.get(side) %}
+    {% if k %}
+    <figure class="pfig">
+      <figcaption class="cap">{{ k.name or label }}</figcaption>
+      {{ strikeout_distribution(k) }}
+      <p class="sub">
+        Built batter by batter against the nine he will face, not from one blended
+        rate &mdash; a lineup with three high-strikeout hitters is worth more to him
+        than its average suggests. The rate falls each time through the order
+        (0.239, 0.211, 0.197), and he gets through roughly two and a half turns.
+      </p>
+    </figure>
+    {% endif %}
+    {% endfor %}
+  </div>
+  <div class="note">
+    Held out on 9,718 starts the model never saw, it calls
+    <strong>P(5 or more)</strong> at a log loss of 0.612 against 0.692 for the base
+    rate &mdash; the largest edge of any model in this report. Totals still run about
+    0.15 strikeouts high on average.
+  </div>
+  {% endif %}
+
+  {#- ---------- batter props ---------- -#}
+  {% if pj.player_props %}
+  <h3 class="lab">Batter totals</h3>
+  {% for side, label in [('home', bundle.home.abbreviation), ('away', bundle.away.abbreviation)] %}
+  {% set card = pj.player_props.get(side) %}
+  {% if card %}
+  <h4>{{ label }}</h4>
+  <div class="scroll">
+  <table class="pprops">
+    <thead>
+      <tr>
+        <th class="l">#</th><th class="l">Batter</th>
+        <th>Hits</th><th class="l">0 / 1 / 2 / 3+</th>
+        <th>1+</th><th>2+</th>
+        <th>HR</th><th>HR 1+</th>
+        <th class="l">&nbsp;</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in card %}
+      <tr{% if p.thin %} class="rel-noise"{% endif %}>
+        <td class="l sub">{{ p.slot }}</td>
+        <td class="l">{{ p.name or p.player_id }}</td>
+        <td><strong>{{ "%.2f"|format(p.hits.expected) }}</strong></td>
+        <td class="l">{{ hit_spread(p.hits) }}</td>
+        <td>{{ (p.hits.at_least_one * 100)|round(0)|int }}%</td>
+        <td class="sub">{{ (p.hits.at_least_two * 100)|round(0)|int }}%</td>
+        <td>{{ "%.3f"|format(p.home_runs.expected) }}</td>
+        <td>{{ (p.home_runs.at_least_one * 100)|round(1) }}%</td>
+        <td class="l">{{ prop_bar(p.hits.at_least_one) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+  {% endfor %}
+  <div class="note">
+    Expected totals for the game, not just whether it happens once. The batting
+    order is doing real work: the leadoff spot takes 4.50 plate appearances against
+    3.47 for the ninth, which is worth about a quarter of a hit between two
+    identical hitters. Rates are shrunk toward the league by how much evidence
+    supports them &mdash; hit rate only settles after roughly 475 plate appearances,
+    home-run rate after 193, so a hot fortnight moves these less than it might seem
+    it should. Rows in grey rest on thin samples.
+  </div>
+  {% endif %}
   <h3 class="lab">Probable starters</h3>
   <table class="pstart">
     <thead>

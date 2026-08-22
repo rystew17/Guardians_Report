@@ -365,6 +365,10 @@ def build_environment() -> Environment:
         rate_compare=rate_compare,
         elo_scale_svg=elo_scale_svg,
         accuracy_bar=accuracy_bar,
+        three_way_bar=three_way_bar,
+        strikeout_distribution=strikeout_distribution,
+        prop_bar=prop_bar,
+        hit_spread=hit_spread,
         projection_read=_projection_read,
     )
     return env
@@ -933,3 +937,180 @@ def accuracy_bar(accuracy: float, baseline: float, *, width: int = 140) -> Marku
         f'stroke-width="1.4" opacity="0.65"/>'
         f"</svg>"
     )
+
+
+# ---------------------------------------------------------------------------
+# First five innings, player props, starter strikeouts
+# ---------------------------------------------------------------------------
+
+
+def three_way_bar(first_five: Any, home: str, away: str, *, width: int = 600) -> Markup:
+    """Home leads, level, away leads — as one bar of three parts.
+
+    A first-five result is genuinely three-way. 15.0% of games are tied after
+    five, where a full game has none, so a two-sided bar would have to hide or
+    reassign one outcome in six. Drawing the tie as its own band is the honest
+    shape and happens to be the most interesting band on the chart.
+    """
+    if first_five is None:
+        return Markup("")
+
+    height, label = 34, 20
+    parts = [
+        f'<svg class="twbar" viewBox="0 0 {width} {height + label}" role="img" '
+        f'aria-label="First five innings result">'
+    ]
+    segments = (
+        (first_five.away_leads, AWAY_INK, f"{away} {first_five.away_leads * 100:.0f}%"),
+        (first_five.tied, "var(--muted)", f"level {first_five.tied * 100:.0f}%"),
+        (first_five.home_leads, HOME_INK, f"{home} {first_five.home_leads * 100:.0f}%"),
+    )
+    x = 0.0
+    for share, colour, text in segments:
+        span = width * max(share, 0.0)
+        parts.append(
+            f'<rect x="{x:.1f}" y="0" width="{max(span, 1):.1f}" height="{height}" '
+            f'fill="{colour}" opacity="0.85"><title>{text}</title></rect>'
+        )
+        if span > 58:
+            parts.append(
+                f'<text class="twlab" x="{x + span / 2:.1f}" y="{height / 2 + 4:.0f}" '
+                f'text-anchor="middle">{text}</text>'
+            )
+        x += span
+
+    parts.append(
+        f'<text class="sgl" x="0" y="{height + 14}">runs through five: '
+        f'{first_five.expected_home:.2f} {home} &middot; '
+        f'{first_five.expected_away:.2f} {away}</text>'
+    )
+    parts.append(
+        f'<text class="sgl" x="{width}" y="{height + 14}" text-anchor="end">'
+        f'{first_five.expected_total:.2f} total</text>'
+    )
+    parts.append("</svg>")
+    return Markup("".join(parts))
+
+
+def strikeout_distribution(
+    prop: Any, *, width: int = 380, height: int = 150
+) -> Markup:
+    """The whole distribution of a starter's strikeout total, not just its mean.
+
+    A projection of "5.8 strikeouts" is a number no pitcher can record. What a
+    reader can act on is the shape: where the mass sits, and how much of it
+    falls either side of the half-integer line a book would set.
+    """
+    if prop is None or not prop.distribution:
+        return Markup("")
+
+    counts = sorted(prop.distribution)
+    lo, hi = min(counts), min(max(counts), 14)
+    peak = max(prop.distribution.values())
+    left, right, top, bottom = 10, 10, 22, 30
+    plot_w, plot_h = width - left - right, height - top - bottom
+    step = plot_w / max(hi - lo + 1, 1)
+
+    parts = [
+        f'<svg class="kdist" viewBox="0 0 {width} {height}" role="img" '
+        f'aria-label="Strikeout total distribution">'
+    ]
+    line = prop.line
+    for k in range(lo, hi + 1):
+        p = prop.distribution.get(k, 0.0)
+        bar = plot_h * (p / peak) if peak else 0
+        x = left + (k - lo) * step
+        # Colour by which side of the line the outcome falls on.
+        over = k > line
+        parts.append(
+            f'<rect x="{x + 1:.1f}" y="{top + plot_h - bar:.1f}" '
+            f'width="{step - 2:.1f}" height="{bar:.1f}" rx="1" '
+            f'fill="{HOME_INK if over else "var(--muted)"}" '
+            f'opacity="{0.85 if over else 0.5}">'
+            f'<title>exactly {k}: {p * 100:.1f}%</title></rect>'
+        )
+        if k % 2 == 0 or k == lo:
+            parts.append(
+                f'<text class="sgl" x="{x + step / 2:.1f}" '
+                f'y="{top + plot_h + 13}" text-anchor="middle">{k}</text>'
+            )
+
+    marker = left + (line - lo + 0.5) * step
+    parts.append(
+        f'<line x1="{marker:.1f}" y1="{top - 4}" x2="{marker:.1f}" '
+        f'y2="{top + plot_h:.1f}" stroke="{FLAG_INK}" stroke-width="1.6"/>'
+    )
+    parts.append(
+        f'<text class="sga" x="{marker:.1f}" y="{top - 8}" text-anchor="middle" '
+        f'fill="{FLAG_INK}">{line:g}</text>'
+    )
+    over_line = prop.at_least(int(line) + 1)
+    parts.append(
+        f'<text class="sgl" x="{left}" y="{height - 6}">expected '
+        f'{prop.expected:.2f} over {prop.batters_faced:.0f} batters</text>'
+    )
+    parts.append(
+        f'<text class="sgl" x="{width - right}" y="{height - 6}" text-anchor="end">'
+        f'over {line:g}: {over_line * 100:.0f}%</text>'
+    )
+    parts.append("</svg>")
+    return Markup("".join(parts))
+
+
+def prop_bar(value: float, *, width: int = 88, reference: float | None = None) -> Markup:
+    """A probability as a bar, optionally against a reference rate."""
+    value = max(0.0, min(1.0, float(value or 0.0)))
+    parts = [
+        f'<svg class="pbarmini" viewBox="0 0 {width} 12" role="img" '
+        f'aria-label="{value * 100:.0f} percent">',
+        f'<rect x="0" y="2" width="{width}" height="8" rx="1.5" '
+        f'fill="var(--border)" opacity="0.5"/>',
+        f'<rect x="0" y="2" width="{width * value:.1f}" height="8" rx="1.5" '
+        f'fill="var(--accent)" opacity="0.8"/>',
+    ]
+    if reference is not None:
+        x = width * max(0.0, min(1.0, reference))
+        parts.append(
+            f'<line x1="{x:.1f}" y1="0" x2="{x:.1f}" y2="12" '
+            f'stroke="var(--ink)" stroke-width="1.2" opacity="0.6"/>'
+        )
+    parts.append("</svg>")
+    return Markup("".join(parts))
+
+
+def hit_spread(prop: Any, *, width: int = 108, height: int = 14) -> Markup:
+    """How many hits, as a stack of the count probabilities.
+
+    Reads left to right as none, one, two, three or more. The point is that a
+    batter projected at 1.2 hits is not going to get 1.2 hits, and the widths
+    show which outcomes are actually in play.
+    """
+    if not prop:
+        return Markup("")
+    distribution = prop.get("distribution") or {}
+    if not distribution:
+        return Markup("")
+
+    shades = ["var(--border)", "#9db4cc", HOME_INK, FLAG_INK]
+    parts = [
+        f'<svg class="hspread" viewBox="0 0 {width} {height}" role="img" '
+        f'aria-label="hit count probabilities">'
+    ]
+    x = 0.0
+    for index in range(4):
+        share = (
+            distribution.get(index, 0.0) if index < 3
+            else sum(v for k, v in distribution.items() if k >= 3)
+        )
+        span = width * share
+        if span <= 0.4:
+            continue
+        parts.append(
+            f'<rect x="{x:.1f}" y="1" width="{span:.1f}" height="{height - 2}" '
+            f'fill="{shades[index]}" opacity="0.85">'
+            f'<title>{"3+" if index == 3 else index} hits: {share * 100:.0f}%</title>'
+            f'</rect>'
+        )
+        x += span
+    parts.append("</svg>")
+    return Markup("".join(parts))
