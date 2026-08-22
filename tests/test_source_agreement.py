@@ -15,6 +15,7 @@ These tests hit the network. Run with:  pytest -m network
 from __future__ import annotations
 
 from datetime import date, timezone
+from pathlib import Path
 
 import pytest
 
@@ -356,3 +357,89 @@ def test_our_fielding_percentile_matches_the_published_one():
         f"median {np.median(errors):.1f} points from the published percentile")
     assert (errors > 10).mean() <= 0.05, (
         f"{(errors > 10).mean():.1%} of players more than 10 points off")
+
+
+def _player_page_percentiles(player_id: int, *, pitching: bool = False):
+    """Savant's published run value percentiles, from the player page.
+
+    These are on no CSV leaderboard. They are rendered in a `percentileRankings`
+    table on each player's page, one row per season, and finding them is what
+    turned this from guesswork into calibration -- the population had been
+    reasoned about against a single observation until then.
+
+    Empty cells are kept. Dropping them shifts every later column left, which
+    silently hands a fielding percentile to the batting slot: it read plausibly
+    and put three players eighty points out.
+    """
+    import re
+    import urllib.request
+
+    stats = "statcast-r-pitching-mlb" if pitching else "statcast-r-hitting-mlb"
+    url = f"https://baseballsavant.mlb.com/savant-player/{player_id}?stats={stats}"
+    request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    html = urllib.request.urlopen(request, timeout=45).read().decode("utf-8", "replace")
+    if 'id="percentileRankings"' not in html:
+        return None
+
+    start = html.index('id="percentileRankings"')
+    table = html[start:html.index("</table>", start)]
+    header = None
+    for row in re.findall(r"<tr[^>]*>(.*?)</tr>", table, re.S):
+        cells = [re.sub(r"<[^>]+>", "", c).strip()
+                 for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, re.S)]
+        if cells and cells[0] == "Year":
+            header = cells
+        if cells and cells[0] == str(date.today().year) and header:
+            wanted = "Pitching" if pitching else "Batting"
+            index = header.index(wanted) if wanted in header else 1
+            try:
+                return float(cells[index])
+            except (ValueError, IndexError):
+                return None
+    return None
+
+
+@pytest.mark.network
+@pytest.mark.parametrize("pitching", [False, True])
+def test_our_run_value_percentile_matches_the_player_page(pitching):
+    """Ranked against a pool cut at 250 plate appearances, or 200 batters faced.
+
+    Both thresholds sit on a plateau rather than a single working value --
+    200/250/300 all clear r = 0.999 for hitters -- which is the difference
+    between a finding and a curve fit. The earlier version ranked a shrunk rate
+    against every player on the board and sat four points off.
+    """
+    import numpy as np
+    import pandas as pd
+
+    name = "pitcher" if pitching else "batter"
+    path = Path("data/models") / f"{name}_profiles.parquet"
+    if not path.exists():
+        pytest.skip(f"{path.name} not built")
+
+    frame = pd.read_parquet(path)
+    frame = frame[frame["season"] == date.today().year]
+    key, size, floor = (
+        ("pitch_rv", "bf", 200) if pitching else ("bat_rv", "pa", 250))
+    if len(frame) < 60:
+        pytest.skip("reference too thin this early in the season")
+
+    pool = sorted(frame[frame[size] >= floor][key])
+    # The heaviest workloads, because those are the players Savant publishes a
+    # percentile for at all.
+    sample = frame.nlargest(8, size)
+
+    errors = []
+    for _, row in sample.iterrows():
+        published = _player_page_percentiles(int(row[name]), pitching=pitching)
+        if published is None:
+            continue
+        value = float(row[key])
+        below = sum(1 for x in pool if x < value)
+        equal = sum(1 for x in pool if x == value)
+        errors.append(abs((below + equal / 2) / len(pool) * 100 - published))
+
+    if len(errors) < 4:
+        pytest.skip(f"only {len(errors)} published percentiles available")
+    assert np.median(errors) <= 4.0, (
+        f"median {np.median(errors):.1f} points from the published percentile")

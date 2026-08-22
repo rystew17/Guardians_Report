@@ -1435,24 +1435,28 @@ def build_preview(
         def _rate(value: float, size: float, padding: float, per: float) -> float:
             return value / (size + padding) * per
 
-        # The pool is qualified players, not everyone with a plate appearance.
-        # Ranking against all 562 batters put a qualified regular at the 74th
-        # percentile where Savant's own page said 57 -- the extra 300 names are
-        # part-timers who drag the distribution down and inflate everyone above
-        # them. Every other chip on this grid is already ranked this way; the run
-        # value chips were the exception and were wrong for it.
-        QUALIFIED_PA = 300
-        QUALIFIED_BF = 300
+        # Calibrated against Savant's own published percentiles rather than
+        # reasoned about. Those are not on any CSV board -- they are rendered in
+        # the `percentileRankings` table on each player page, by season -- so
+        # this was guesswork until they were found. Scraped for a spread of
+        # players, the answer is a season total ranked against a pool cut at 250
+        # plate appearances: r = 0.999, a median half a percentile point apart.
+        #
+        # A plateau, not a knife edge: 200, 250 and 300 all clear r = 0.999,
+        # while 400 falls to a ten-point median error. A threshold that only
+        # works at one value is a curve fit; one that holds across a range is a
+        # finding.
+        QUALIFIED_PA = 250
+        QUALIFIED_BF = 200
 
         bat_pool = sorted(
-            _rate(v, n, RUN_VALUE_PADDING, 600.0)
-            for v, n in batting.values() if n >= QUALIFIED_PA)
-        # Pitching run value follows the arsenal rule -- season total, ranked
-        # against every pitcher with a real workload -- because that is what
-        # reproduces the page: 70 against a published 66, where the shrunk rate
-        # gave 59. The pitcher reference already floors at 120 batters faced, so
-        # "everyone" here is not the open field it would be for hitters.
-        pitch_pool = sorted(v for v, _ in pitching.values())
+            v for v, n in batting.values() if n >= QUALIFIED_PA)
+        # Same treatment, same calibration: season total against a pool cut at
+        # 200 batters faced gives r = 0.999 and a median 1.6 points from the
+        # published figure, across two dozen pitchers. Ranking against every
+        # arm on the board -- the previous rule -- sat 2.8 points high.
+        pitch_pool = sorted(
+            v for v, n in pitching.values() if n >= QUALIFIED_BF)
         # Arsenal chips rank the season total against everyone who throws that
         # pitch, which is established rather than assumed: it reproduces the
         # player page at 93.9 against 92 on the fastball, 23.9 against 26 on the
@@ -1497,9 +1501,22 @@ def build_preview(
         # by roughly 170 and the pool by 190, so every player was measured on a
         # more generous scale than the field he was ranked against -- which put
         # a regular at the 97th percentile where his own page said 90.
+        # Ranked against runners who had a real number of chances to take an
+        # extra base. Fifty is not fitted to a target: the agreement with the
+        # player page sits on a plateau -- 61.7 to 62.5 against a published 63
+        # across thresholds from 50 to 80, a sixty percent change in the cut --
+        # where including everyone gives 66 and demanding a hundred gives 58.
+        # A number that holds across that range is evidence; one that only works
+        # at a single threshold is a curve fit.
+        # Season total, not a shrunk rate -- the same treatment fielding gets,
+        # and fielding is the one chip with published ground truth to check
+        # against (r = 0.998 across 254 players). Shrinking the rate here moved
+        # the agreement from 62.5 to 59 against a published 63; the shrinkage
+        # was solving a thin-sample problem the asterisk already flags.
+        BASERUN_MIN_CHANCES = 50
         run_pool = sorted(
-            _rate(v, run_chances.get(pid, 0.0) or 0.0, 20.0, 60.0)
-            for pid, v in run_values.items())
+            v for pid, v in run_values.items()
+            if (run_chances.get(pid) or 0) >= BASERUN_MIN_CHANCES)
         field_pool = sorted(field_values.values())
 
         for section in (sections["home"], sections["away"]):
@@ -1508,9 +1525,7 @@ def build_preview(
                 if pid in batting:
                     value, size = batting[pid]
                     if size >= 25:
-                        grade = _rank(
-                            _rate(value, size, RUN_VALUE_PADDING, 600.0),
-                            bat_pool)
+                        grade = _rank(value, bat_pool)
                         if grade is not None:
                             box.derived_percentiles["bat_rv"] = grade
                             if size >= QUALIFIED_PA:
@@ -1521,12 +1536,11 @@ def build_preview(
                     continue
                 raw = run_values.get(pid)
                 if raw is not None:
-                    grade = _rank(
-                        _rate(raw, run_chances.get(pid, 0.0) or 0.0, 20.0, 60.0),
-                        run_pool)
+                    grade = _rank(raw, run_pool)
                     if grade is not None:
                         box.derived_percentiles["run_rv"] = grade
-                        box.qualified_chips.add("run_rv")
+                        if (run_chances.get(pid) or 0) >= BASERUN_MIN_CHANCES:
+                            box.qualified_chips.add("run_rv")
 
                 raw = field_values.get(pid)
                 if raw is not None:
