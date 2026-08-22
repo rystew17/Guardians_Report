@@ -51,16 +51,23 @@ def _settings():
     return load_settings()
 
 
-async def _run_build(job: Job, *, statcast: bool, analysis: bool, model: str) -> None:
-    """Run the CLI and relay its output to the job's event queue."""
+async def _run_build(job: Job, *, statcast: bool, analysis: bool) -> None:
+    """Run the CLI and relay its output to the job's event queue.
+
+    The analysis is computed, not generated. This used to pass
+    `--with-analysis --model`, which is the flag that routes to a language
+    model -- so the app kept calling one for months after the CLI default
+    stopped. Written analysis is now the CLI's default and the checkbox only
+    turns it off.
+    """
     cmd = [
         sys.executable, "-m", "guards_report.cli", "build",
         "--date", job.game_date, "--no-store",
     ]
     if not statcast:
         cmd.append("--no-statcast")
-    if analysis:
-        cmd += ["--with-analysis", "--model", model]
+    if not analysis:
+        cmd.append("--no-analysis")
 
     # Windows defaults child stdio to the ANSI code page, so the separators and
     # accented names the CLI prints would arrive as mojibake once decoded as
@@ -109,8 +116,7 @@ async def generate(request: Request) -> JSONResponse:
         _run_build(
             job,
             statcast=bool(body.get("statcast", True)),
-            analysis=bool(body.get("analysis", False)),
-            model=body.get("model", "sonnet"),
+            analysis=bool(body.get("analysis", True)),
         )
     )
     return JSONResponse({"job_id": job.id})

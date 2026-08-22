@@ -53,6 +53,13 @@ def _full(tmp_path, through: str = "2026-08-21"):
     (tmp_path / "models" / "models_2026.parquet").rename(
         tmp_path / "models" / "f5_starter.parquet"
     )
+    # The graded reference populations, stamped with how far the corpus behind
+    # them reached. They are read at serve time and can freeze like any other
+    # derived table, so a fixture without them is not a current install.
+    pd.DataFrame({
+        "batter": [1], "season": [2026], "pa": [400],
+        "built_through": pd.to_datetime([through]),
+    }).to_parquet(tmp_path / "models" / "batter_profiles.parquet")
     return tmp_path
 
 

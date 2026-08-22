@@ -44,6 +44,7 @@ class Freshness:
     pitchers_through: date | None = None
     pitches_through: date | None = None
     derived_through: date | None = None
+    profiles_through: date | None = None
     fitted_ages: dict[str, int] = field(default_factory=dict)
     requests: int = 0
     seconds: float = 0.0
@@ -59,6 +60,7 @@ class Freshness:
                 ("pitchers", self.pitchers_through),
                 ("pitches", self.pitches_through),
                 ("derived", self.derived_through),
+                ("profiles", self.profiles_through),
             )
         }
 
@@ -79,6 +81,7 @@ class Freshness:
             f"pitchers {self.pitchers_through}",
             f"pitches {self.pitches_through}",
             f"derived {self.derived_through}",
+            f"profiles {self.profiles_through}",
         ]
         return (
             " | ".join(parts)
@@ -230,6 +233,9 @@ def survey(root: Path, season: int) -> Freshness:
         pitchers_through=_latest(root / "pitchers", f"*{season}*.parquet"),
         pitches_through=_latest(root / "pitches", f"{season}_*.parquet"),
         derived_through=_latest(root / "models", "f5_starter.parquet"),
+        profiles_through=_latest(
+            root / "models", "batter_profiles.parquet",
+            column="built_through"),
         fitted_ages=fitted_ages(root / "models"),
     )
 

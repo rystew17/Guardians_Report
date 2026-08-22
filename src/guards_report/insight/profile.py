@@ -930,7 +930,7 @@ PITCH_COLUMNS_FOR_PROFILES = [
     "batter", "pitcher", "season", "events", "description", "zone",
     "launch_speed", "launch_angle", "launch_speed_angle", "bb_type",
     "release_speed", "pitch_name", "estimated_woba_using_speedangle",
-    "game_pk", "delta_run_exp",
+    "game_pk", "delta_run_exp", "game_date",
 ]
 
 SWING_DESCRIPTIONS = {
@@ -1046,7 +1046,13 @@ def build_batter_reference(pitch, *, minimum_pa: int = 25):
                        ("fb_rate", "fly_ball")):
         frame[name] = balls["bb_type"].apply(lambda s, k=kind: (s == k).mean())
 
-    return frame[frame["pa"] >= minimum_pa].reset_index()
+    out = frame[frame["pa"] >= minimum_pa].reset_index()
+    # The last game the corpus behind this reached. A grade is a
+    # percentile among this season's players, so a reference built from
+    # a corpus two weeks old re-ranks the league silently -- and with no
+    # date on the rows there was no way to notice.
+    out["built_through"] = pd.to_datetime(pitch["game_date"]).max()
+    return out
 
 
 def build_pitcher_reference(pitch, *, minimum_bf: int = 120):
@@ -1110,7 +1116,13 @@ def build_pitcher_reference(pitch, *, minimum_bf: int = 120):
     for name, kind in (("gb_rate", "ground_ball"), ("fb_rate", "fly_ball")):
         frame[name] = balls["bb_type"].apply(lambda s, k=kind: (s == k).mean())
 
-    return frame[frame["bf"] >= minimum_bf].reset_index()
+    out = frame[frame["bf"] >= minimum_bf].reset_index()
+    # The last game the corpus behind this reached. A grade is a
+    # percentile among this season's players, so a reference built from
+    # a corpus two weeks old re-ranks the league silently -- and with no
+    # date on the rows there was no way to notice.
+    out["built_through"] = pd.to_datetime(pitch["game_date"]).max()
+    return out
 
 
 # --------------------------------------------------------------------------

@@ -82,21 +82,14 @@
       <label><input type="checkbox" id="statcast" checked> Pitch-level Statcast</label>
       <label><input type="checkbox" id="analysis" checked> Written analysis</label>
       <label><input type="checkbox" id="autopublish" checked> Publish when done</label>
-      <label>Model
-        <select id="model">
-          <option value="sonnet">Sonnet</option>
-          <option value="opus">Opus</option>
-          <option value="haiku">Haiku</option>
-        </select>
-      </label>
     </div>
     <div class="note">
       Statcast adds the handedness-split zone maps and spray charts; it turns a
-      seconds-long run into a few minutes. Written analysis covers the matchup,
-      both starters, the lineups, available relievers and the bench — batched
-      into a handful of calls and billed to your Claude subscription, not per
-      token. Notes are cached against the figures behind them, so rebuilding a
-      day whose numbers have not moved regenerates nothing.
+      seconds-long run into a few minutes. Written analysis gives every player a
+      profile, a form read and a matchup, plus the game note — computed from the
+      pitch corpus and the fitted models, not generated. No language model is
+      called, nothing is billed, and the same game yields the same words every
+      time.
     </div>
     <div class="status" id="status"></div>
     <div id="log"></div>
@@ -163,7 +156,6 @@ $("go").onclick = async () => {
       date: $("date").value,
       statcast: $("statcast").checked,
       analysis: $("analysis").checked,
-      model: $("model").value,
     }),
   });
   const {job_id} = await res.json();
