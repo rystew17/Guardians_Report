@@ -18,6 +18,53 @@ something no evaluator was written for. That is a real loss, accepted knowingly.
 
 ---
 
+## Status update — Phase A built
+
+The projections work supplied more of this than the plan assumed. Three items
+listed as future phases already exist:
+
+| Planned | Now |
+|---|---|
+| Phase C, measure stabilisation | Done for three metrics (hit 475, home run 193, strikeout 55) and `props.stabilisation_points` generalises the method |
+| Reference distributions | Already in the artifacts: `win_prob_sorted`, league totals, platoon factors, park factors for 30 venues |
+| Realization layer | `predict.read_of` already selects a sentence by thresholds on measured contributions and ships in production |
+
+**Phase A is built** as `insight/`: the `Finding` type with reliability
+shrinkage, a significance floor derived from the criteria count, diversity-
+constrained selection, contrast detection, change-point trends, five evaluators
+and a template renderer. Twenty tests.
+
+Measured behaviour worth recording:
+
+- Change-point detection fires on a real shift (30 games at .400 against a .250
+  baseline: 32-game window, p = 0.0002), stays silent on pure noise, and holds a
+  **0.5% false-positive rate across 200 noise players** against a nominal 5%,
+  because the threshold is corrected for how many windows were tried.
+- Reliability weighting does the work it was built for. On a real card, a
+  strikeout finding survived at 0.90 reliability while hit findings were halved
+  to 0.50 — the metric that stabilises fastest wins on its own merits.
+- On tonight's nine, one hitter in five produced a finding that cleared the
+  floor: *"strikes out 10.0% of the time, league 22.0%."* The other four
+  produced nothing, which is the designed behaviour and the open question for
+  Phase B.
+
+Two design gaps the tests found:
+
+- `Finding.direction` was the sign of a z-score, which says nothing about
+  strength versus weakness — a high strikeout rate is excellent for a pitcher
+  and the reverse for a hitter. A `POLARITY` map now signs every value so that
+  positive means better, without which contrast detection is meaningless.
+- Selection must take the count of criteria *scanned*, not findings surviving.
+  Passing the latter understates the multiple-comparisons cost, which is the
+  whole failure mode.
+
+**Phase B is the next step and remains the stop point.** Run both layers on ten
+games and read them side by side. The live question is not whether the findings
+are correct — they are, by construction — but whether four silent players out of
+five reads as disciplined or as empty.
+
+---
+
 ## 1. What exists
 
 | Module | Lines | Role after this work |
