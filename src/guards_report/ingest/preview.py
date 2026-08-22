@@ -1048,6 +1048,8 @@ def build_preview(
                 "corpus_through": str(freshness_note.corpus_through),
                 "pitchers_through": str(freshness_note.pitchers_through),
                 "pitches_through": str(freshness_note.pitches_through),
+                "derived_through": str(freshness_note.derived_through),
+                "fitted_ages": dict(freshness_note.fitted_ages),
                 "requests": freshness_note.requests,
                 "seconds": round(freshness_note.seconds, 1),
                 "current": freshness_note.is_current(on),

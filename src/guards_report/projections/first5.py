@@ -118,13 +118,25 @@ def starter_history(pitch_corpus: pd.DataFrame) -> pd.DataFrame:
     thin = prior_starts < MIN_PRIOR_STARTS
     per_start.loc[thin, ["sp_f5_ra", "sp_f5_bf"]] = np.nan
 
-    return per_start[["starter", "game_pk", "sp_f5_ra", "sp_f5_bf", "sp_f5_starts"]]
+    # `game_date` travels with the row. It is what lets the live lookup take a
+    # starter's line as of the day being projected rather than the last row in
+    # the file, and it is how the refresh knows whether this table has fallen
+    # behind the pitch corpus it was derived from -- neither of which is
+    # answerable from the starter and game_pk alone.
+    return per_start[
+        ["starter", "game_pk", "game_date", "sp_f5_ra", "sp_f5_bf", "sp_f5_starts"]
+    ]
 
 
 def add_features(data: pd.DataFrame, history: pd.DataFrame) -> pd.DataFrame:
     """Attach the opposing starter's first-five line to each team-game."""
+    # The date is dropped rather than suffixed away: `data` carries its own
+    # `game_date`, and a merge that produced `game_date_x`/`game_date_y` would
+    # break every later reader of this frame for no gain -- the join key is the
+    # game, so the two dates are the same date anyway.
     joined = data.merge(
-        history.rename(columns={"starter": "opp_starter_id"}),
+        history.drop(columns=["game_date"], errors="ignore")
+               .rename(columns={"starter": "opp_starter_id"}),
         on=["opp_starter_id", "game_pk"], how="left",
     ).rename(columns={"sp_f5_ra": "opp_f5_ra", "sp_f5_bf": "opp_f5_bf"})
     joined["f5_line_known"] = joined["opp_f5_ra"].notna().astype(int)

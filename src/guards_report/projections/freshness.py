@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +43,8 @@ class Freshness:
     corpus_through: date | None = None
     pitchers_through: date | None = None
     pitches_through: date | None = None
+    derived_through: date | None = None
+    fitted_ages: dict[str, int] = field(default_factory=dict)
     requests: int = 0
     seconds: float = 0.0
     refreshed: list[str] = field(default_factory=list)
@@ -56,6 +58,7 @@ class Freshness:
                 ("corpus", self.corpus_through),
                 ("pitchers", self.pitchers_through),
                 ("pitches", self.pitches_through),
+                ("derived", self.derived_through),
             )
         }
 
@@ -75,12 +78,49 @@ class Freshness:
             f"corpus {self.corpus_through}",
             f"pitchers {self.pitchers_through}",
             f"pitches {self.pitches_through}",
+            f"derived {self.derived_through}",
         ]
         return (
             " | ".join(parts)
             + f"  ({self.requests} requests, {self.seconds:.0f}s)"
             + (f"  WARNINGS: {len(self.warnings)}" if self.warnings else "")
         )
+
+
+# Fitted artifacts whose age the report should state. Their coefficients are
+# deliberately fixed -- a report must never re-estimate a model, or two reports
+# of the same game would disagree -- but "deliberately fixed" and "quietly
+# months old" look identical from the page, and only one of them is fine.
+FITTED_ARTIFACTS = ("game_outcome.json", "first5.json", "props.json")
+
+# Past this the fit is stale enough to say so. Roughly a fortnight of baseball:
+# long enough that rosters, rotations and form have all moved, short enough that
+# it fires before a pennant race renders the ratings meaningless.
+REFIT_AFTER_DAYS = 14
+
+
+def fitted_ages(models_dir: Path, *, now: date | None = None) -> dict[str, int]:
+    """Days since each fitted artifact was written.
+
+    Read from the artifact's own `fitted_at` rather than the file's mtime, which
+    a sync, a restore or a copy would reset without the model having changed.
+    """
+    import json
+
+    today = now or date.today()
+    ages: dict[str, int] = {}
+    for name in FITTED_ARTIFACTS:
+        path = Path(models_dir) / name
+        if not path.exists():
+            continue
+        try:
+            stamp = json.loads(path.read_text()).get("fitted_at")
+            if stamp:
+                fitted = datetime.fromisoformat(stamp).date()
+                ages[name.removesuffix(".json")] = (today - fitted).days
+        except Exception:  # noqa: BLE001 -- an unreadable stamp is not fatal
+            continue
+    return ages
 
 
 def _latest(directory: Path, pattern: str, column: str = "game_date") -> date | None:
@@ -98,12 +138,50 @@ def _latest(directory: Path, pattern: str, column: str = "game_date") -> date | 
     return max(stamps).date() if stamps else None
 
 
+def rebuild_derived(root: Path) -> int | None:
+    """Recompute the first-five starter table from the pitch corpus.
+
+    A full recompute rather than an append, because each row's value is a
+    running mean over that starter's whole career and the stored table keeps the
+    mean rather than the totals behind it -- so there is nothing to append onto.
+    With the columns projected at read time this is around eight seconds against
+    eight million pitches, which is cheaper than the bookkeeping an incremental
+    version would need and cannot drift from a full rebuild.
+
+    Returns the number of starts written, or None when there is no corpus yet.
+    """
+    from guards_report.projections import first5 as first5_module
+
+    directory = Path(root) / "pitches"
+    files = sorted(directory.glob("*.parquet"))
+    if not files:
+        return None
+
+    columns = [
+        "game_pk", "game_date", "season", "inning", "pitcher", "batting_team",
+        "events", "post_bat_score", "bat_score",
+    ]
+    pitch = pd.concat(
+        [pd.read_parquet(path, columns=columns) for path in files],
+        ignore_index=True,
+    )
+    pitch["game_date"] = pd.to_datetime(pitch["game_date"])
+
+    history = first5_module.starter_history(pitch)
+    target = Path(root) / "models" / "f5_starter.parquet"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    history.to_parquet(target, index=False)
+    return len(history)
+
+
 def survey(root: Path, season: int) -> Freshness:
     """What is on disk right now, without fetching anything."""
     return Freshness(
         corpus_through=_latest(root / "corpus", f"*{season}*.parquet"),
         pitchers_through=_latest(root / "pitchers", f"*{season}*.parquet"),
         pitches_through=_latest(root / "pitches", f"{season}_*.parquet"),
+        derived_through=_latest(root / "models", "f5_starter.parquet"),
+        fitted_ages=fitted_ages(root / "models"),
     )
 
 
@@ -183,15 +261,39 @@ def refresh_all(
         except Exception as exc:  # noqa: BLE001
             result.warnings.append(f"pitches: {type(exc).__name__}: {exc}")
 
+    # -- derived tables: no fetch, but they freeze exactly like a corpus -----
+    # `f5_starter` is read at serve time and is derived from the pitch corpus,
+    # so refreshing the corpus without rebuilding this leaves the report reading
+    # a starter's first-five line from whenever the model was last trained. That
+    # is the same failure as the frozen ratings, one layer down, and it is
+    # invisible because the table is present and parses cleanly.
+    try:
+        rebuilt = rebuild_derived(root)
+        if rebuilt is not None:
+            result.refreshed.append("derived")
+            if verbose:
+                print(f"  derived  {rebuilt:,} starts", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        result.warnings.append(f"derived: {type(exc).__name__}: {exc}")
+
     survey_after = survey(root, season)
     result.corpus_through = survey_after.corpus_through
     result.pitchers_through = survey_after.pitchers_through
     result.pitches_through = survey_after.pitches_through
+    result.derived_through = survey_after.derived_through
+    result.fitted_ages = survey_after.fitted_ages
     result.seconds = time.time() - started
 
     # A corpus that reaches past the date being projected has leaked, and that
     # matters more than being behind: it would let a model see the game it is
     # predicting.
+    for name, age in result.fitted_ages.items():
+        if age > REFIT_AFTER_DAYS:
+            result.warnings.append(
+                f"{name} was fitted {age} days ago; its coefficients predate "
+                "roughly a fortnight of baseball and it should be refitted"
+            )
+
     for name, days in result.stale_days(on).items():
         if days is not None and days < 0:
             result.warnings.append(

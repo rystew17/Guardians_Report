@@ -1531,7 +1531,20 @@
     Every source was refreshed before this ran: games and starts through
     {{ pj.freshness.corpus_through }}, pitch-level data through
     {{ pj.freshness.pitches_through }}
+    {%- if pj.freshness.derived_through and pj.freshness.derived_through != 'None' %},
+    and the derived starter tables through {{ pj.freshness.derived_through }}{% endif %}
     ({{ pj.freshness.requests }} requests, {{ pj.freshness.seconds }}s).
+    {%- if pj.freshness.fitted_ages %}
+    {%- set stale_fits = pj.freshness.fitted_ages.items()|selectattr('1', 'gt', 14)|list %}
+    {%- set oldest = pj.freshness.fitted_ages.values()|max %}
+    The models themselves are refitted on their own schedule rather than per
+    report &mdash; two reports of one game must not disagree &mdash; and the oldest
+    fit here is {{ oldest }} day{{ 's' if oldest != 1 }} old.
+    {%- if stale_fits %}
+    <strong>{{ stale_fits|length }} of them {{ 'is' if stale_fits|length == 1 else 'are' }}
+    over a fortnight old and due to be refitted.</strong>
+    {%- endif %}
+    {%- endif %}
     {% if not pj.freshness.current %}
     <strong>One or more sources is behind &mdash; treat these projections as
     stale.</strong>
