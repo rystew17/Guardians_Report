@@ -106,7 +106,9 @@ class Match:
 
     code: str
     label: str
-    blurb: str
+    # Every phrasing of this archetype. A tuple rather than a string because two
+    # Soft-Contact Managers on one card otherwise read word for word alike.
+    blurb: tuple[str, ...] | str
     strength: float                   # 0-1, how squarely he sits in it
 
 
@@ -249,13 +251,21 @@ def batting_runs(xwoba: float, plate_appearances: int) -> float:
     return float((xwoba - LEAGUE_XWOBA) / WOBA_SCALE * plate_appearances)
 
 
-def baserunning_runs(season: dict) -> float:
-    """Runs above average from stealing, per the rate he actually runs at.
+def baserunning_runs(season: dict, measured: float | None = None) -> float:
+    """Runs above average on the bases.
 
-    Rate rather than total, against opportunities rather than games: ten steals
-    in ten games is elite and ten across a full season is not, and a burner who
-    rarely reaches first should not be marked down for chances he never had.
+    Prefers Savant's own figure, which is the sum of what a runner gained
+    taking extra bases on batted balls and what he gained stealing -- the
+    Baserunning Run Value on his player page. That is a measurement.
+
+    The fallback below is an estimate from stolen bases and times caught, used
+    only when the board has no row for him. It is worse in a specific way: it
+    cannot see the half of baserunning that happens without a throw, so a
+    runner who never steals but goes first to third all year reads as neutral.
     """
+    if measured is not None and np.isfinite(measured):
+        return float(measured)
+
     singles = float(season.get("singles") or 0)
     walks = float(season.get("baseOnBalls") or 0)
     hbp = float(season.get("hitByPitch") or 0)
@@ -266,7 +276,7 @@ def baserunning_runs(season: dict) -> float:
     sb = float(season.get("stolenBases") or 0)
     cs = float(season.get("caughtStealing") or 0)
     gained = RUN_SB * sb + RUN_CS * cs
-    # Centred on what an average player would have produced with the same
+    # Centered on what an average player would have produced with the same
     # number of chances, so this is runs *above average* like the other terms.
     expected = RUN_SB * LEAGUE_SB_RATE * on_first
     return float(gained - expected)
@@ -364,7 +374,11 @@ def _has_plus(tools: dict[str, Tool]) -> bool:
 BATTER_PROFILES: tuple[Definition, ...] = (
     Definition(
         "tto", "Three True Outcomes",
-        "walks, strikes out and does damage -- the ball rarely goes in play",
+        (
+            "walks, strikes out and does damage -- the ball rarely goes in play",
+            "three outcomes and not much else, which is a living",
+            "he will walk, whiff or hit it out, and rarely anything between",
+        ),
         "batter",
         lambda t, x: _clears((_g(t, "power"), HIGH, True),
                              (_g(t, "discipline"), MID_HI, True),
@@ -372,7 +386,11 @@ BATTER_PROFILES: tuple[Definition, ...] = (
     ),
     Definition(
         "swing_miss_slug", "Swing-and-Miss Slugger",
-        "enormous damage when he connects, and he does not connect often",
+        (
+            "enormous damage when he connects, and he does not connect often",
+            "all or nothing, and the all is worth waiting for",
+            "he will miss a lot and make one hurt",
+        ),
         "batter",
         lambda t, x: _clears((_g(t, "power"), HIGH, True),
                              (_g(t, "contact"), LOW, False),
@@ -380,14 +398,22 @@ BATTER_PROFILES: tuple[Definition, ...] = (
     ),
     Definition(
         "complete", "Complete Hitter",
-        "power without the strikeouts that usually pay for it",
+        (
+            "power without the strikeouts that usually pay for it",
+            "damage and contact in the same hitter, which is rare",
+            "he hits it hard and he hits it often",
+        ),
         "batter",
         lambda t, x: _clears((_g(t, "power"), HIGH, True),
                              (_g(t, "contact"), HIGH, True)),
     ),
     Definition(
         "slugger", "Classic Slugger",
-        "power and patience, and pitchers work around him",
+        (
+            "power and patience, and pitchers work around him",
+            "real thump, and the discipline to wait for something to hit",
+            "he does not chase, and he punishes anything in reach",
+        ),
         "batter",
         lambda t, x: _clears((_g(t, "power"), HIGH, True),
                              (_g(t, "discipline"), HIGH, True),
@@ -395,7 +421,11 @@ BATTER_PROFILES: tuple[Definition, ...] = (
     ),
     Definition(
         "on_base", "On-Base Grinder",
-        "takes his walks and makes pitchers work, without the power",
+        (
+            "takes his walks and makes pitchers work, without the power",
+            "a professional at-bat every time, if not a loud one",
+            "he gets on base without ever threatening the fence",
+        ),
         "batter",
         lambda t, x: _clears((_g(t, "discipline"), HIGH, True),
                              (_g(t, "contact"), MID_LO, True),
@@ -403,14 +433,22 @@ BATTER_PROFILES: tuple[Definition, ...] = (
     ),
     Definition(
         "bat_to_ball", "Bat-to-Ball Wizard",
-        "puts everything in play; striking him out is a project",
+        (
+            "puts everything in play; striking him out is a project",
+            "the bat finds the ball almost every time",
+            "getting a swing and miss past him is genuinely hard",
+        ),
         "batter",
         lambda t, x: _clears((_g(t, "contact"), ELITE, True),
                              (_g(t, "power"), MID_HI, False)),
     ),
     Definition(
         "line_drive", "Line-Drive Doubles Machine",
-        "hits it hard on a line, gap to gap",
+        (
+            "hits it hard on a line, gap to gap",
+            "line drives, doubles, and not much lift",
+            "he squares the ball up and lets it find a gap",
+        ),
         "batter",
         lambda t, x: _clears((_g(t, "hard"), HIGH, True),
                              (_g(t, "contact"), MID_LO, True),
@@ -418,13 +456,21 @@ BATTER_PROFILES: tuple[Definition, ...] = (
     ),
     Definition(
         "free_swinger", "Free Swinger",
-        "expands the zone and will chase himself out of an at-bat",
+        (
+            "expands the zone and will chase himself out of an at-bat",
+            "he swings, and the strike zone is a suggestion",
+            "pitchers do not have to throw him strikes",
+        ),
         "batter",
         lambda t, x: _clears((_g(t, "discipline"), POOR, False),),
     ),
     Definition(
         "speed_glove", "Speed and Glove",
-        "earns his place with his legs and his glove rather than his bat",
+        (
+            "earns his place with his legs and his glove rather than his bat",
+            "the value is in the field and on the bases",
+            "he is here for defense and speed, and both play",
+        ),
         "batter",
         lambda t, x: _clears((x.get("speed", float("nan")), HIGH, True),
                              (x.get("defense", float("nan")), HIGH, True),
@@ -432,21 +478,33 @@ BATTER_PROFILES: tuple[Definition, ...] = (
     ),
     Definition(
         "glove_first", "Glove First",
-        "the glove is the whole case, and it is a strong one",
+        (
+            "the glove is the whole case, and it is a strong one",
+            "he catches everything, and that is enough",
+            "the defense carries him, and it carries a long way",
+        ),
         "batter",
         lambda t, x: _clears((x.get("defense", float("nan")), ELITE, True),
                              (_g(t, "power"), MID_LO, False)),
     ),
     Definition(
         "basepath", "Basepath Terror",
-        "a genuine threat the moment he reaches",
+        (
+            "a genuine threat the moment he reaches",
+            "once he is on, the pitcher has a second problem",
+            "he changes the inning by reaching first",
+        ),
         "batter",
         lambda t, x: _clears((x.get("speed", float("nan")), HIGH, True),
                              (x.get("baserunning", float("nan")), HIGH, True)),
     ),
     Definition(
         "five_tool", "Five-Tool Player",
-        "hits, hits for power, runs and fields, with nothing to hide",
+        (
+            "hits, hits for power, runs and fields, with nothing to hide",
+            "there is no part of this game he does badly",
+            "everything plays, which is the rarest profile there is",
+        ),
         "batter",
         lambda t, x: _clears((_g(t, "power"), MID_HI, True),
                              (_g(t, "contact"), MID_HI, True),
@@ -455,21 +513,33 @@ BATTER_PROFILES: tuple[Definition, ...] = (
     ),
     Definition(
         "air_ball", "Air-Ball Chaser",
-        "sells out for loft without the exit velocity to reward it",
+        (
+            "sells out for loft without the exit velocity to reward it",
+            "he hits it in the air and it does not go far enough",
+            "the launch angle is there and the contact is not",
+        ),
         "batter",
         lambda t, x: _clears((_g(t, "loft"), HIGH, True),
                              (_g(t, "power"), LOW, False)),
     ),
     Definition(
         "wasted_contact", "Wasted Contact",
-        "hits the ball hard and hits it into the ground",
+        (
+            "hits the ball hard and hits it into the ground",
+            "the exit velocity is real and it is going to a shortstop",
+            "good contact, wrong angle, and the results follow the angle",
+        ),
         "batter",
         lambda t, x: _clears((_g(t, "hard"), MID_HI, True),
                              (_g(t, "loft"), POOR, False)),
     ),
     Definition(
         "fringe", "Fringe Bat",
-        "nothing here plays above average, and nothing carries him",
+        (
+            "nothing here plays above average, and nothing carries him",
+            "no tool stands out, and none of them hides",
+            "there is no part of this profile that beats you",
+        ),
         "batter",
         lambda t, x: None if _has_plus(t) else _clears(
             (_g(t, "power"), MID_LO, False),
@@ -482,42 +552,66 @@ BATTER_PROFILES: tuple[Definition, ...] = (
 PITCHER_PROFILES: tuple[Definition, ...] = (
     Definition(
         "power_arm", "Power Strikeout Arm",
-        "misses bats, and does not need the defense behind him",
+        (
+            "misses bats, and does not need the defense behind him",
+            "he gets his own outs",
+            "swing and miss is the whole plan, and it works",
+        ),
         "pitcher",
         lambda t, x: _clears((_g(t, "stuff"), HIGH, True),
                              (_g(t, "command"), POOR, True)),
     ),
     Definition(
         "effectively_wild", "Effectively Wild",
-        "overpowering and unpredictable, to both sides",
+        (
+            "overpowering and unpredictable, to both sides",
+            "hard to hit and hard to catch, sometimes in the same inning",
+            "the stuff is real and so is the walk rate",
+        ),
         "pitcher",
         lambda t, x: _clears((_g(t, "stuff"), HIGH, True),
                              (_g(t, "command"), LOW, False)),
     ),
     Definition(
         "command_artist", "Command Artist",
-        "lives in the zone and will not beat himself",
+        (
+            "lives in the zone and will not beat himself",
+            "he throws strikes and makes hitters earn everything",
+            "nothing loud, nothing free, and a lot of quick innings",
+        ),
         "pitcher",
         lambda t, x: _clears((_g(t, "command"), HIGH, True),
                              (_g(t, "stuff"), MID_HI, False)),
     ),
     Definition(
         "groundball", "Groundball Machine",
-        "keeps it on the floor and out of the seats",
+        (
+            "keeps it on the floor and out of the seats",
+            "he pitches to a shortstop, and it works",
+            "the ball stays down, which is a fine way to survive",
+        ),
         "pitcher",
         lambda t, x: _clears((_g(t, "grounders"), HIGH, True),
                              (_g(t, "suppress"), MID_LO, True)),
     ),
     Definition(
         "kitchen_sink", "Crafty Kitchen-Sink",
-        "five pitches, none overpowering, and a plan for each hitter",
+        (
+            "five pitches, none overpowering, and a plan for each hitter",
+            "he beats you with variety rather than velocity",
+            "no single pitch scares anyone; the sequence does",
+        ),
         "pitcher",
         lambda t, x: _clears((_g(t, "arsenal"), HIGH, True),
                              (_g(t, "stuff"), MID_HI, False)),
     ),
     Definition(
         "soft_contact", "Soft-Contact Manager",
-        "few strikeouts, few walks, and nothing hit squarely",
+        (
+            "few strikeouts, few walks, and nothing hit squarely",
+            "he does not miss bats and he does not need to",
+            "contact happens, and almost none of it is loud",
+        ),
         "pitcher",
         lambda t, x: _clears((_g(t, "suppress"), HIGH, True),
                              (_g(t, "command"), MID_LO, True),
@@ -525,28 +619,44 @@ PITCHER_PROFILES: tuple[Definition, ...] = (
     ),
     Definition(
         "flyball", "Flyball and Homer-Prone",
-        "everything goes in the air, and some of it keeps going",
+        (
+            "everything goes in the air, and some of it keeps going",
+            "he lives with fly balls, which is a risky lease",
+            "the ball gets up, and in the wrong park it leaves",
+        ),
         "pitcher",
         lambda t, x: _clears((_g(t, "grounders"), LOW, False),
                              (_g(t, "suppress"), LOW, False)),
     ),
     Definition(
         "two_pitch", "Two-Pitch Power Reliever",
-        "two offerings, thrown hard, for one turn through",
+        (
+            "two offerings, thrown hard, for one turn through",
+            "one time through the order is the whole design",
+            "two pitches and enough velocity to make them play",
+        ),
         "pitcher",
         lambda t, x: _clears((_g(t, "arsenal"), POOR, False),
                              (_g(t, "stuff"), HIGH, True)),
     ),
     Definition(
         "breaking_ball", "Breaking-Ball Specialist",
-        "builds everything off the bender",
+        (
+            "builds everything off the bender",
+            "the breaking ball is the pitch, and everything sets it up",
+            "he throws his breaking stuff more than his fastball",
+        ),
         "pitcher",
         lambda t, x: _clears((x.get("breaking_share", float("nan")), 40.0, True),
                              (_g(t, "stuff"), MID_LO, True)),
     ),
     Definition(
         "innings_eater", "Innings Eater",
-        "average most places, and takes the ball every fifth day",
+        (
+            "average most places, and takes the ball every fifth day",
+            "nothing special, and he will get you through six",
+            "he is here for length rather than dominance",
+        ),
         "pitcher",
         lambda t, x: _clears((_g(t, "stuff"), MID_HI, False),
                              (_g(t, "command"), MID_LO, True),
@@ -554,7 +664,11 @@ PITCHER_PROFILES: tuple[Definition, ...] = (
     ),
     Definition(
         "struggling", "Struggling",
-        "nothing is playing above average at the moment",
+        (
+            "nothing is playing above average at the moment",
+            "no part of this is working right now",
+            "everything is a little short, and it shows in the results",
+        ),
         "pitcher",
         lambda t, x: None if _has_plus(t) else _clears(
             (_g(t, "stuff"), MID_LO, False),
@@ -643,15 +757,20 @@ def external_grades(box: Any, populations: dict[str, list[float]]) -> dict[str, 
     # Steals per time on first. A burner who rarely reaches should not be
     # marked down for chances he never had, and a part-timer who steals ten in
     # ten games should not be filed alongside a regular who stole ten in a year.
-    on_first = sum(float(season.get(k) or 0)
-                   for k in ("singles", "baseOnBalls", "hitByPitch"))
-    if on_first >= 20:
-        attempts = float(season.get("stolenBases") or 0)
-        grades["baserunning"] = min(
-            100.0, (attempts / on_first) / max(LEAGUE_SB_RATE, 1e-9) * 50.0
-        )
+    measured = getattr(box, "baserunning_runs", None)
+    pool = populations.get("baserunning_runs") or []
+    if measured is not None and pool and games:
+        grades["baserunning"] = _pct(_rate_per_150(measured, games), pool)
     else:
-        grades["baserunning"] = float("nan")
+        on_first = sum(float(season.get(k) or 0)
+                       for k in ("singles", "baseOnBalls", "hitByPitch"))
+        if on_first >= 20:
+            attempts = float(season.get("stolenBases") or 0)
+            grades["baserunning"] = min(
+                100.0, (attempts / on_first) / max(LEAGUE_SB_RATE, 1e-9) * 50.0
+            )
+        else:
+            grades["baserunning"] = float("nan")
     return grades
 
 
@@ -676,7 +795,8 @@ def value_runs(box: Any, xwoba: float | None, plate_appearances: int) -> tuple[f
     games = float(season.get("gamesPlayed") or season.get("games") or 0)
 
     runs = batting_runs(xwoba, plate_appearances) if xwoba is not None else 0.0
-    runs += baserunning_runs(season)
+    runs += baserunning_runs(
+        season, getattr(box, "baserunning_runs", None))
     runs += fielding_runs(box, games)
     per150 = runs * 150.0 / games if games else float("nan")
     return float(runs), float(per150)

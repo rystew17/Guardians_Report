@@ -27,6 +27,7 @@ from typing import Any
 import numpy as np
 
 from guards_report.insight import profile as prof
+from guards_report.insight import voice as voice_module
 
 
 @dataclass
@@ -53,12 +54,12 @@ class Dossier:
         return not self.parts
 
 
-def _grade_word(grade: float) -> str:
-    for cut, word in ((prof.ELITE, "elite"), (prof.HIGH, "plus"),
-                      (prof.MID_LO, "average"), (prof.POOR, "below average")):
-        if grade >= cut:
-            return word
-    return "poor"
+def _grade_word(grade: float, *key, voice=None) -> str:
+    """How to say how good a tool is, varied but never vague."""
+    if voice is not None:
+        return voice.tool(grade, *key)
+    phrase, _ = voice_module.tool_phrase(grade, *key)
+    return phrase
 
 
 def _pct_ordinal(grade: float) -> str:
@@ -106,7 +107,24 @@ def _evidence(tool: prof.Tool) -> str:
         return ""
 
 
-def write_profile(player: prof.PlayerProfile, *, surname: str) -> str:
+# Profile labels that are adjectival rather than nouns. "A command artist"
+# takes an article; "a effectively wild" is not English. Listed explicitly
+# because there is no way to tell from the string which kind a label is.
+ADJECTIVAL_PROFILES = {
+    "Effectively Wild", "Struggling", "Glove First", "Flyball and Homer-Prone",
+    "Speed and Glove", "Five-Tool Player", "Three True Outcomes",
+}
+
+
+def _as_a(label: str) -> str:
+    """A profile label with whatever article it needs, and none if it needs none."""
+    if label in ADJECTIVAL_PROFILES:
+        return label.lower()
+    article = "an" if label[:1].lower() in "aeiou" else "a"
+    return f"{article} {label.lower()}"
+
+
+def write_profile(player: prof.PlayerProfile, *, surname: str, voice=None) -> str:
     """Part one: what kind of player he is, and whether he is any good.
 
     Leads with the tier because it is the question the reader came with, then
@@ -121,21 +139,31 @@ def write_profile(player: prof.PlayerProfile, *, surname: str) -> str:
 
     pieces: list[str] = []
 
+    tier = player.tier
+    if player.runs_per_150 is not None and np.isfinite(player.runs_per_150):
+        tier = (voice.value(player.runs_per_150, player.player_id) if voice
+                else voice_module.value_phrase(
+                    player.runs_per_150, player.player_id)[0])
+
     labels = [m.label for m in player.matches]
-    if labels and player.tier:
+    if labels and tier:
         joined = labels[0] if len(labels) == 1 else (
             f"{labels[0]} and {labels[1]}" if len(labels) == 2 else
             f"{labels[0]}, {labels[1]} and {labels[2]}")
-        pieces.append(f"{surname} is {player.tier} — {joined.lower()}")
+        pieces.append(f"{surname} is {tier} — {joined.lower()}")
     elif labels:
-        pieces.append(f"{surname} profiles as a {labels[0].lower()}")
-    elif player.tier:
-        pieces.append(f"{surname} is {player.tier} without a clear archetype")
+        pieces.append(f"{surname} profiles as {_as_a(labels[0])}")
+    elif tier:
+        pieces.append(f"{surname} is {tier} without a clear archetype")
     else:
         pieces.append(f"{surname} sits mid-table across the board")
 
     if player.matches:
-        pieces[-1] += f", {player.matches[0].blurb}"
+        match = player.matches[0]
+        options = match.blurb if isinstance(match.blurb, tuple) else (match.blurb,)
+        blurb = (voice.blurb(options, player.player_id, match.code) if voice
+                 else voice_module.choose(options, player.player_id, match.code))
+        pieces[-1] += f", {blurb}"
 
     # The evidence. Two tools at most: the one carrying him and the one that
     # costs him, because a list of five grades is a table, not a read.
@@ -144,7 +172,7 @@ def write_profile(player: prof.PlayerProfile, *, surname: str) -> str:
     support = []
     for tool in best + worst:
         note = _evidence(tool)
-        band = _grade_word(tool.grade)
+        band = _grade_word(tool.grade, player.player_id, tool.name, voice=voice)
         support.append(
             f"{band} {tool.label} ({_pct_ordinal(tool.grade)} percentile"
             + (f", {note}" if note else "") + ")"
@@ -202,7 +230,8 @@ def _two_proportion_z(hits: float, at_bats: float,
     return float((hits / at_bats - base_rate) / se)
 
 
-def write_form(box: Any, player: prof.PlayerProfile, *, surname: str) -> str:
+def write_form(box: Any, player: prof.PlayerProfile, *, surname: str,
+               voice=None) -> str:
     """Part two: how he is going lately, and in this series.
 
     The trend claim is gated; the series line is not. A hot fortnight is a claim
@@ -229,18 +258,21 @@ def write_form(box: Any, player: prof.PlayerProfile, *, surname: str) -> str:
             season_ops = season.get("ops")
             if z is not None and abs(z) >= TREND_FLOOR:
                 way = "up" if z > 0 else "down"
+                opener = (voice.form(way, player.player_id) if voice
+                          else voice_module.form_phrase(way, player.player_id))
                 pieces.append(
-                    f"he is trending {way} — hitting {hits / at_bats:.3f} over "
-                    f"the last fifteen games against {base:.3f} for the season"
+                    f"{opener} — hitting {hits / at_bats:.3f} over the last "
+                    f"fifteen games against {base:.3f} for the season"
                 )
             else:
                 # The sample is stated because without it "inside normal
                 # variation" beside a ninety-point gap reads as an error rather
                 # than as what it is: thirty at-bats cannot separate those.
+                opener = (voice.form("flat", player.player_id) if voice
+                          else voice_module.form_phrase("flat", player.player_id))
                 pieces.append(
-                    f"the last fifteen games look like the rest of his season — "
-                    f"{hits / at_bats:.3f} against {base:.3f}, which "
-                    f"{int(at_bats)} at-bats cannot separate"
+                    f"{opener} — {hits / at_bats:.3f} against {base:.3f}, "
+                    f"which {int(at_bats)} at-bats cannot separate"
                 )
 
             # Power moves independently of average, and the test above cannot
@@ -413,13 +445,18 @@ def write_matchup(
 def build(
     box: Any, player: prof.PlayerProfile, *, surname: str,
     opposing_starter: Any = None, opposing_profile: prof.PlayerProfile | None = None,
-    projection_line: dict | None = None,
+    projection_line: dict | None = None, voice=None,
 ) -> Dossier:
-    """All three parts for one player."""
+    """All three parts for one player.
+
+    `voice` is shared across the card so consecutive players do not draw the
+    same adjective. Without it each player still varies against every other,
+    but two men in a row can land on the same word often enough to notice.
+    """
     return Dossier(
         player_id=player.player_id, kind=player.kind,
-        profile=write_profile(player, surname=surname),
-        form=write_form(box, player, surname=surname),
+        profile=write_profile(player, surname=surname, voice=voice),
+        form=write_form(box, player, surname=surname, voice=voice),
         matchup=write_matchup(
             box, player, surname=surname, opposing_starter=opposing_starter,
             opposing_profile=opposing_profile, projection_line=projection_line),

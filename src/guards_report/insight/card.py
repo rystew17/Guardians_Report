@@ -24,6 +24,7 @@ from guards_report.insight import batters as batter_evaluators
 from guards_report.insight import dossier as dossier_module
 from guards_report.insight import evaluators, matchup, profile as profile_module
 from guards_report.insight import render, select
+from guards_report.insight import voice as voice_module
 
 # How many criteria each subject scans, which sets its significance floor. These
 # must track the evaluators actually called below: raising the count without
@@ -179,6 +180,10 @@ def analyse(bundle: Any, *, pitch_dir: Path, on: date | None = None) -> CardAnal
 
     # Each side's opponent starter, profiled once, so a matchup is one profile
     # against another rather than a head-to-head line of nine at-bats.
+    # One voice for the whole card, so no two players in a row are
+    # described with the same adjective.
+    card_voice = voice_module.Voice()
+
     opposing = {}
     for side, other in (("home", "away"), ("away", "home")):
         box = starters[other]
@@ -217,7 +222,8 @@ def analyse(bundle: Any, *, pitch_dir: Path, on: date | None = None) -> CardAnal
                 player = _profile_for(box, "pitcher")
                 if player is not None:
                     result.dossiers[int(box.player_id)] = dossier_module.build(
-                        box, player, surname=_surname(box.name))
+                        box, player, surname=_surname(box.name),
+                        voice=card_voice)
             except Exception as exc:  # noqa: BLE001
                 result.warnings.append(
                     f"{box.name} profile: {type(exc).__name__}: {exc}")
@@ -244,7 +250,8 @@ def analyse(bundle: Any, *, pitch_dir: Path, on: date | None = None) -> CardAnal
                     result.dossiers[int(box.player_id)] = dossier_module.build(
                         box, player, surname=_surname(box.name),
                         opposing_starter=opponent_box,
-                        opposing_profile=opponent_profile)
+                        opposing_profile=opponent_profile,
+                        voice=card_voice)
             except Exception as exc:  # noqa: BLE001
                 result.warnings.append(
                     f"{box.name} profile: {type(exc).__name__}: {exc}")

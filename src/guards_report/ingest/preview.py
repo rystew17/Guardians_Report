@@ -96,6 +96,8 @@ class PlayerBox:
     bat_tracking: dict[str, float | None] = field(default_factory=dict)
     fielding: dict[str, float | None] = field(default_factory=dict)
     running: dict[str, float | None] = field(default_factory=dict)
+    # Runs above average on the bases, measured rather than estimated.
+    baserunning_runs: float | None = None
 
     # Every requested situational split, keyed by situation code.
     situational: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -466,6 +468,7 @@ def _build_batter_box(person, entry, *, as_of, opposing_hand, league_hitting,
         batted_ball=_pick(savant["batted_ball"].get(pid), BATTED_BALL_FIELDS),
         bat_tracking=_pick(savant["bat_tracking"].get(pid), BAT_TRACKING_FIELDS),
         fielding=_pick(savant["fielding"].get(pid), FIELDING_FIELDS),
+        baserunning_runs=savant.get("baserunning_runs", {}).get(pid),
         running=_pick(savant["running"].get(pid), RUNNING_FIELDS),
         situational=situational,
         vs_hand=vs_hand, vs_hand_label=vs_hand_label,
@@ -761,6 +764,39 @@ def build_preview(
     bat_tracking_rows = sv.parse_csv(sv.bat_tracking(archiver, year=season, minimum=10))
     sprint_rows = sv.parse_csv(sv.sprint_speed(archiver, year=season, minimum=1))
     fielding_rows = sv.parse_csv(sv.outs_above_average(archiver, year=season, minimum=1))
+    # Savant measures baserunning in runs directly, and in two pieces: what a
+    # runner gained taking extra bases, and what he gained stealing. Together
+    # they are the Baserunning Run Value on his player page. This replaces a
+    # linear-weights estimate built from stolen bases alone, which could not
+    # see the half of baserunning that happens on batted balls.
+    try:
+        baserun_rows = sv.parse_csv(sv.baserunning_run_value(archiver, year=season))
+    except Exception:  # noqa: BLE001 -- a missing board costs one term, not the page
+        baserun_rows = []
+    try:
+        steal_rows = sv.parse_csv(sv.basestealing_run_value(archiver, year=season))
+    except Exception:  # noqa: BLE001
+        steal_rows = []
+
+    def _by_player(rows, field_name: str) -> dict[int, float]:
+        out: dict[int, float] = {}
+        for row in rows:
+            pid = sv._row_player_id(row)
+            raw = row.get(field_name)
+            if pid is None or raw in (None, ""):
+                continue
+            try:
+                out[int(pid)] = float(raw)
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    running_runs = _by_player(baserun_rows, "runner_runs")
+    stealing_runs = _by_player(steal_rows, "runs_stolen_on_running_act")
+    baserunning_runs = {
+        pid: running_runs.get(pid, 0.0) + stealing_runs.get(pid, 0.0)
+        for pid in set(running_runs) | set(stealing_runs)
+    }
 
     savant = {
         "pitcher_percentiles": sv.index_by_player(sv.parse_csv(
@@ -777,6 +813,7 @@ def build_preview(
         "bat_tracking": sv.index_by_player(bat_tracking_rows),
         "fielding": sv.index_by_player(fielding_rows),
         "running": sv.index_by_player(sprint_rows),
+        "baserunning_runs": baserunning_runs,
     }
 
     # Weighted by playing time: an unweighted mean would let a player with
@@ -807,6 +844,7 @@ def build_preview(
 
     savant_populations = {
         "sprint_speed": _population(sprint_rows, "sprint_speed"),
+        "baserunning_runs": sorted(baserunning_runs.values()),
         "outs_above_average": _population(fielding_rows, "outs_above_average"),
         "fielding_runs_prevented": _population(
             fielding_rows, "fielding_runs_prevented"),
