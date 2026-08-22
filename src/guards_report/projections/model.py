@@ -113,6 +113,32 @@ class OutcomeModel:
             z += coef * ((value - mean) / (scale or 1.0))
         return float(1.0 / (1.0 + np.exp(-z)))
 
+    def out_of_range(self, features: dict[str, float], *, limit: float = 5.0) -> list[dict]:
+        """Features standing far outside the distribution the model was fitted on.
+
+        A served value the training data never contained is not a bold
+        prediction, it is a bug. The model is linear on the log-odds scale and
+        will extrapolate without complaint: a swingman's innings-per-start once
+        arrived at 14.27 against a fitted range topping out near 8, and the
+        resulting seven-sigma term moved the win probability by fourteen points
+        while looking like an ordinary row on a chart.
+
+        Checked in standard deviations of the fitted feature rather than against
+        hand-set bounds, so this keeps working when the run environment moves.
+        """
+        flagged = []
+        for name, mean, scale in zip(self.win_columns, self.win_mean, self.win_scale):
+            value = features.get(name)
+            if value is None or (isinstance(value, float) and np.isnan(value)):
+                continue
+            z = (value - mean) / (scale or 1.0)
+            if abs(z) > limit:
+                flagged.append({
+                    "name": name, "value": float(value),
+                    "fitted_mean": float(mean), "sigma": float(z),
+                })
+        return flagged
+
     def win_contributions(self, features: dict[str, float]) -> list[dict]:
         """Each feature's push on the log-odds, relative to a league-average game.
 

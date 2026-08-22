@@ -89,3 +89,67 @@ def test_unknown_batters_count_as_league_average(fitted):
     assert with_stranger is not None
     # Replacing a below-average hitter with an average one raises the value.
     assert with_stranger > known
+
+
+# --------------------------------------------------------------------------
+# Starter features
+# --------------------------------------------------------------------------
+
+def test_innings_are_divided_by_appearances_not_starts():
+    """The third train/serve skew found in this project, and the worst.
+
+    Training builds `ip_per_start` from a log carrying relief outings as well --
+    `starts_prior` counts every prior row, not every prior start -- so the
+    fitted feature is innings per *appearance*, averaging 3.72 and topping out
+    at 8.11. Dividing by starts instead looks more correct and is not: a
+    swingman with seventeen appearances and five starts returned 14.27, beyond
+    anything in training, and the model extrapolated to a fourteen-point error
+    in the win probability.
+    """
+    from guards_report.projections.predict import _starter_features
+
+    class Box:
+        # 17 appearances, 5 of them starts, 71.3 innings.
+        season = {"outs": 214, "games": 17, "gamesStarted": 5,
+                  "fip": 4.7, "kPct": 0.199, "bbPct": 0.042}
+
+    stats = _starter_features(Box())
+    assert stats["ip_per_start"] == pytest.approx(214 / 3 / 17, abs=1e-9)
+    assert stats["ip_per_start"] < 8.11, "outside the fitted range"
+
+
+def test_a_true_starter_is_unaffected_by_the_denominator():
+    """Where starts equal appearances the two definitions agree, which is why
+    the bug survived: it is invisible on every everyday starter."""
+    from guards_report.projections.predict import _starter_features
+
+    class Box:
+        season = {"outs": 377, "games": 26, "gamesStarted": 26, "fip": 3.9}
+
+    assert _starter_features(Box())["ip_per_start"] == pytest.approx(377 / 3 / 26)
+
+
+def test_the_model_flags_a_feature_outside_its_fitted_range():
+    """The guard that would have caught it without anyone reading a chart."""
+    from guards_report.projections.model import OutcomeModel
+
+    model = OutcomeModel(
+        win_columns=["sp_ip_per_start"], win_coef=[0.08],
+        win_mean=[3.72], win_scale=[1.99], win_intercept=0.1,
+    )
+    assert not model.out_of_range({"sp_ip_per_start": 5.0})
+    flagged = model.out_of_range({"sp_ip_per_start": 14.27})
+    assert flagged and flagged[0]["name"] == "sp_ip_per_start"
+    assert flagged[0]["sigma"] > 5
+
+
+def test_a_missing_feature_is_not_flagged_as_out_of_range():
+    """Absence is handled by mean imputation and is not an anomaly."""
+    from guards_report.projections.model import OutcomeModel
+
+    model = OutcomeModel(
+        win_columns=["sp_ip_per_start"], win_coef=[0.08],
+        win_mean=[3.72], win_scale=[1.99],
+    )
+    assert not model.out_of_range({"sp_ip_per_start": None})
+    assert not model.out_of_range({})

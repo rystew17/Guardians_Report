@@ -190,7 +190,18 @@ def _starter_features(box: Any) -> dict[str, float | None]:
     # thirds) and would be wrong as arithmetic.
     outs = season.get("outs")
     innings = outs / 3.0 if outs is not None else None
-    starts = season.get("gamesStarted") or season.get("games")
+
+    # Appearances, not starts. Training builds this column from a log that
+    # carries relief outings as well -- `starts_prior` is a count of every prior
+    # row, not of starts -- so the fitted feature is innings per *appearance*,
+    # averaging 3.72 with a maximum of 8.11 across the corpus.
+    #
+    # Dividing by starts instead looks more correct and is not. A swingman with
+    # seventeen appearances and five starts returned 14.27 innings per start,
+    # beyond anything in the training range, and the model extrapolated on a
+    # coefficient fitted for a far narrower one -- worth +0.524 log-odds, seven
+    # standard deviations, and it dominated the whole decomposition.
+    starts = season.get("games")
 
     return {
         "fip": season.get("fip"),
@@ -318,6 +329,15 @@ def project(
     }
     win_probability = model.win_probability(win_features)
     contributions = model.win_contributions(win_features)
+
+    # A feature outside the fitted range means the serving path computed
+    # something different from what training did, not that tonight is unusual.
+    for flag in model.out_of_range(win_features):
+        missing.append(
+            f"{flag['name']} is {flag['sigma']:+.1f} sigma from anything the "
+            f"model was fitted on ({flag['value']:.3f} against a mean of "
+            f"{flag['fitted_mean']:.3f}) -- treat this projection as suspect"
+        )
 
     # --- Model B: expected runs per side ---------------------------------
     def score_features(batting: SideInputs, fielding: SideInputs, is_home: int) -> dict:
