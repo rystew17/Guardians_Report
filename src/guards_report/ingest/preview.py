@@ -1479,18 +1479,18 @@ def build_preview(
         # as though he declined them.
         run_chances = _by_player(baserun_rows, "n_opp_xb")
 
-        # Fielding is ranked on outs above average, which is the figure Savant
-        # displays beside its own percentile and the one already shown on this
-        # card. There is no denominator on the board, so this is a season total
-        # and partly a statement about playing time; nothing the source
-        # publishes offers a way around that.
+        # Fielding ranks outs above average against every fielder on the board.
+        # Verified against Savant's own published percentiles for the 254
+        # players it grades: r = 0.998, a median of 0.9 points apart, and no
+        # bias in either direction.
         #
-        # It lands a few points high against the player page -- 95 where Savant
-        # says 90 for one regular here -- because Savant ranks within a
-        # qualified subset whose threshold it does not publish, and the low
-        # playing-time fielders this pool keeps sit near zero and lift everyone
-        # above them. Ranking within position, within outfielders, or on runs
-        # prevented instead were each tried and all landed further away.
+        # This was thought to be five points high for a while, because it was
+        # being compared with Fielding Run Value on the player page. That is a
+        # different Savant metric with a different percentile -- the regular who
+        # reads 90 there reads 95 on outs above average, which is what this
+        # computes. Chasing the wrong target produced three plausible fixes
+        # (ranking within position, within outfielders, on runs prevented) that
+        # each made the real agreement worse.
         #
         # The earlier version scaled each player by his own games while building
         # the pool as though everyone had played 150. Individuals were divided

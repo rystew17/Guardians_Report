@@ -378,17 +378,23 @@ def _clears(*conditions: tuple[float, float, bool]) -> float | None:
     return float(np.mean(margins)) if margins else None
 
 
-def _has_plus(tools: dict[str, Tool]) -> bool:
+def _has_plus(tools: dict[str, Tool], extra: dict | None = None) -> bool:
     """Whether anything about this player plays above average.
 
     Used to disqualify the two profiles that assert an absence. Without it a
     player can be told he has nothing that plays above average in the same
     sentence that credits him with plus baserunning, which is two true grades
     and one false claim.
+
+    Reads `extra` as well as `tools`. Speed, defense and baserunning reach this
+    function by two routes -- `build_batter` folds them into `tools`, while a
+    direct call leaves them in `extra` -- and checking only the first made the
+    guard hold in production and fail anywhere else. A guard that depends on its
+    caller having tidied up first is not a guard.
     """
-    return any(
-        np.isfinite(tool.grade) and tool.grade >= HIGH for tool in tools.values()
-    )
+    graded = [t.grade for t in tools.values()]
+    graded += [v for v in (extra or {}).values() if isinstance(v, (int, float))]
+    return any(np.isfinite(g) and g >= HIGH for g in graded)
 
 
 BATTER_PROFILES: tuple[Definition, ...] = (
@@ -561,7 +567,7 @@ BATTER_PROFILES: tuple[Definition, ...] = (
             "there is no part of this profile that beats you",
         ),
         "batter",
-        lambda t, x: None if _has_plus(t) else _clears(
+        lambda t, x: None if _has_plus(t, x) else _clears(
             (_g(t, "power"), MID_LO, False),
             (_g(t, "contact"), MID_LO, False),
             (_g(t, "discipline"), MID_LO, False)),
@@ -690,7 +696,7 @@ PITCHER_PROFILES: tuple[Definition, ...] = (
             "everything is a little short, and it shows in the results",
         ),
         "pitcher",
-        lambda t, x: None if _has_plus(t) else _clears(
+        lambda t, x: None if _has_plus(t, x) else _clears(
             (_g(t, "stuff"), MID_LO, False),
             (_g(t, "command"), MID_LO, False),
             (_g(t, "suppress"), MID_LO, False)),

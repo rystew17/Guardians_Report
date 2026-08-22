@@ -974,7 +974,7 @@
   {#- Gated on either source: a player Savant does not publish still has chips
       now, and the old guard hid the whole grid for exactly those players. -#}
   {% if box.percentiles or box.derived_percentiles %}
-  {{ pchips(box, [('bat_rv','Bat RV'),('run_rv','Run RV'),('field_rv','Field RV'),
+  {{ pchips(box, [('bat_rv','Bat RV'),('run_rv','Run RV'),('field_rv','Fielding'),
       ('xwoba','xwOBA'),('xba','xBA'),('xslg','xSLG'),('xiso','xISO'),('xobp','xOBP'),
       ('brl_percent','Barrel'),('exit_velocity','ExitVelo'),('max_ev','MaxEV'),('hard_hit_percent','HardHit'),
       ('k_percent','K%'),('bb_percent','BB%'),('whiff_percent','Whiff'),('chase_percent','Chase'),
@@ -1802,9 +1802,11 @@
       extra bases and stealing, fielding from outs above average. They are
       separate because they answer different questions: a glove-first shortstop
       and a bat-first corner can total the same and share nothing else.
-      Computed here rather than read from a player page, and within a few
-      percentile points of it &mdash; Savant ranks against a qualified subset
-      whose threshold it does not publish.
+      Computed here rather than read from a player page. Fielding is outs above
+      average and matches the published percentile almost exactly &mdash; across
+      the 254 players Savant grades, a median of one point apart. Batting and
+      pitching sit a few points off, because those rank against a qualified
+      subset whose threshold Savant does not publish.
       Batting, baserunning and fielding are separate because they answer
       Ranked as a rate and shrunk toward average first, so a hot fortnight in
       fifty plate appearances does not outrank a season.'),

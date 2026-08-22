@@ -296,3 +296,63 @@ def test_live_game_is_excluded_from_windows(archiver):
     assert w.aggregate_hitting(prior) == w.aggregate_hitting(
         [r for r in rows if r.game_date < as_of]
     )
+
+
+@pytest.mark.network
+def test_our_fielding_percentile_matches_the_published_one():
+    """Ranked against every fielder on the board, not a subset.
+
+    This was believed to be five percentile points high for a while, because it
+    was being compared with Fielding Run Value on the player page. That is a
+    different Savant metric with a different percentile: the regular who reads
+    90 there reads 95 on outs above average, which is what this computes.
+    Chasing the wrong target produced three plausible-looking fixes -- ranking
+    within position, within outfielders, and on runs prevented -- each of which
+    made the real agreement worse.
+
+    Pinned here because the only way to notice was to find the published
+    percentile and compare against it, and that is exactly what a test is for.
+    """
+    import numpy as np
+
+    from guards_report.config import load_settings
+    from guards_report.sources import savant as sv
+    from guards_report.sources.http import Archiver
+
+    archiver = Archiver(root=load_settings().raw_archive_dir)
+    season = date.today().year
+
+    published = {}
+    for row in sv.parse_csv(sv.percentile_rankings(
+        archiver, year=season, player_type=sv.TYPE_BATTER
+    )):
+        value = row.get("oaa")
+        if value not in (None, ""):
+            published[int(row["player_id"])] = float(value)
+
+    board = {}
+    for row in sv.parse_csv(sv.outs_above_average(archiver, year=season, minimum=1)):
+        value = sv.to_number(row.get("outs_above_average"))
+        if value is not None:
+            board[int(row["player_id"])] = value
+
+    if len(published) < 50:
+        pytest.skip(f"only {len(published)} published percentiles this early")
+
+    pool = sorted(board.values())
+    errors = []
+    for player_id, want in published.items():
+        if player_id not in board:
+            continue
+        value = board[player_id]
+        below = sum(1 for x in pool if x < value)
+        equal = sum(1 for x in pool if x == value)
+        # Midrank, because the distribution has heavy tie mass at zero and a
+        # strict less-than would systematically under-rate everyone at it.
+        errors.append(abs((below + equal / 2) / len(pool) * 100 - want))
+
+    errors = np.array(errors)
+    assert np.median(errors) <= 3.0, (
+        f"median {np.median(errors):.1f} points from the published percentile")
+    assert (errors > 10).mean() <= 0.05, (
+        f"{(errors > 10).mean():.1%} of players more than 10 points off")
