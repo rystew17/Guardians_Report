@@ -31,6 +31,39 @@ TEMPLATES: dict[str, tuple[str, ...]] = {
         "strikes out {rate:.1%} of the time, league {mean:.1%}",
         "goes down on strikes in {rate:.1%} of plate appearances, league {mean:.1%}",
     ),
+    "bat.profile.trajectory": (
+        "puts {share:.0%} of his contact into {label}, league {mean_pct:.0%}",
+        "{label} account for {share:.0%} of what he hits, against {mean_pct:.0%} league-wide",
+    ),
+    "bat.profile.barrel": (
+        "barrels {rate:.1%} of his batted balls, league {mean_pct:.1%}",
+        "squares one up {rate:.1%} of the time he makes contact, {mean_pct:.1%} league-wide",
+    ),
+    "bat.profile.exit_velocity": (
+        "averages {velocity:.1f} mph off the bat, league {mean:.1f}",
+    ),
+    "bat.profile.spray": (
+        "pulls {pull:.0%} of what he puts in play, league {mean_pct:.0%}",
+    ),
+    "bat.approach.chase": (
+        "chases {chase:.1%} of pitches out of the zone, league {mean_abs:.1%}",
+        "offers at {chase:.1%} of what he sees outside, against {mean_abs:.1%} league-wide",
+    ),
+    "bat.approach.whiff": (
+        "misses on {whiff:.1%} of his swings, league {mean_abs:.1%}",
+    ),
+    "bat.approach.pitchtype": (
+        "has handled the {pitch} at a {xwoba3} expected wOBA, league {league3}",
+        "sees {seen} {pitch}s and has managed {xwoba3} against them, {league3} league",
+    ),
+    "bat.split.platoon": (
+        "is a different hitter by hand: {vs_right3} against right-handers, "
+        "{vs_left3} against left-handers",
+    ),
+    "bat.luck.gap": (
+        "is {direction} his contact — {actual3} actual against {expected3} expected",
+        "has a {actual3} line on {expected3} worth of contact, so it is {direction} him",
+    ),
     "bat.trend.window": (
         "has hit {value3} over his last {games} games, against {baseline3} on the season",
         "is at {value3} across {games} games now, {baseline3} otherwise",
@@ -81,6 +114,10 @@ def _slots(finding: Finding) -> dict:
         mean = max(finding.reference.mean, 1e-6)
         detail["per_hr"] = 1.0 / rate
         detail["per_lg"] = 1.0 / mean
+    if finding.code in ("bat.approach.chase", "bat.approach.whiff"):
+        detail["mean_abs"] = abs(finding.reference.mean)
+    # The reference in the same units the value is printed in.
+    detail["mean_pct"] = abs(finding.reference.mean)
     if finding.code == "game.starters":
         detail["better"] = detail["home"] if finding.value > 0 else detail["away"]
     return detail
@@ -105,7 +142,9 @@ def render(finding: Finding, *, variant: int | None = None) -> str:
     chosen = options[index % len(options)]
     variant_text = chosen
     slots = _slots(finding)
-    for key in ("xwoba", "league", "value", "baseline", "mean", "rate"):
+    for key in ("xwoba", "league", "value", "baseline", "mean", "rate",
+                "actual", "expected", "vs_left", "vs_right", "gap", "share",
+                "pull", "chase", "whiff"):
         if key in slots and isinstance(slots[key], (int, float)):
             slots[f"{key}3"] = _rate(float(slots[key]))
     try:

@@ -80,3 +80,64 @@ both layers side by side surfaced it.
    *something* to say. Whether that is a strength or a weakness is the question
    this project keeps returning to, and it should be settled by reading a full
    card rather than six lines.
+
+
+---
+
+# Batters built — coverage 49% to 85%
+
+The gap at the last measurement was not quality but absence: pitchers were at
+100% and batters at 0%, because no batter evaluator was wired.
+
+`insight/batters.py` adds six, covering four different frames, because a hitter
+has no equivalent of an arsenal -- no single small set of named things with an
+obvious comparison. That is why the model reaches for percentile rankings when
+describing one.
+
+| Subject | n | Covered | |
+|---|---|---|---|
+| Relievers | 24 | 23 | 96% |
+| Batters | 18 | 16 | 89% |
+| Bench | 8 | 5 | 62% |
+| Starters | 2 | 1 | 50% |
+| Matchup | 1 | 0 | 0% |
+| **Total** | **53** | **45** | **85%** |
+
+## Reading against the model
+
+> **Model:** Lee's calling card is bat-to-ball skill — a 96th percentile xBA
+> paired with a strikeout rate of just 11.1%. What he doesn't do is damage the
+> ball: an 11th percentile hard-hit rate.
+
+> **Computed:** Lee misses on 11.2% of his swings, league 22.6%, but squares one
+> up 2.5% of the time he makes contact, 7.9% league-wide.
+
+Same hitter, same two facts, arrived at independently. Elsewhere: Eldridge at
+92.2 mph against a league 88.1 where the model said "89th percentile exit
+velocity"; Bericoto's chase rate and breaking-ball trouble, which the model also
+led with.
+
+## A fault the run exposed
+
+One line read "Cox has handled the 4-Seam Fastball at a .053 expected wOBA".
+True, and meaningless -- forty pitches.
+
+Shrinkage was already working, but it governs *ranking* while the sentence
+prints the raw figure, which is correct for a descriptive finding and
+misleading on thin evidence. Selection now applies a reliability gate as well as
+the significance floor: two different guards for two different failures. The
+floor stops an inferential claim that is really noise; the gate stops a
+descriptive one that is technically true and says nothing.
+
+Cox now returns nothing, which is the honest answer for a bench player with
+forty pitches on record.
+
+## What is left
+
+- **The matchup page**, still 0%. It is one subject and the projections page
+  already computes most of what it needs.
+- **The two starters at 50%.** One had too few pitches under the arsenal
+  threshold; worth checking whether that threshold is right rather than assuming.
+- **Breadth of judgement.** The model still moves between frames more naturally
+  and reaches counts, walk rates and percentile context that no evaluator
+  computes. Every one is computable; none is written.

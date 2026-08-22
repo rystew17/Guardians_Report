@@ -25,6 +25,7 @@ def select(
     criteria: int | None = None,
     floor: float | None = None,
     per_kind: int = 2,
+    min_reliability: float = 0.30,
 ) -> list[Finding]:
     """The most significant findings, spread across different families.
 
@@ -44,9 +45,14 @@ def select(
     # noise. A descriptive finding claims no such thing -- a pitcher's best pitch
     # is his best pitch whatever the league spread -- so it is ranked alongside
     # the rest but not gated.
+    # Two different gates. The floor stops an inferential claim that is really
+    # noise. The reliability gate stops a descriptive one that is technically
+    # true and materially misleading -- a .053 expected wOBA over forty pitches
+    # is a real number and says nothing about the hitter.
     eligible = [
         f for f in findings
-        if not f.inferential or f.significance >= threshold
+        if f.reliability >= min_reliability
+        and (not f.inferential or f.significance >= threshold)
     ]
     ranked = sorted(eligible, key=lambda f: -f.significance)
 
