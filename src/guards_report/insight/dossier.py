@@ -193,10 +193,12 @@ def write_profile(player: prof.PlayerProfile, *, surname: str, voice=None) -> st
         pieces.append(" and ".join(support))
 
     if player.runs_per_150 is not None and np.isfinite(player.runs_per_150):
-        pieces.append(
-            f"worth {player.runs_per_150:+.0f} runs per 150 games once his bat, "
-            "legs and glove are counted together"
-        )
+        # Not varied, deliberately. This is the one figure a reader compares
+        # across players, and a number that arrives in a different sentence
+        # every time is harder to scan, not easier. What it needed was to be
+        # shorter -- the old form spent nine words restating what "all in"
+        # already says.
+        pieces.append(f"{player.runs_per_150:+.0f} runs per 150 games, all in")
 
     return ". ".join(p[0].upper() + p[1:] for p in pieces) + "."
 

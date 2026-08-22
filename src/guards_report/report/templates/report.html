@@ -840,7 +840,7 @@
   {% endif %}
 
   {% if box.percentiles or box.derived_percentiles %}
-  {{ pchips(box, [('pitch_rv','Run Val'),('xera','xERA'),('xwoba','xwOBA'),('xba','xBA'),('xslg','xSLG'),
+  {{ pchips(box, [('pitch_rv','Run Val'),('fb_rv','FB Val'),('br_rv','BB Val'),('os_rv','OS Val'),('xera','xERA'),('xwoba','xwOBA'),('xba','xBA'),('xslg','xSLG'),
       ('k_percent','K%'),('bb_percent','BB%'),('whiff_percent','Whiff'),('chase_percent','Chase'),
       ('brl_percent','Barrel'),('hard_hit_percent','HardHit'),('exit_velocity','ExitVelo'),
       ('fb_velocity','FB velo'),('fb_spin','FB spin'),('curve_spin','CB spin')]) }}

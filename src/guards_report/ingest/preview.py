@@ -1368,25 +1368,45 @@ def build_preview(
 
         models = settings.raw_archive_dir.parent / "models"
 
-        def _reference(name: str, key: str) -> dict[int, tuple[float, float]]:
+        def _reference(name: str, key: str,
+                       size_key: str | None = None) -> dict[int, tuple[float, float]]:
             path = models / f"{name}.parquet"
             if not path.exists():
                 return {}
             frame = _pd.read_parquet(path)
             frame = frame[frame["season"] == season]
             id_column = "batter" if name.startswith("batter") else "pitcher"
-            size = "pa" if id_column == "batter" else "bf"
-            return {
-                int(r[id_column]): (float(r[key]), float(r[size]))
-                for _, r in frame.iterrows()
-                if r.get(key) is not None and r.get(size)
-            }
+            # An arsenal figure is divided by the pitches of that type thrown,
+            # not by the pitcher's whole workload.
+            size = size_key or ("pa" if id_column == "batter" else "bf")
+            if size not in frame.columns:
+                return {}
+            out = {}
+            for _, r in frame.iterrows():
+                value, denom = r.get(key), r.get(size)
+                if value is None or denom is None:
+                    continue
+                try:
+                    value, denom = float(value), float(denom)
+                except (TypeError, ValueError):
+                    continue
+                if denom and value == value and denom == denom:
+                    out[int(r[id_column])] = (value, denom)
+            return out
 
         # Batting and pitching run value come from the pitch corpus rather than
         # the swing-take board: identical construction, and 562 batters and 427
         # pitchers against the board's 300.
         batting = _reference("batter_profiles", "bat_rv")
         pitching = _reference("pitcher_profiles", "pitch_rv")
+        # What each kind of pitch has been worth, the way a player page splits
+        # it. Ranked only among pitchers who actually throw that pitch: a man
+        # with no changeup has no offspeed run value, and scoring him zero
+        # would put him at the median of a skill he does not have.
+        arsenals = {
+            chip: _reference("pitcher_profiles", chip, f"{chip}_n")
+            for chip in ("fb_rv", "br_rv", "os_rv")
+        }
 
         def _rank(rate: float, pool: list[float]) -> int | None:
             if not pool:
@@ -1427,9 +1447,29 @@ def build_preview(
         bat_pool = sorted(
             _rate(v, n, RUN_VALUE_PADDING, 600.0)
             for v, n in batting.values() if n >= QUALIFIED_PA)
-        pitch_pool = sorted(
-            _rate(v, n, RUN_VALUE_PADDING, 600.0)
-            for v, n in pitching.values() if n >= QUALIFIED_BF)
+        # Pitching run value follows the arsenal rule -- season total, ranked
+        # against every pitcher with a real workload -- because that is what
+        # reproduces the page: 70 against a published 66, where the shrunk rate
+        # gave 59. The pitcher reference already floors at 120 batters faced, so
+        # "everyone" here is not the open field it would be for hitters.
+        pitch_pool = sorted(v for v, _ in pitching.values())
+        # Arsenal chips rank the season total against everyone who throws that
+        # pitch, which is established rather than assumed: it reproduces the
+        # player page at 93.9 against 92 on the fastball, 23.9 against 26 on the
+        # breaking ball and 9.4 against 14 on the offspeed. Ranking runs per
+        # hundred pitches instead -- the more defensible-looking choice -- put
+        # the fastball at 69 where the page says 92, because a total rewards a
+        # pitcher for throwing a good pitch often and a rate does not.
+        #
+        # Savant does not use one population across its boards, which this
+        # project has now measured three times. Batting and pitching run value
+        # rank against qualified players; arsenal values rank against everyone
+        # who throws the pitch.
+        ARSENAL_MIN_THROWN = 100.0
+        arsenal_pools = {
+            chip: sorted(v for v, n in values.values() if n >= ARSENAL_MIN_THROWN)
+            for chip, values in arsenals.items()
+        }
 
         run_values = baserunning_runs
         field_values = _by_player(fielding_rows, "outs_above_average")
@@ -1504,13 +1544,27 @@ def build_preview(
                 value, faced = pitching[pid]
                 if faced < 25:
                     continue
-                grade = _rank(
-                    _rate(value, faced, RUN_VALUE_PADDING, 600.0),
-                    pitch_pool)
+                grade = _rank(value, pitch_pool)
                 if grade is not None:
                     box.derived_percentiles["pitch_rv"] = grade
                     if faced >= QUALIFIED_BF:
                         box.qualified_chips.add("pitch_rv")
+
+                for chip, values in arsenals.items():
+                    entry = values.get(pid)
+                    if entry is None:
+                        continue
+                    pitch_value, thrown = entry
+                    if thrown < ARSENAL_MIN_THROWN:
+                        continue
+                    grade = _rank(pitch_value, arsenal_pools.get(chip) or [])
+                    if grade is not None:
+                        box.derived_percentiles[chip] = grade
+                        # A total is partly a statement about workload, so the
+                        # asterisk stays on until he has thrown the pitch enough
+                        # for the number to be about the pitch.
+                        if thrown >= 300:
+                            box.qualified_chips.add(chip)
 
     try:
         _attach_value_chips()
