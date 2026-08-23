@@ -12,6 +12,8 @@ is a prior rather than an answer -- the same split that `season_priors` and
 
 from __future__ import annotations
 
+from guards_report.projections import atomic
+
 import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -202,7 +204,7 @@ def fit_first5(*, corpus_dir: Path, pitcher_dir: Path, first5: pd.DataFrame,
 
 def save(artifact: Any, path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(asdict(artifact), indent=1), encoding="utf-8")
+    atomic.write_text(path, json.dumps(asdict(artifact), indent=1))
     return path
 
 
@@ -243,7 +245,7 @@ def _load_pitches(directory: Path, columns: list[str]) -> pd.DataFrame:
 
 def save_frame(frame: pd.DataFrame, path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_parquet(path, index=False)
+    atomic.write_frame(frame, path, index=False)
     return path
 
 

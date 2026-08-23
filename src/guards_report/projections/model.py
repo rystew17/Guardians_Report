@@ -21,6 +21,8 @@ reader to take it on trust.
 
 from __future__ import annotations
 
+from guards_report.projections import atomic
+
 import json
 from dataclasses import dataclass, field, asdict
 from datetime import date, datetime, timezone
@@ -350,9 +352,11 @@ def _totals(totals: np.ndarray, *, limit: int = 24) -> list[dict]:
 
 
 def save(model: OutcomeModel, path: Path) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(asdict(model), indent=1), encoding="utf-8")
-    return path
+    # Atomic, so a refit that dies halfway leaves the working model in
+    # place rather than a truncated file. `load` returns None on an
+    # unreadable artifact, so the damage would be a projections page that
+    # silently vanished rather than an error anyone would see.
+    return atomic.write_text(path, json.dumps(asdict(model), indent=1))
 
 
 def load(path: Path) -> OutcomeModel | None:
