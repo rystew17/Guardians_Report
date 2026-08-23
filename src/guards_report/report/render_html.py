@@ -10,6 +10,7 @@ with no plate appearances against left-handers has an undefined average, not a
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ from markupsafe import Markup
 
 from guards_report.config import SPLIT_LABELS
 from guards_report.ingest.preview import ReportBundle
+from guards_report.report import preview_card
 from guards_report.metrics import clocks, series
 from guards_report.metrics.trends import reliability as _reliability
 from guards_report.metrics.zones import ZoneCell, ZoneGrid
@@ -420,6 +422,7 @@ def render(bundle: ReportBundle, *, output_dir: Path, bucket: str = "") -> Path:
         preview_title=preview_title(bundle),
         preview_description=preview_description(bundle),
         preview_url=preview_url(bundle, bucket=bucket),
+        preview_image=preview_image_url(bundle, bucket=bucket),
         guardians=bundle.guardians,
         opponent=bundle.opponent,
         generated=clocks.stamp(bundle.generated_at),
@@ -434,6 +437,14 @@ def render(bundle: ReportBundle, *, output_dir: Path, bucket: str = "") -> Path:
     )
 
     html = _add_table_semantics(html)
+
+    # The card is drawn beside the report so `publish` can upload the pair. X
+    # renders a link card image-first and shows a bare URL without one, which
+    # is the whole reason this exists.
+    try:
+        preview_card.build(bundle, output_dir=output_dir)
+    except Exception as exc:  # noqa: BLE001 -- a missing picture is not a failure
+        print(f"  warning: preview card not drawn ({exc})", file=sys.stderr)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     matchup = f"{bundle.away.abbreviation}-at-{bundle.home.abbreviation}"
@@ -1240,4 +1251,17 @@ def preview_url(bundle, *, bucket: str = "") -> str:
         return ""
     matchup = f"{bundle.away.abbreviation}-at-{bundle.home.abbreviation}"
     name = f"{bundle.game_date.isoformat()}_{matchup}.html"
+    return f"https://storage.googleapis.com/{bucket}/reports/{name}"
+
+def preview_image_url(bundle, *, bucket: str = "") -> str:
+    """Where the drawn card will live once published.
+
+    Same naming rule as the report and the same bucket, so the pair travel
+    together. Empty without a bucket: an `og:image` pointing nowhere renders a
+    broken thumbnail, which is worse than the text card it replaces.
+    """
+    if not bucket:
+        return ""
+    matchup = f"{bundle.away.abbreviation}-at-{bundle.home.abbreviation}"
+    name = f"{bundle.game_date.isoformat()}_{matchup}.png"
     return f"https://storage.googleapis.com/{bucket}/reports/{name}"

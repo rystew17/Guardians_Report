@@ -133,3 +133,104 @@ def test_a_different_game_produces_a_different_preview():
         game_date=date(2026, 9, 1))
     assert render_html.preview_title(first) != render_html.preview_title(second)
     assert render_html.preview_description(first) != render_html.preview_description(second)
+
+
+# ---------------------------------------------------------------------------
+# The card image
+# ---------------------------------------------------------------------------
+
+def test_the_image_url_matches_where_publish_puts_the_card():
+    """`og:image` pointing at a 404 renders a broken thumbnail.
+
+    That is strictly worse than the text card it replaces, so the URL in the
+    tag and the object the publisher uploads are pinned together here.
+    """
+    from guards_report.publish import gcs
+
+    bundle = _Bundle()
+    url = render_html.preview_image_url(bundle, bucket="a-bucket")
+    matchup = f"{bundle.away.abbreviation}-at-{bundle.home.abbreviation}"
+    card = Path(f"{bundle.game_date.isoformat()}_{matchup}.png")
+    assert url.endswith(gcs.object_name_for(card))
+
+
+def test_the_card_and_the_report_differ_only_by_extension():
+    """`publish` finds the card with `path.with_suffix('.png')`.
+
+    If the two naming rules ever drift the upload silently skips the image and
+    the tag points at nothing.
+    """
+    bundle = _Bundle()
+    html_url = render_html.preview_url(bundle, bucket="b")
+    png_url = render_html.preview_image_url(bundle, bucket="b")
+    assert html_url[:-len(".html")] == png_url[:-len(".png")]
+
+
+def test_no_bucket_yields_no_image_tag():
+    assert render_html.preview_image_url(_Bundle(), bucket="") == ""
+
+
+def test_the_card_draws_at_the_size_unfurlers_expect(tmp_path):
+    """1200x630 is what Slack, X, Discord and Facebook read without cropping."""
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    from guards_report.report import preview_card
+
+    path = preview_card.build(_Bundle(), output_dir=tmp_path)
+    assert path is not None and path.suffix == ".png"
+    with Image.open(path) as image:
+        assert image.size == (preview_card.WIDTH, preview_card.HEIGHT)
+        assert image.size == (1200, 630)
+
+
+def test_the_card_carries_the_game_rather_than_a_template(tmp_path):
+    pytest.importorskip("PIL")
+    from guards_report.report import preview_card
+
+    lines = preview_card.lines_for(_Bundle())
+    assert "Cleveland Guardians" in lines.away
+    assert "Colorado Rockies" in lines.home
+    assert "63-66" in lines.records
+    assert "Bibee" in lines.starters and "Hughes" in lines.starters
+    assert "57%" in lines.call
+
+
+def test_a_long_club_name_shrinks_rather_than_overflowing(tmp_path):
+    """Club names run from "Reds" to "Diamondbacks".
+
+    A fixed size either wastes half the card or runs off the edge, and the
+    overflow is invisible until someone shares a Diamondbacks game.
+    """
+    pytest.importorskip("PIL")
+    from PIL import Image, ImageDraw
+
+    from guards_report.report import preview_card
+
+    image = Image.new("RGB", (preview_card.WIDTH, preview_card.HEIGHT))
+    draw = ImageDraw.Draw(image)
+    room = preview_card.WIDTH - 128
+    for name in ("Reds", "Arizona Diamondbacks", "W" * 40):
+        font = preview_card._fit(
+            draw, name, lambda s: preview_card._font("bold", s), 62, 34, room)
+        # The floor can still overflow for absurd input; what must not happen is
+        # the full-size font being handed back for a name that does not fit.
+        if font.size > 34:
+            assert draw.textlength(name, font=font) <= room, name
+
+
+def test_a_missing_drawing_library_costs_the_image_not_the_report(monkeypatch, tmp_path):
+    """The report must build on a machine with no raster library."""
+    import builtins
+
+    from guards_report.report import preview_card
+
+    real_import = builtins.__import__
+
+    def no_pil(name, *args, **kwargs):
+        if name == "PIL" or name.startswith("PIL."):
+            raise ImportError("no PIL")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_pil)
+    assert preview_card.build(_Bundle(), output_dir=tmp_path) is None

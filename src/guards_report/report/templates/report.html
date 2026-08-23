@@ -14,10 +14,11 @@
     two starters, the model's call -- rather than a fixed sentence, so the
     preview is a reason to open the page rather than a label on it.
 
-    There is deliberately no `og:image`. Producing one needs a raster library
-    this project does not carry, and an unfurler given an image URL that 404s
-    shows a broken thumbnail where it would otherwise have shown a clean
-    text card. Absent is better than broken.
+    `og:image` matters more than it looks. X renders a link card image-first --
+    the headline sits on the picture -- so with no image it has nothing to draw
+    and falls back to printing the bare URL. Slack, iMessage and Discord render
+    a text-only card happily; X does not. The card is drawn at build time and
+    published beside the report.
 -#}
 <meta name="description" content="{{ preview_description }}">
 <meta property="og:type" content="article">
@@ -28,7 +29,14 @@
 <meta property="og:url" content="{{ preview_url }}">
 <link rel="canonical" href="{{ preview_url }}">
 {%- endif %}
-<meta name="twitter:card" content="summary">
+{%- if preview_image %}
+<meta property="og:image" content="{{ preview_image }}">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="{{ preview_title }}">
+<meta name="twitter:image" content="{{ preview_image }}">
+{%- endif %}
+<meta name="twitter:card" content="{{ 'summary_large_image' if preview_image else 'summary' }}">
 <meta name="twitter:title" content="{{ preview_title }}">
 <meta name="twitter:description" content="{{ preview_description }}">
 <meta name="theme-color" content="#0c2340">

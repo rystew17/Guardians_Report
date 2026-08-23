@@ -98,6 +98,20 @@ def publish(path: Path, *, bucket_name: str, project: str) -> Published:
 
     _make_readable(blob)
 
+    # The preview card travels with the report. `og:image` points at it, and an
+    # unfurler given an image URL that 404s renders a broken thumbnail -- worse
+    # than the text card it was meant to improve on. Publishing the pair
+    # together is what keeps that from happening.
+    card = path.with_suffix(".png")
+    if card.is_file():
+        try:
+            image = bucket.blob(object_name_for(card))
+            image.cache_control = CACHE_CONTROL
+            image.upload_from_filename(card, content_type="image/png")
+            _make_readable(image)
+        except Exception:  # noqa: BLE001 -- a missing picture is not a failed publish
+            pass
+
     return Published(
         url=f"https://storage.googleapis.com/{bucket_name}/{blob.name}",
         bucket=bucket_name,

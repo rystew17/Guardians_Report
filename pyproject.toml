@@ -18,6 +18,11 @@ dependencies = [
     # "America/New_York" without this. Every clock time in the report is
     # Eastern, so it is a hard requirement, not a convenience.
     "tzdata>=2024.1",
+    # Draws the link preview card. X renders a shared link image-first and
+    # falls back to printing the bare URL when there is no image, so this is
+    # what makes a published report unfurl on X at all. The report still builds
+    # without it -- the card is skipped and the link degrades to a text card.
+    "pillow>=10.0",
 ]
 
 [project.optional-dependencies]
