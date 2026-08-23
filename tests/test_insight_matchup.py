@@ -366,3 +366,139 @@ def test_a_surname_survives_a_qualified_display_name():
     assert card._surname("Jose Ramirez (3B)") == "Ramirez"
     assert card._surname("Tanner Bibee") == "Bibee"
     assert card._surname("") == ""
+
+
+# ---------------------------------------------------------------------------
+# The three-part note
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _Record:
+    wins: int = 70
+    losses: int = 58
+    luck: int = 0
+    streak: str = "W2"
+    splits: dict = field(default_factory=lambda: {"lastTen": (6, 4)})
+
+
+@dataclass
+class _Profile:
+    record: Any = None
+    run_differential: int = 0
+    bullpen_pitches_last_3: int = 100
+
+
+@dataclass
+class _Series:
+    games_played: int = 1
+    games_in_series: int = 3
+    home_wins: int = 0
+    away_wins: int = 1
+
+
+def _sides(home_wins=70, away_wins=70, home_diff=0, away_diff=0,
+           home_ten=(5, 5), away_ten=(5, 5), home_luck=0, away_luck=0):
+    home = _Section("CLE")
+    away = _Section("COL")
+    home.profile = _Profile(
+        record=_Record(wins=home_wins, losses=128 - home_wins, luck=home_luck,
+                       splits={"lastTen": home_ten}),
+        run_differential=home_diff)
+    away.profile = _Profile(
+        record=_Record(wins=away_wins, losses=128 - away_wins, luck=away_luck,
+                       splits={"lastTen": away_ten}),
+        run_differential=away_diff)
+    bundle = _Bundle(home=home, away=away, projection=_Projection())
+    bundle.series = _Series()
+    return bundle
+
+
+def test_the_note_reads_in_a_fixed_order():
+    """Who these clubs are, then who is pitching, then what the model says.
+
+    Not sorted by significance. A 57% call means something different about a
+    first-place club than a last-place one, so the standings have to come first
+    for the projection to land.
+    """
+    built = matchup.note(_sides())
+    assert [name for name, _ in built.parts] == [
+        n for n in ("On paper", "On the mound", "Projections")
+        if n in dict(built.parts)]
+    if len(built.parts) > 1:
+        names = [n for n, _ in built.parts]
+        assert names == sorted(names, key=lambda n: (
+            "On paper", "On the mound", "Projections").index(n))
+
+
+def test_the_better_record_is_named_as_the_better_record():
+    """The sign of the comparison is the whole sentence."""
+    text = matchup.write_on_paper(_sides(home_wins=90, away_wins=50))
+    assert "CLE" in text and text.index("CLE") < text.index("COL")
+
+
+def test_two_clubs_of_a_kind_are_not_declared_separated():
+    """A handful of games over a season is not a gap worth asserting."""
+    text = matchup.write_on_paper(_sides(home_wins=66, away_wins=64)).lower()
+    assert any(w in text for w in ("level", "close", "little between"))
+
+
+def test_a_record_ahead_of_its_run_differential_is_flagged():
+    """The reading a standings page cannot give.
+
+    A club four wins above what its scoring implies has been getting results the
+    runs do not support, and that is worth more than either figure alone.
+    """
+    text = matchup.write_on_paper(_sides(home_wins=80, away_wins=55, home_luck=7)).lower()
+    assert any(w in text for w in ("flatter", "not supported", "more than their runs"))
+
+
+def test_recent_form_running_against_the_season_is_called_out():
+    """The interesting case: the worse club is playing better right now."""
+    text = matchup.write_on_paper(
+        _sides(home_wins=85, away_wins=50, home_ten=(2, 8), away_ten=(8, 2)))
+    assert "COL" in text
+    lowered = text.lower()
+    assert any(w in lowered for w in ("cuts against", "flip", "hotter"))
+
+
+def test_the_series_state_is_reported():
+    built = matchup.write_on_paper(_sides())
+    assert "series" in built.lower() or "lead" in built.lower() or "opener" in built.lower()
+
+
+def test_a_club_with_no_standings_still_gets_the_other_sections():
+    """Losing one part is a smaller loss than losing the note."""
+    bundle = _sides()
+    bundle.home.profile = None
+    built = matchup.note(bundle)
+    assert built.on_paper == ""
+    assert built.projections, "the projection section must survive"
+
+
+def test_no_projection_leaves_the_first_two_sections_standing():
+    bundle = _sides()
+    bundle.projection = None
+    built = matchup.note(bundle)
+    assert built.on_paper and not built.projections
+
+
+def test_a_starter_is_graded_against_the_lineup_he_actually_faces():
+    """The parameters are named for what they are, because they were not.
+
+    `away_lineup` reads like "the away team's lineup"; the caller meant "the
+    lineup the away starter faces". Paired the natural way it graded each
+    pitcher against his own team while labelling the sentence with the other --
+    right words, wrong numbers, and nothing in the output to show it.
+    """
+    import inspect
+
+    signature = inspect.signature(matchup.write_on_the_mound)
+    assert "home_faces" in signature.parameters
+    assert "away_faces" in signature.parameters
+    assert "home_lineup" not in signature.parameters
+
+
+def test_the_note_is_empty_rather_than_raising_on_an_empty_bundle():
+    bundle = _Bundle(home=_Section("CLE"), away=_Section("COL"), projection=None)
+    built = matchup.note(bundle)
+    assert built.empty

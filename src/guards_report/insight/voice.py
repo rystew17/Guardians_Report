@@ -219,6 +219,13 @@ class Voice:
         self._remember("blurb", phrase)
         return phrase
 
+    def team(self, code: str, *key: Any, **slots: Any) -> str:
+        phrase = team_phrase(
+            code, *key, avoid=self._recent.get("team", []), **slots)
+        if phrase:
+            self._remember("team", phrase)
+        return phrase
+
     def matchup(self, code: str, *key: Any, **slots: Any) -> str:
         phrase = matchup_phrase(
             code, *key, avoid=self._recent.get("matchup", []), **slots)
@@ -374,6 +381,137 @@ def matchup_phrase(code: str, *key: Any, avoid: Sequence[str] | None = None,
                    **slots: Any) -> str:
     """One phrasing of a matchup, filled in and stable for this pairing."""
     options = MATCHUP_PHRASES.get(code)
+    if not options:
+        return ""
+    chosen = choose(options, code, *key, avoid=avoid)
+    try:
+        return chosen.format(**slots)
+    except (KeyError, IndexError):
+        return ""
+
+
+# --------------------------------------------------------------------------
+# Team-level phrasings
+# --------------------------------------------------------------------------
+# The matchup note is written once a day for the same two clubs through a
+# three-game series, so it repeats harder than any player block does. Same rule
+# as everywhere else: several ways to say one thing, never several things.
+#
+# Slots: {a} and {h} are the two club abbreviations, {fav} the better side,
+# {dog} the other, and the numeric slots are pre-formatted by the caller.
+
+TEAM_PHRASES: dict[str, tuple[str, ...]] = {
+    # -- who is better on paper -----------------------------------------
+    "rec.gap": (
+        "{fav} are the better team on record, {favrec} against {dogrec}",
+        "the standings are not close: {favrec} for {fav}, {dogrec} for {dog}",
+        "{favrec} against {dogrec} — {fav} have been the better side all year",
+    ),
+    "rec.close": (
+        "these two are near enough level on record, {favrec} against {dogrec}",
+        "little between them in the standings — {favrec} and {dogrec}",
+        "{favrec} against {dogrec}, which is close to a coin flip on paper",
+    ),
+    "rundiff.gap": (
+        "{fav} have outscored their opposition by {favdiff} on the year against "
+        "{dogdiff} for {dog}",
+        "the run differential says the same thing: {favdiff} for {fav}, "
+        "{dogdiff} for {dog}",
+        "{fav} sit at {favdiff} on run differential, {dog} at {dogdiff}",
+    ),
+    "luck.flattered": (
+        "{team}'s record flatters them — {luck} wins above what their scoring "
+        "implies",
+        "{team} have won {luck} more than their runs deserve, which tends not "
+        "to hold",
+        "{luck} of {team}'s wins are not supported by their run scoring",
+    ),
+    "luck.unlucky": (
+        "{team} have been unlucky, {luck} wins short of what their scoring "
+        "implies",
+        "{team}'s record understates them by {luck} wins",
+        "the runs say {team} should have {luck} more wins than they do",
+    ),
+    "form.gap": (
+        "recent form points the same way: {fav} are {favten} in their last ten, "
+        "{dog} {dogten}",
+        "{fav} have gone {favten} over ten games to {dog}'s {dogten}",
+        "over the last ten it is {favten} for {fav} against {dogten} for {dog}",
+    ),
+    "form.against": (
+        "recent form cuts against that — {hot} are {hotten} in their last ten "
+        "while {cold} have gone {coldten}",
+        "the last ten flip it: {hotten} for {hot}, {coldten} for {cold}",
+        "{hot} are the hotter side right now at {hotten} to {coldten}",
+    ),
+    "streak": (
+        "{team} arrive on {streak}",
+        "{team} come in having {streakverb}",
+        "{team} are riding {streak}",
+    ),
+    "series.led": (
+        "{leader} lead this series {lead}",
+        "{leader} are up {lead} through {played}",
+        "{leader} took the opener and lead {lead}",
+    ),
+    "series.level": (
+        "the series is level at {lead}",
+        "one apiece so far",
+        "nothing between them in the series at {lead}",
+    ),
+    "series.opener": (
+        "this is the opener",
+        "first of {total}",
+        "game one of {total}",
+    ),
+    "elo.gap": (
+        "the ratings agree, and by more than the records do",
+        "the model's own team rating separates them further than the standings",
+        "on rating rather than record the gap is wider still",
+    ),
+    "elo.narrow": (
+        "the ratings see them closer than the records do",
+        "the model's team rating is less impressed by the gap than the "
+        "standings are",
+        "on rating the two are nearer than the win column suggests",
+    ),
+
+    # -- the pitching matchup -------------------------------------------
+    "sp.mismatch": (
+        "{better} has been the better pitcher this year by a clear margin",
+        "this is a mismatch on the mound in {better}'s favour",
+        "{better} is the more accomplished of the two starters by some way",
+    ),
+    "sp.even": (
+        "the two starters are hard to separate on the season",
+        "little between the starters on their year's work",
+        "a fairly even matchup on the mound",
+    ),
+    "sp.contrast": (
+        "two different kinds of pitcher: {a_desc} against {h_desc}",
+        "a contrast in style — {a_desc} opposite {h_desc}",
+        "{a_desc} and {h_desc}, which is as different as two starters get",
+    ),
+    "sp.form": (
+        "{who} has been the sharper of the two lately",
+        "recent work favours {who}",
+        "{who} is the one arriving in better touch",
+    ),
+    "bullpen.gap": (
+        "the bullpens are not equal either — {better} carry the deeper one",
+        "{better} have the better relief corps behind their starter",
+        "past the starters, {better} hold the advantage",
+    ),
+    "bullpen.tired": (
+        "{team}'s pen has been worked hard, {pitches} pitches across three days",
+        "{team} come in with a tired bullpen — {pitches} pitches in three days",
+        "{pitches} pitches over three days leaves {team}'s relief thin",
+    ),
+}
+
+def team_phrase(code: str, *key, avoid=None, **slots) -> str:
+    """One phrasing of a team-level observation, filled in and stable."""
+    options = TEAM_PHRASES.get(code)
     if not options:
         return ""
     chosen = choose(options, code, *key, avoid=avoid)

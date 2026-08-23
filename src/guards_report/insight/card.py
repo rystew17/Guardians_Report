@@ -46,6 +46,7 @@ class CardAnalysis:
     """One line per subject, plus what it cost to produce."""
 
     matchup: str = ""
+    matchup_parts: list = field(default_factory=list)
     subjects: dict[int, str] = field(default_factory=dict)
     dossiers: dict[int, Any] = field(default_factory=dict)
     findings: dict[int, int] = field(default_factory=dict)
@@ -224,12 +225,21 @@ def analyse(bundle: Any, *, pitch_dir: Path, on: date | None = None) -> CardAnal
 
     # -- the game itself -----------------------------------------------------
     try:
-        game_findings = (
-            matchup.from_projection(projection, home, away)
-            + matchup.starter_strikeout_edge(projection, home, away)
-            + matchup.key_player(projection, home, away)
+        # Three parts in reading order rather than one paragraph: who these two
+        # clubs are, who is pitching, then what the models make of it. A win
+        # probability lands differently once the first two are established.
+        built = matchup.note(
+            bundle,
+            home_starter=(opposing["away"][1] if opposing.get("away") else None),
+            away_starter=(opposing["home"][1] if opposing.get("home") else None),
+            # `lineups[side]` is what that side's *pitcher* faces, which is the
+            # other club's batters. Passing it as "the home lineup" is what
+            # graded each starter against his own team.
+            home_faces=lineups.get("home"), away_faces=lineups.get("away"),
+            voice=card_voice,
         )
-        result.matchup = matchup.paragraph(game_findings)
+        result.matchup_parts = list(built.parts)
+        result.matchup = " ".join(text for _, text in built.parts)
     except Exception as exc:  # noqa: BLE001
         result.warnings.append(f"matchup: {type(exc).__name__}: {exc}")
 

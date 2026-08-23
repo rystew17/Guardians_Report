@@ -175,7 +175,10 @@ def test_an_artifacts_age_comes_from_its_own_stamp_not_the_file(tmp_path):
     every model was fitted the day of the last restore.
     """
     _artifact(tmp_path, "game_outcome.json", days_old=30)
-    ages = freshness.fitted_ages(tmp_path / "models", now=date.today())
+    # UTC on both sides, matching what the function does. A local 
+    # here would make this test pass or fail depending on the hour it runs.
+    ages = freshness.fitted_ages(
+        tmp_path / "models", now=datetime.now(timezone.utc).date())
     assert ages["game_outcome"] == 30
 
 

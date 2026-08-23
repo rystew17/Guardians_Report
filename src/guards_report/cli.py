@@ -90,11 +90,14 @@ def attach_computed_analysis(bundle, settings, *, on) -> dict:
             )
 
     if analysis.matchup:
+        # The game note carries its three parts the same way a player's does,
+        # so the page renders one structure rather than two.
         entries[f"game-{bundle.game_pk}"] = _Computed(
-            subject_id=f"game-{bundle.game_pk}", text=analysis.matchup,
+            subject_id=f"game-{bundle.game_pk}", text="",
+            parts=list(analysis.matchup_parts),
             verification=_Verification(
-                ok=True, checked=6,
-                summary="assembled from the fitted projections",
+                ok=True, checked=len(analysis.matchup_parts) or 6,
+                summary="records, starters and the fitted projections",
             ),
         )
 

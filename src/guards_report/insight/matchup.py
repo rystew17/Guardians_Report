@@ -19,8 +19,13 @@ them into one line reads as a list.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
+
+from guards_report.insight import profile as prof
+from guards_report.insight import voice as voice_module
 from guards_report.insight.types import Finding, Reference
 
 
@@ -208,3 +213,359 @@ def paragraph(findings: list[Finding], *, limit: int = 5) -> str:
         return ""
     return " ".join(p[0].upper() + p[1:] + ("." if not p.endswith(".") else "")
                     for p in parts)
+
+
+# --------------------------------------------------------------------------
+# The three-part matchup note
+# --------------------------------------------------------------------------
+# Same shape as a player's: a fixed reading order, not a significance ranking.
+# You establish who these two clubs are before you say who is favoured tonight,
+# because "a 57% favourite" means something different about a first-place team
+# than about a last-place one.
+#
+#   1. On paper   -- record, run differential, recent form, the series, rating
+#   2. On the mound -- the two starters, against each other and their opponents
+#   3. Projections  -- what the fitted models say, and what moved them
+#
+# Everything here is a difference between the two clubs rather than a fact
+# about one. "Cleveland are 71-57" is a standings lookup; "Cleveland are the
+# better team on record and the ratings separate them further still" is the
+# thing a reader came for.
+
+
+@dataclass
+class MatchupNote:
+    """The game-level note, in three parts."""
+
+    on_paper: str = ""
+    on_the_mound: str = ""
+    projections: str = ""
+
+    @property
+    def parts(self) -> list[tuple[str, str]]:
+        return [(name, text) for name, text in
+                (("On paper", self.on_paper),
+                 ("On the mound", self.on_the_mound),
+                 ("Projections", self.projections)) if text]
+
+    @property
+    def empty(self) -> bool:
+        return not self.parts
+
+
+def _record(section) -> Any:
+    profile = getattr(section, "profile", None)
+    return getattr(profile, "record", None) if profile else None
+
+
+def _split(record, key: str) -> tuple[int, int] | None:
+    splits = getattr(record, "splits", None) or {}
+    pair = splits.get(key)
+    if not pair or len(pair) != 2:
+        return None
+    return int(pair[0]), int(pair[1])
+
+
+def _say(voice, code: str, *key, **slots) -> str:
+    if voice is not None:
+        return voice.team(code, *key, **slots)
+    return voice_module.team_phrase(code, *key, **slots)
+
+
+def write_on_paper(bundle: Any, *, voice=None) -> str:
+    """Part one: which of these two clubs is actually better.
+
+    Four independent readings of the same question -- the standings, the run
+    differential, the last ten, and the model's own rating -- and the useful
+    output is where they disagree. A club whose record outruns its run
+    differential is a different proposition from one whose does not, and that
+    only shows when both are on the page together.
+    """
+    home, away = bundle.home, bundle.away
+    home_rec, away_rec = _record(home), _record(away)
+    if home_rec is None or away_rec is None:
+        return ""
+
+    pieces: list[str] = []
+    key = bundle.game_pk
+
+    def pct(record) -> float:
+        try:
+            return record.wins / max(record.wins + record.losses, 1)
+        except (TypeError, AttributeError):
+            return 0.0
+
+    home_pct, away_pct = pct(home_rec), pct(away_rec)
+    leader, trailer = ((home, home_rec), (away, away_rec))
+    if away_pct > home_pct:
+        leader, trailer = ((away, away_rec), (home, home_rec))
+    (lead_section, lead_rec), (trail_section, trail_rec) = leader, trailer
+
+    def line(record) -> str:
+        return f"{record.wins}-{record.losses}"
+
+    # A tenth of a point of win percentage over a full season is about sixteen
+    # games. Below that these are the same team with different luck.
+    close = abs(home_pct - away_pct) < 0.060
+    pieces.append(_say(
+        voice, "rec.close" if close else "rec.gap", key,
+        fav=lead_section.abbreviation, dog=trail_section.abbreviation,
+        favrec=line(lead_rec), dogrec=line(trail_rec)))
+
+    # Run differential, which is the same question asked of the scoreboard
+    # rather than the win column.
+    home_diff = getattr(home.profile, "run_differential", None)
+    away_diff = getattr(away.profile, "run_differential", None)
+    if home_diff is not None and away_diff is not None and not close:
+        lead_diff = home_diff if lead_section is home else away_diff
+        trail_diff = away_diff if lead_section is home else home_diff
+        if abs(lead_diff - trail_diff) >= 40:
+            pieces.append(_say(
+                voice, "rundiff.gap", key,
+                fav=lead_section.abbreviation, dog=trail_section.abbreviation,
+                favdiff=f"{lead_diff:+d}", dogdiff=f"{trail_diff:+d}"))
+
+    # Where the two disagree. A club four wins above its Pythagorean record has
+    # been getting results its scoring does not support, and saying so is worth
+    # more than either number alone.
+    for section, record in ((home, home_rec), (away, away_rec)):
+        luck = getattr(record, "luck", None)
+        if luck is None or abs(int(luck)) < 4:
+            continue
+        pieces.append(_say(
+            voice, "luck.flattered" if int(luck) > 0 else "luck.unlucky", key,
+            team=section.abbreviation, luck=abs(int(luck))))
+        break
+
+    # Recent form, and whether it agrees with the season.
+    home_ten, away_ten = _split(home_rec, "lastTen"), _split(away_rec, "lastTen")
+    if home_ten and away_ten:
+        def ten(pair) -> str:
+            return f"{pair[0]}-{pair[1]}"
+        lead_ten = home_ten if lead_section is home else away_ten
+        trail_ten = away_ten if lead_section is home else home_ten
+        if lead_ten[0] > trail_ten[0]:
+            pieces.append(_say(
+                voice, "form.gap", key,
+                fav=lead_section.abbreviation, dog=trail_section.abbreviation,
+                favten=ten(lead_ten), dogten=ten(trail_ten)))
+        elif trail_ten[0] > lead_ten[0] + 1:
+            # The interesting case: the worse team is playing better right now.
+            pieces.append(_say(
+                voice, "form.against", key,
+                hot=trail_section.abbreviation, cold=lead_section.abbreviation,
+                hotten=ten(trail_ten), coldten=ten(lead_ten)))
+
+    # The series, which is the only part of this a reader cannot get from a
+    # standings page.
+    series = getattr(bundle, "series", None)
+    if series is not None:
+        played = getattr(series, "games_played", 0) or 0
+        total = getattr(series, "games_in_series", 0) or 0
+        hw = getattr(series, "home_wins", 0) or 0
+        aw = getattr(series, "away_wins", 0) or 0
+        if played == 0:
+            pieces.append(_say(voice, "series.opener", key, total=total))
+        elif hw == aw:
+            pieces.append(_say(voice, "series.level", key, lead=f"{hw}-{aw}"))
+        else:
+            winner = home if hw > aw else away
+            pieces.append(_say(
+                voice, "series.led", key, leader=winner.abbreviation,
+                lead=f"{max(hw, aw)}-{min(hw, aw)}",
+                played=f"{played} game{'s' if played != 1 else ''}"))
+
+    # And the model's own rating, which is a fifth reading and the only one
+    # that carries forward from previous seasons.
+    projection = getattr(bundle, "projection", None)
+    elo = None
+    for entry in (getattr(projection, "contributions", None) or []):
+        if entry.get("name") == "elo_logit":
+            elo = entry
+            break
+    if elo is not None and not close:
+        toward_home = float(elo.get("contribution", 0.0)) > 0
+        rating_agrees = (toward_home and lead_section is home) or \
+                        (not toward_home and lead_section is away)
+        strong = abs(float(elo.get("contribution", 0.0))) >= 0.30
+        if rating_agrees and strong:
+            pieces.append(_say(voice, "elo.gap", key))
+        elif rating_agrees:
+            pieces.append(_say(voice, "elo.narrow", key))
+
+    pieces = [p for p in pieces if p]
+    if not pieces:
+        return ""
+    return ". ".join(p[0].upper() + p[1:] for p in pieces) + "."
+
+
+def write_on_the_mound(
+    bundle: Any, *, home_starter=None, away_starter=None,
+    home_faces=None, away_faces=None, voice=None,
+) -> str:
+    """Part two: the two starters, against each other and against what they face.
+
+    A starter comparison that only ranks the two men is half the question. The
+    other half is who each of them has to get out, and those can point opposite
+    ways -- the better pitcher can have the harder assignment, which is exactly
+    the case a reader wants flagged and a season line cannot show.
+    """
+    home, away = bundle.home, bundle.away
+    pieces: list[str] = []
+    key = bundle.game_pk
+
+    def name(box) -> str:
+        raw = (getattr(box, "name", "") or "").split(" (")[0]
+        return raw.split()[-1] if raw else ""
+
+    def grade(player, tool) -> float:
+        if player is None:
+            return float("nan")
+        found = player.tools.get(tool)
+        return found.grade if found and np.isfinite(found.grade) else float("nan")
+
+    # Who is the better pitcher, on the season. Run value is the single figure
+    # that answers it, and it is already computed for both.
+    if home_starter is not None and away_starter is not None:
+        pairs = [(home_starter, bundle.home), (away_starter, bundle.away)]
+        rated = [(p, s) for p, s in pairs if p is not None]
+        if len(rated) == 2:
+            def overall(player) -> float:
+                grades = [t.grade for t in player.tools.values()
+                          if np.isfinite(t.grade)]
+                return float(np.mean(grades)) if grades else float("nan")
+
+            home_grade = overall(home_starter)
+            away_grade = overall(away_starter)
+            if np.isfinite(home_grade) and np.isfinite(away_grade):
+                gap = abs(home_grade - away_grade)
+                better = home if home_grade > away_grade else away
+                better_box = (home_starter if home_grade > away_grade
+                              else away_starter)
+                if gap >= 18:
+                    pieces.append(_say(
+                        voice, "sp.mismatch", key,
+                        better=_starter_name(bundle, better_box)))
+                elif gap <= 8:
+                    pieces.append(_say(voice, "sp.even", key))
+
+    # What kind of pitchers they are. Two archetypes side by side say more than
+    # two run values, and this is where the profile work pays off.
+    labels = {}
+    for side, player in (("home", home_starter), ("away", away_starter)):
+        if player is not None and player.matches:
+            labels[side] = player.matches[0].label.lower()
+    if len(labels) == 2 and labels["home"] != labels["away"]:
+        pieces.append(_say(
+            voice, "sp.contrast", key,
+            a_desc=labels["away"], h_desc=labels["home"]))
+
+    # And the assignment each of them draws. This is the half a starter
+    # comparison usually leaves out.
+    for player, lineup, section, opponent in (
+        (home_starter, home_faces, home, away),
+        (away_starter, away_faces, away, home),
+    ):
+        if player is None or lineup is None or not getattr(lineup, "tools", None):
+            continue
+        stuff = grade(player, "stuff")
+        contact = lineup.grade("contact")
+        power = lineup.grade("power")
+        suppress = grade(player, "suppress")
+        who = _starter_name(bundle, player)
+        if not who:
+            continue
+        if np.isfinite(stuff) and np.isfinite(contact):
+            if stuff >= prof.HIGH and contact <= prof.MID_LO:
+                pieces.append(
+                    f"{who} draws the easier assignment — {opponent.abbreviation} "
+                    "do not make much contact and he misses bats")
+                continue
+            if stuff <= prof.MID_LO and contact >= prof.HIGH:
+                pieces.append(
+                    f"{who} has the harder night of it: "
+                    f"{opponent.abbreviation} put the bat on the ball and he "
+                    "does not miss many")
+                continue
+        if np.isfinite(power) and np.isfinite(suppress) and power >= prof.HIGH \
+                and suppress <= prof.LOW:
+            pieces.append(
+                f"{opponent.abbreviation}'s power against a pitcher who has "
+                f"been squared up all year is the risk in {who}'s start")
+
+    # The bullpens, because a starter is five or six innings of a nine-inning
+    # question.
+    for section, other in ((home, away), (away, home)):
+        profile = getattr(section, "profile", None)
+        pitches = getattr(profile, "bullpen_pitches_last_3", None) if profile else None
+        if pitches is not None and int(pitches) >= 260:
+            pieces.append(_say(
+                voice, "bullpen.tired", key,
+                team=section.abbreviation, pitches=int(pitches)))
+            break
+
+    pieces = [p for p in pieces if p]
+    if not pieces:
+        return ""
+    return ". ".join(p[0].upper() + p[1:] for p in pieces[:4]) + "."
+
+
+def _starter_name(bundle: Any, player) -> str:
+    """The surname of the box a profile belongs to."""
+    target = getattr(player, "player_id", None)
+    if target is None:
+        return ""
+    for section in (bundle.home, bundle.away):
+        for box in getattr(section, "pitchers", []) or []:
+            if int(getattr(box, "player_id", 0) or 0) == int(target):
+                raw = (getattr(box, "name", "") or "").split(" (")[0]
+                return raw.split()[-1] if raw else ""
+    return ""
+
+
+def write_projections(projection: Any, home: str, away: str, *, voice=None) -> str:
+    """Part three: what the fitted models say, and what moved them.
+
+    Unchanged in substance -- this is the section that already worked -- but it
+    now sits last rather than alone. A win probability lands differently once
+    the reader knows which of these two clubs is actually better and who is
+    pitching, which is the whole argument for the three-part shape.
+    """
+    if projection is None:
+        return ""
+    findings = from_projection(projection, home, away)
+    findings += starter_strikeout_edge(projection, home, away)
+    findings += key_player(projection, home, away)
+    return paragraph(findings)
+
+
+def note(
+    bundle: Any, *, home_starter=None, away_starter=None,
+    home_faces=None, away_faces=None, voice=None,
+) -> MatchupNote:
+    """The whole game-level note, in reading order.
+
+    Each part is independently guarded: a club with no standings data still gets
+    a pitching matchup, and a game with no fitted projection still gets the
+    first two. Losing one section is a smaller loss than losing the note.
+    """
+    projection = getattr(bundle, "projection", None)
+    result = MatchupNote()
+
+    try:
+        result.on_paper = write_on_paper(bundle, voice=voice)
+    except Exception:  # noqa: BLE001 -- a missing section is not a missing note
+        pass
+    try:
+        result.on_the_mound = write_on_the_mound(
+            bundle, home_starter=home_starter, away_starter=away_starter,
+            home_faces=home_faces, away_faces=away_faces, voice=voice)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        result.projections = write_projections(
+            projection, bundle.home.abbreviation, bundle.away.abbreviation,
+            voice=voice)
+    except Exception:  # noqa: BLE001
+        pass
+    return result

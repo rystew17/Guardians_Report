@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -110,7 +110,12 @@ def fitted_ages(models_dir: Path, *, now: date | None = None) -> dict[str, int]:
     """
     import json
 
-    today = now or date.today()
+    # UTC on both sides. The stamp written into an artifact is UTC, and
+    # comparing it against a local `date.today()` puts the age out by a day for
+    # the hours when the two calendars disagree -- which is most of an evening
+    # in the Americas, and exactly when this report is generated. It would have
+    # reported a fourteen-day-old fit as thirteen and stayed quiet.
+    today = now or datetime.now(timezone.utc).date()
     ages: dict[str, int] = {}
     for name in FITTED_ARTIFACTS:
         path = Path(models_dir) / name
