@@ -201,7 +201,13 @@ def design(data: pd.DataFrame, columns: list[str]):
     than absolute.
     """
     frame = data.dropna(subset=["runs"]).copy()
-    X = frame[columns].to_numpy(dtype=float)
+    # `to_numpy` hands back a read-only view when the frame is a single
+    # dtype block, so the imputation below raises rather than filling. It
+    # has never fired in production because the feature frames carry mixed
+    # dtypes and pandas copies those -- which means this worked by luck,
+    # and would have broken the day a caller passed a uniformly float
+    # frame. The copy is cheap and removes the coincidence.
+    X = np.array(frame[columns].to_numpy(dtype=float), copy=True)
     means = np.nanmean(X, axis=0)
     idx = np.where(np.isnan(X))
     X[idx] = np.take(means, idx[1])
