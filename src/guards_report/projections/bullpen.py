@@ -185,6 +185,16 @@ def add_features(frame, logs, corpus_frame) -> pd.DataFrame:
     """Attach availability differentials, signed so higher favours the home side."""
     table = availability_table(logs, corpus_frame)
 
+    # No relief history anywhere means the table comes back with no columns at
+    # all, and merging on `game_pk` against it raises. That is opening day --
+    # every club has a bullpen and none of them has used it yet. The honest
+    # answer is that the feature is unknown, which is what the design matrix
+    # already handles by imputing; raising would lose the whole game instead.
+    if table.empty or "game_pk" not in table.columns:
+        for name in PEN_COLUMNS:
+            frame[name] = np.nan
+        return frame
+
     frame = frame.merge(
         table.rename(columns={"team_id": "home_team_id",
                               **{m: f"h_{m}" for m in PEN_METRICS}}),
