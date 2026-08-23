@@ -234,3 +234,85 @@ def test_a_missing_drawing_library_costs_the_image_not_the_report(monkeypatch, t
 
     monkeypatch.setattr(builtins, "__import__", no_pil)
     assert preview_card.build(_Bundle(), output_dir=tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# The share page
+# ---------------------------------------------------------------------------
+
+def test_the_share_page_is_small_enough_that_nothing_can_refuse_it(tmp_path):
+    """The report is 2.7 MB and some crawlers will not open it.
+
+    The tags sit at byte 442, so anything that reads part of the document finds
+    them -- but a crawler that refuses on Content-Length never opens it at all.
+    """
+    from guards_report.report import share_page
+
+    path = share_page.build(
+        _Bundle(), output_dir=tmp_path,
+        report_url="https://example.com/r.html",
+        image_url="https://example.com/r.png",
+        title="A at B", description="something")
+    assert path is not None
+    assert path.stat().st_size < 8 * 1024
+
+
+def test_the_share_page_points_at_the_report_and_not_at_itself():
+    """A canonical that pointed here would send every reader to a redirect."""
+    from guards_report.report import share_page
+
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        path = share_page.build(
+            _Bundle(), output_dir=Path(tmp),
+            report_url="https://example.com/report.html",
+            image_url="", title="T", description="D")
+        html = path.read_text(encoding="utf-8")
+    assert 'rel="canonical" href="https://example.com/report.html"' in html
+    assert 'content="0; url=https://example.com/report.html"' in html
+    assert "share" not in html.split("<body")[0].replace("Guardians", "")
+
+
+def test_the_share_page_carries_the_same_card_as_the_report(tmp_path):
+    from guards_report.report import share_page
+
+    path = share_page.build(
+        _Bundle(), output_dir=tmp_path,
+        report_url="https://example.com/r.html",
+        image_url="https://example.com/r.png",
+        title="A at B", description="records and starters")
+    html = path.read_text(encoding="utf-8")
+    assert 'name="twitter:card" content="summary_large_image"' in html
+    assert 'property="og:image" content="https://example.com/r.png"' in html
+    assert 'property="og:image:width" content="1200"' in html
+
+
+def test_the_share_page_falls_back_to_a_text_card_without_an_image(tmp_path):
+    from guards_report.report import share_page
+
+    path = share_page.build(
+        _Bundle(), output_dir=tmp_path, report_url="https://example.com/r.html",
+        image_url="", title="A at B", description="D")
+    html = path.read_text(encoding="utf-8")
+    assert 'content="summary"' in html
+    assert "og:image" not in html
+
+
+def test_no_report_url_means_no_share_page(tmp_path):
+    """It exists to carry an absolute link; without one it has no purpose."""
+    from guards_report.report import share_page
+
+    assert share_page.build(
+        _Bundle(), output_dir=tmp_path, report_url="") is None
+
+
+def test_the_share_page_escapes_what_it_interpolates(tmp_path):
+    """Club names and venues are source data, not template literals."""
+    from guards_report.report import share_page
+
+    path = share_page.build(
+        _Bundle(), output_dir=tmp_path, report_url="https://example.com/r.html",
+        image_url="", title='Quote " and <b>', description="x")
+    html = path.read_text(encoding="utf-8")
+    assert '<b>' not in html.split("<body")[0]
+    assert "&quot;" in html or "&#34;" in html

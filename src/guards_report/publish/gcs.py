@@ -102,6 +102,17 @@ def publish(path: Path, *, bucket_name: str, project: str) -> Published:
     # unfurler given an image URL that 404s renders a broken thumbnail -- worse
     # than the text card it was meant to improve on. Publishing the pair
     # together is what keeps that from happening.
+    share = path.with_name(path.stem + "-share.html")
+    if share.is_file():
+        try:
+            page = bucket.blob(object_name_for(share))
+            page.cache_control = CACHE_CONTROL
+            page.upload_from_filename(
+                share, content_type="text/html; charset=utf-8")
+            _make_readable(page)
+        except Exception:  # noqa: BLE001
+            pass
+
     card = path.with_suffix(".png")
     if card.is_file():
         try:

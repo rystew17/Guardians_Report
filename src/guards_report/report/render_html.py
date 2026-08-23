@@ -19,7 +19,7 @@ from markupsafe import Markup
 
 from guards_report.config import SPLIT_LABELS
 from guards_report.ingest.preview import ReportBundle
-from guards_report.report import preview_card
+from guards_report.report import preview_card, share_page
 from guards_report.metrics import clocks, series
 from guards_report.metrics.trends import reliability as _reliability
 from guards_report.metrics.zones import ZoneCell, ZoneGrid
@@ -443,8 +443,17 @@ def render(bundle: ReportBundle, *, output_dir: Path, bucket: str = "") -> Path:
     # is the whole reason this exists.
     try:
         preview_card.build(bundle, output_dir=output_dir)
-    except Exception as exc:  # noqa: BLE001 -- a missing picture is not a failure
-        print(f"  warning: preview card not drawn ({exc})", file=sys.stderr)
+        # And a two-kilobyte page carrying the same tags, for crawlers that
+        # will not open a 2.7 MB document.
+        share_page.build(
+            bundle, output_dir=output_dir,
+            report_url=preview_url(bundle, bucket=bucket),
+            image_url=preview_image_url(bundle, bucket=bucket),
+            title=preview_title(bundle),
+            description=preview_description(bundle),
+        )
+    except Exception as exc:  # noqa: BLE001 -- a missing asset is not a failure
+        print(f"  warning: preview assets not built ({exc})", file=sys.stderr)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     matchup = f"{bundle.away.abbreviation}-at-{bundle.home.abbreviation}"
