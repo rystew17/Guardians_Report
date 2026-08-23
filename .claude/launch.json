@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "guards-app",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "guards_report.cli", "serve", "--port", "8765"],
+      "port": 8765
+    }
+  ]
+}

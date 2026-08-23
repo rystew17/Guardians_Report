@@ -309,6 +309,17 @@ async function loadModelStatus() {
   const label = $("modelage");
   try {
     const res = await fetch("/api/model-status");
+    // A 404 body is still valid JSON, so parsing it succeeds and every field
+    // reads as undefined. Without this check the panel reports "no fitted
+    // models" -- a claim about your data -- when the truth is that the server
+    // is older than the endpoint and never answered the question.
+    if (!res.ok) {
+      label.textContent = res.status === 404
+        ? "This endpoint is missing — the running server is older than the app. Restart it."
+        : `Could not read model status (HTTP ${res.status}).`;
+      label.className = "modelage due";
+      return;
+    }
     const data = await res.json();
     if (data.oldest === null || data.oldest === undefined) {
       label.textContent = "No fitted models yet.";
@@ -336,14 +347,31 @@ $("refit").onclick = async () => {
   log.className = "on";
   setStatus("Refitting…");
 
-  const res = await fetch("/api/refit", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({force_outcome: $("forceoutcome").checked}),
-  });
+  let res;
+  try {
+    res = await fetch("/api/refit", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({force_outcome: $("forceoutcome").checked}),
+    });
+  } catch {
+    // Unhandled, this left the button disabled and the status on "Refitting…"
+    // forever, which reads as a refit that is still going.
+    setStatus("Could not reach the server. Is it still running?", "failed");
+    btn.disabled = false;
+    return;
+  }
   if (!res.ok) {
-    const {error} = await res.json();
-    setStatus(error || "Could not start a refit.", "failed");
+    // FastAPI names its errors `detail`; ours are `error`. Reading only one of
+    // them turned a 404 into the generic fallback and hid which was which.
+    let body = {};
+    try { body = await res.json(); } catch { /* not every error has a body */ }
+    const said = body.error || body.detail;
+    setStatus(
+      res.status === 404
+        ? "The refit endpoint is missing — the running server is older than the app. Restart it."
+        : (said ? `Could not start a refit: ${said}` : `Could not start a refit (HTTP ${res.status}).`),
+      "failed");
     btn.disabled = false;
     return;
   }
