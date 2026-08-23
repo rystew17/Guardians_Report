@@ -4,6 +4,34 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ bundle.away.abbreviation }} @ {{ bundle.home.abbreviation }} — {{ bundle.game_date }}</title>
+
+{#- ---------- link preview ----------
+    Read by Slack, iMessage, Discord and anything else that unfurls a pasted
+    URL. Without these the published link renders as a bare
+    storage.googleapis.com path, which names neither the teams nor the date.
+
+    `og:description` carries the same figures the report does -- records, the
+    two starters, the model's call -- rather than a fixed sentence, so the
+    preview is a reason to open the page rather than a label on it.
+
+    There is deliberately no `og:image`. Producing one needs a raster library
+    this project does not carry, and an unfurler given an image URL that 404s
+    shows a broken thumbnail where it would otherwise have shown a clean
+    text card. Absent is better than broken.
+-#}
+<meta name="description" content="{{ preview_description }}">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Guardians Scouting Report">
+<meta property="og:title" content="{{ preview_title }}">
+<meta property="og:description" content="{{ preview_description }}">
+{%- if preview_url %}
+<meta property="og:url" content="{{ preview_url }}">
+<link rel="canonical" href="{{ preview_url }}">
+{%- endif %}
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="{{ preview_title }}">
+<meta name="twitter:description" content="{{ preview_description }}">
+<meta name="theme-color" content="#0c2340">
 <style>
   /* ------------------------------------------------------------------
      Committed light theme, pinned so it never flips with the OS setting.

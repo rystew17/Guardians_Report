@@ -220,7 +220,12 @@ def cmd_build(args: argparse.Namespace) -> int:
         # needing to be checked back against one.
         attach_computed_analysis(bundle, settings, on=on)
 
-    path = render(bundle, output_dir=settings.output_dir)
+    path = render(
+        bundle, output_dir=settings.output_dir,
+        # The canonical URL has to be known at render time, because the tags go
+        # in the document that gets uploaded.
+        bucket=getattr(settings, "gcs_bucket", "") or "",
+    )
 
     print(
         f"\n{bundle.away.name} at {bundle.home.name}"

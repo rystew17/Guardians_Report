@@ -409,12 +409,17 @@ def _add_table_semantics(html: str) -> str:
     return html
 
 
-def render(bundle: ReportBundle, *, output_dir: Path) -> Path:
+def render(bundle: ReportBundle, *, output_dir: Path, bucket: str = "") -> Path:
     env = build_environment()
     template = env.get_template("report.html")
 
     html = template.render(
         bundle=bundle,
+        # Open Graph, so a pasted link unfurls into something that names the
+        # game rather than a bare storage path.
+        preview_title=preview_title(bundle),
+        preview_description=preview_description(bundle),
+        preview_url=preview_url(bundle, bucket=bucket),
         guardians=bundle.guardians,
         opponent=bundle.opponent,
         generated=clocks.stamp(bundle.generated_at),
@@ -1140,3 +1145,99 @@ def hit_spread(prop: Any, *, width: int = 108, height: int = 14) -> Markup:
         x += span
     parts.append("</svg>")
     return Markup("".join(parts))
+
+
+# ---------------------------------------------------------------------------
+# Link previews
+# ---------------------------------------------------------------------------
+# When the published URL is pasted into Slack, iMessage, Discord or anywhere
+# else, the unfurler reads Open Graph tags out of the document head. Without
+# them the link renders as a bare storage.googleapis.com path, which tells a
+# reader nothing about which game it is.
+#
+# The description is built from the same figures the report is built from --
+# records, the two starters, the model's call -- rather than a fixed sentence.
+# A preview that says "Guardians scouting report" for every game is a label; one
+# that says who is pitching and who is favoured is the reason to open it.
+
+# Unfurlers truncate, and they do it mid-word. Slack shows roughly 300
+# characters, iMessage far fewer, so the important half goes first.
+PREVIEW_DESCRIPTION_LIMIT = 300
+
+
+def preview_title(bundle) -> str:
+    """The headline an unfurler shows.
+
+    Full club names rather than abbreviations: "CLE @ COL" is fine as a browser
+    tab, where the reader already knows what they opened, and useless in a chat
+    window where they do not.
+    """
+    away = getattr(bundle.away, "name", "") or bundle.away.abbreviation
+    home = getattr(bundle.home, "name", "") or bundle.home.abbreviation
+    # `%-d` strips the leading zero on Linux and raises on Windows, which is
+    # where this runs. The day number formats itself.
+    day = bundle.game_date
+    return f"{away} at {home} — {day:%b} {day.day}, {day.year}"
+
+
+def preview_description(bundle) -> str:
+    """One sentence of why this game is worth opening.
+
+    Assembled in priority order and truncated at a word boundary, because the
+    surfaces that show this cut it off without warning and a sentence that ends
+    mid-number reads as broken rather than as trimmed.
+    """
+    parts: list[str] = []
+
+    records = []
+    for section in (bundle.away, bundle.home):
+        profile = getattr(section, "profile", None)
+        record = getattr(profile, "record", None) if profile else None
+        if record is not None:
+            records.append(f"{section.abbreviation} {record.wins}-{record.losses}")
+    if len(records) == 2:
+        parts.append(" vs ".join(records))
+
+    starters = []
+    for section in (bundle.away, bundle.home):
+        found = next((p for p in getattr(section, "pitchers", []) or []
+                      if getattr(p, "is_probable_starter", False)), None)
+        if found is not None and getattr(found, "name", ""):
+            starters.append(str(found.name).split(" (")[0])
+    if len(starters) == 2:
+        parts.append(f"{starters[0]} vs {starters[1]}")
+
+    projection = getattr(bundle, "projection", None)
+    if projection is not None:
+        try:
+            win = float(projection.win_probability)
+            favourite = (bundle.home.abbreviation if win >= 0.5
+                         else bundle.away.abbreviation)
+            parts.append(f"model favours {favourite} at {max(win, 1 - win):.0%}")
+        except (TypeError, ValueError, AttributeError):
+            pass
+
+    venue = getattr(bundle, "venue_name", "")
+    if venue:
+        parts.append(venue)
+
+    text = " · ".join(parts)
+    if len(text) <= PREVIEW_DESCRIPTION_LIMIT:
+        return text
+    clipped = text[:PREVIEW_DESCRIPTION_LIMIT].rsplit(" ", 1)[0]
+    return clipped.rstrip(" ·") + "…"
+
+
+def preview_url(bundle, *, bucket: str = "") -> str:
+    """The canonical published address, or empty when nothing is configured.
+
+    Built from the same rule `publish.object_name_for` uses. The two are kept in
+    step by a test rather than by hope: a canonical URL pointing somewhere the
+    file is not is worse than no canonical URL, because an unfurler will follow
+    it and cache the 404.
+    """
+    if not bucket:
+        return ""
+    matchup = f"{bundle.away.abbreviation}-at-{bundle.home.abbreviation}"
+    name = f"{bundle.game_date.isoformat()}_{matchup}.html"
+    return f"https://storage.googleapis.com/{bucket}/reports/{name}"
