@@ -171,7 +171,10 @@ def sync() -> bool:
         cwd=str(ROOT), capture_output=True, text=True,
         encoding="utf-8", errors="replace",
     )
-    for line in (result.stdout or "").splitlines()[-2:]:
+    # Blank lines get a timestamp like any other, which renders in the app as
+    # an empty stamped row that reads like a step that produced nothing.
+    said = [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+    for line in said[-2:]:
         _say(f"  {line[:160]}")
     return result.returncode == 0
 
