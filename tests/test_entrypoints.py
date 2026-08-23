@@ -103,7 +103,7 @@ def _string_literals(path: Path, function: str) -> set[str]:
 
     tree = ast.parse(path.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
-        #  is a different node type, and the build command is one.
+        # `async def` is a different node type, and the build command is one.
         if (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
                 and node.name == function):
             body = node.body
