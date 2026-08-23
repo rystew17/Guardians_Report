@@ -12,7 +12,7 @@ everything available.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -326,7 +326,22 @@ def main() -> int:
         corpus_dir=root / "corpus",
         pitcher_dir=root / "pitchers",
         pa_dir=root / "pitches",
-        seasons=range(corpus.FIRST_SEASON, 2026),
+        # Through the season in progress, not up to it.
+        #
+        # This was hardcoded to stop at the current season, and that was a
+        # category error rather than a precaution: the walk-forward validation
+        # trains on seasons before N and tests on N, which is the right way to
+        # *estimate* performance, and the deployed fit inherited the same
+        # "complete seasons only" framing. Those answer different questions.
+        # Predicting a game that has not been played, from games that have, is
+        # not leakage -- it is just using the data you have. Every feature was
+        # already as-of; only the coefficients were being denied the season.
+        #
+        # It also buys the fold that matters most: a held-out score for the
+        # current season, testing a model trained through last year, which is
+        # exactly the model in production. Without it the report could only say
+        # how the model did historically.
+        seasons=range(corpus.FIRST_SEASON, date.today().year + 1),
     )
     path = model.save(artifact, root / "models" / "game_outcome.json")
     print(f"\nsaved {path}")

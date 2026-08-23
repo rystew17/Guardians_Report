@@ -47,6 +47,11 @@ class Job:
 JOBS: dict[str, Job] = {}
 
 
+def _root() -> Path:
+    """The project root, from this file's location."""
+    return Path(__file__).resolve().parents[3]
+
+
 def _settings():
     return load_settings()
 
@@ -119,6 +124,102 @@ async def generate(request: Request) -> JSONResponse:
             analysis=bool(body.get("analysis", True)),
         )
     )
+    return JSONResponse({"job_id": job.id})
+
+
+async def _run_refit(job: Job, *, force_outcome: bool) -> None:
+    """Run the refit script and relay its output, exactly as a build does.
+
+    Same job machinery on purpose. A refit is the other long-running thing this
+    app starts, and giving it its own progress channel would mean two ways to
+    watch a subprocess that behave subtly differently.
+
+    The script distinguishes its outcomes by exit code -- 0 kept, 1 failed,
+    2 refit ran and was rejected -- and 2 is not a failure. A refit that was
+    measured and turned down is the guard working, and reporting it as an error
+    would train the reader to ignore the one message worth reading.
+    """
+    cmd = [sys.executable, str(_root() / "scripts" / "refit.py")]
+    if force_outcome:
+        cmd.append("--force-outcome")
+
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        cwd=str(_root()),
+        env=env,
+    )
+
+    assert process.stdout is not None
+    async for raw in process.stdout:
+        line = raw.decode("utf-8", errors="replace").rstrip()
+        if not line:
+            continue
+        job.lines.append(line)
+        await job.queue.put(line)
+
+    await process.wait()
+    if process.returncode == 0:
+        job.status = "done"
+        await job.queue.put("__DONE__ refit complete")
+    elif process.returncode == 2:
+        job.status = "done"
+        await job.queue.put(
+            "__DONE__ refit rejected — the previous model is still in place")
+    else:
+        job.status = "failed"
+        job.error = f"refit exited with code {process.returncode}"
+        await job.queue.put(f"__FAILED__ {job.error}")
+
+
+@app.get("/api/model-status")
+async def model_status() -> JSONResponse:
+    """How old each fitted model is, so the page can say whether a refit is due.
+
+    Read from each artifact's own `fitted_at` rather than file mtime, which a
+    restore from cloud storage resets on every artifact at once -- the whole set
+    would look freshly trained the day after a disaster.
+    """
+    from guards_report.projections import freshness
+
+    models = _root() / "data" / "models"
+    try:
+        ages = freshness.fitted_ages(models)
+    except Exception:  # noqa: BLE001 -- a status panel must not break the page
+        ages = {}
+
+    oldest = max(ages.values()) if ages else None
+    return JSONResponse({
+        "ages": ages,
+        "oldest": oldest,
+        "stale_after": freshness.REFIT_AFTER_DAYS,
+        "due": bool(oldest is not None and oldest > freshness.REFIT_AFTER_DAYS),
+    })
+
+
+@app.post("/api/refit")
+async def refit(request: Request) -> JSONResponse:
+    """Start a refit and hand back a job id to follow it with."""
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 -- an empty body is a plain refit
+        body = {}
+
+    running = [j for j in JOBS.values()
+               if j.status == "running" and j.game_date == "refit"]
+    if running:
+        # Two refits at once would race on the same artifacts, and the second
+        # would overwrite whatever the first had just validated.
+        return JSONResponse(
+            {"ok": False, "error": "a refit is already running"},
+            status_code=409)
+
+    job = Job(id=uuid.uuid4().hex[:12], game_date="refit")
+    JOBS[job.id] = job
+    asyncio.create_task(
+        _run_refit(job, force_outcome=bool(body.get("force_outcome", False))))
     return JSONResponse({"job_id": job.id})
 
 

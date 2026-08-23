@@ -61,6 +61,14 @@
   .pub .pnote{font-size:12px;color:var(--ink-3);margin-top:7px}
   .pub .pnote.err{color:var(--red)}
   button.ghost{background:#fff;color:var(--navy);border:1px solid var(--line);font-weight:600}
+  .modelrow { display:flex; align-items:center; gap:.75rem; flex-wrap:wrap;
+              margin-bottom:.5rem; }
+  .modelage { font-size:.85rem; color:#57626e; }
+  .modelage.due { color:#c02233; font-weight:600; }
+  .modelforce { font-size:.8rem; color:#57626e; display:flex;
+                align-items:center; gap:.35rem; }
+  button.secondary { background:#fff; color:#0c2340; border:1px solid #c2cbd4; }
+  button.secondary:hover:not(:disabled) { border-color:#0c2340; }
 </style>
 
 <div class="wrap">
@@ -93,6 +101,24 @@
     </div>
     <div class="status" id="status"></div>
     <div id="log"></div>
+  </div>
+
+  <div class="card" id="modelcard">
+    <h2>MODELS</h2>
+    <div class="modelrow">
+      <span id="modelage" class="modelage">Checking…</span>
+      <button id="refit" class="secondary">Refit now</button>
+      <label class="modelforce"><input type="checkbox" id="forceoutcome">
+        Include the game-outcome model</label>
+    </div>
+    <div class="note">
+      The props and first-five models fit on the season in progress and go stale
+      in days; a refit takes about half a minute. The game-outcome coefficients
+      are fitted on completed seasons and do not move mid-season, so they are
+      left alone unless asked for &mdash; that run takes three or four minutes and
+      mostly refreshes the talent estimates. A refit that measures worse than the
+      model it would replace is rejected and the old one kept.
+    </div>
 
     <div class="pub" id="pub">
       <div class="plabel">Shareable link</div>
@@ -278,6 +304,75 @@ $("pubcopy").onclick = async () => {
   setTimeout(() => { btn.textContent = "Copy"; }, 1400);
 };
 
+
+async function loadModelStatus() {
+  const label = $("modelage");
+  try {
+    const res = await fetch("/api/model-status");
+    const data = await res.json();
+    if (data.oldest === null || data.oldest === undefined) {
+      label.textContent = "No fitted models yet.";
+      label.className = "modelage due";
+      return;
+    }
+    const days = Math.round(data.oldest);
+    const plural = days === 1 ? "day" : "days";
+    label.textContent = data.due
+      ? `Oldest fit is ${days} ${plural} old — a refit is due.`
+      : `Oldest fit is ${days} ${plural} old.`;
+    label.className = data.due ? "modelage due" : "modelage";
+  } catch {
+    // A status panel that cannot reach the server should say so rather than
+    // sit on a stale reassurance.
+    label.textContent = "Could not read model status.";
+    label.className = "modelage due";
+  }
+}
+
+$("refit").onclick = async () => {
+  const btn = $("refit"), log = $("log");
+  btn.disabled = true;
+  log.textContent = "";
+  log.className = "on";
+  setStatus("Refitting…");
+
+  const res = await fetch("/api/refit", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({force_outcome: $("forceoutcome").checked}),
+  });
+  if (!res.ok) {
+    const {error} = await res.json();
+    setStatus(error || "Could not start a refit.", "failed");
+    btn.disabled = false;
+    return;
+  }
+  const {job_id} = await res.json();
+
+  const stream = new EventSource(`/api/events/${job_id}`);
+  stream.onmessage = (event) => {
+    const line = event.data;
+    if (line.startsWith("__DONE__")) {
+      stream.close();
+      btn.disabled = false;
+      // A rejected refit is the guard working, not an error, so it reports as
+      // done with what happened rather than as a failure.
+      setStatus(line.slice(9).trim() || "Refit complete.", "done");
+      loadModelStatus();
+      return;
+    }
+    if (line.startsWith("__FAILED__")) {
+      stream.close();
+      btn.disabled = false;
+      setStatus(line.slice(11).trim(), "failed");
+      return;
+    }
+    log.textContent += line + "\n";
+    log.scrollTop = log.scrollHeight;
+  };
+};
+
 loadReports();
 loadPublishConfig();
+loadModelStatus();
 </script>

@@ -1735,6 +1735,25 @@
       </tbody>
     </table>
   </div>
+  {#- The current season, called out rather than left as one row among six.
+      It is the only fold that says how the model is doing *now*, and it tests
+      a model trained through last season -- which is the model in production.
+      The rest of the table is history. -#}
+  {%- set this_year = bundle.season|string %}
+  {%- if pj.metrics.per_season.get(this_year) or pj.metrics.per_season.get(bundle.season) %}
+  {%- set now = pj.metrics.per_season.get(this_year) or pj.metrics.per_season.get(bundle.season) %}
+  {%- set now_lift = (now.accuracy - wm.baseline_accuracy) * 100 %}
+  <div class="note">
+    <strong>This season:</strong> {{ (now.accuracy * 100)|round(1) }}% against a
+    {{ (wm.baseline_accuracy * 100)|round(1) }}% baseline, an edge of
+    {{ now_lift|round(1) }} points where the model has averaged
+    {{ wm.lift_points|round(1) }}.
+    {%- if now_lift < wm.lift_points - 1.0 %}
+    It is having a worse year than usual, on a season that is not finished
+    &mdash; worth watching rather than concluding from.
+    {%- endif %}
+  </div>
+  {%- endif %}
   <div class="note">
     {#- The track record and the fitting method moved to the glossary below.
         What stays is the part that changes from one day to the next: how
