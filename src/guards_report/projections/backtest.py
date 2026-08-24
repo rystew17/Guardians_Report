@@ -96,6 +96,65 @@ def expected_calibration_error(
     return float(total / len(y)) if len(y) else 0.0
 
 
+def calibration_bins(
+    y_true: np.ndarray, p_pred: np.ndarray, *, bins: int = 10
+) -> list[dict[str, float]]:
+    """How far stated probabilities land from realized frequencies, by region.
+
+    This answers a question the model cannot answer about itself. The delta
+    method and the spread across refits both measure how much the model agrees
+    with *itself*; only comparing predictions against outcomes measures whether
+    it is right. On this model that difference turned out to be an order of
+    magnitude, so the distinction is not academic.
+
+    A raw gap between prediction and frequency is not the answer either, because
+    most of it is sampling noise. Within a bin the realized frequency has
+    binomial variance p(1-p)/n, so the observed squared gap decomposes as
+
+        E[(f - p)^2]  =  p(1 - p)/n  +  systematic^2
+
+    and subtracting the first term isolates the second. A negative result means
+    the bin is calibrated to within what this much data can resolve; it is
+    floored at zero rather than reported as a negative variance.
+
+    Bins are quantiles of the prediction distribution rather than equal widths.
+    These probabilities cluster between roughly 0.35 and 0.68, so equal-width
+    bins would leave most of them empty and pile everything into three.
+
+    `resolution` is sqrt(p(1-p)/n) for the bin: miscalibration below that figure
+    cannot be told from noise. It is carried so callers can say so plainly
+    instead of implying a precision the data does not support.
+    """
+    y = np.asarray(y_true, dtype=float)
+    p = np.asarray(p_pred, dtype=float)
+    if len(y) < bins * 2:
+        return []
+
+    order = np.argsort(p)
+    out: list[dict[str, float]] = []
+    for chunk in np.array_split(order, bins):
+        if len(chunk) < 2:
+            continue
+        p_bin = p[chunk]
+        y_bin = y[chunk]
+        n = int(len(chunk))
+        mean_p = float(p_bin.mean())
+        frequency = float(y_bin.mean())
+
+        noise = mean_p * (1.0 - mean_p) / n
+        excess = (frequency - mean_p) ** 2 - noise
+        out.append({
+            "n": n,
+            "p_low": float(p_bin.min()),
+            "p_high": float(p_bin.max()),
+            "p_mean": mean_p,
+            "frequency": frequency,
+            "sigma_systematic": float(np.sqrt(max(excess, 0.0))),
+            "resolution": float(np.sqrt(noise)),
+        })
+    return out
+
+
 def reliability_table(
     y_true: np.ndarray, p_pred: np.ndarray, *, bins: int = 10
 ) -> list[dict[str, Any]]:

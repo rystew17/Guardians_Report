@@ -31,6 +31,13 @@ OFF_DEF_PARAMS = ratings.OffDefParams(0.010, 0.010, 0.16, 0.70, 0.40)
 # Regularization chosen by sweep on 2018-2021; the curve is flat above 0.03.
 LOGISTIC_C = 3.0
 
+# Width of the disjoint-era fits used to measure how uncertain this model is
+# about itself. Four years is a compromise: short enough that three fit inside
+# the corpus and the eras genuinely differ, long enough that each one has the
+# thousands of games a nine-feature logistic needs to be stable.
+BLOCK_YEARS = 4
+MIN_BLOCK_GAMES = 2000
+
 # Ridge penalty for the plate-appearance talent model, chosen forward in time
 # on 2015-2021 validating against 2022 and confirmed independently on 2023,
 # which selects the same value.
@@ -135,6 +142,46 @@ def _add_pa_block(data, games, plate, prior):
     return data
 
 
+def _win_covariance(
+    x_scaled: np.ndarray, coef: np.ndarray, intercept: float,
+) -> list[list[float]]:
+    """Sandwich covariance of the fitted logistic coefficients.
+
+    A penalized fit is biased, so the textbook `(X'WX)^-1` is the wrong matrix:
+    it describes an estimator we did not use. The sandwich accounts for the
+    ridge by putting the penalized Hessian on the outside and the unpenalized
+    information in the middle:
+
+        H     = X'WX + P          P = diag(0, 1/C, ..., 1/C)
+        Cov   = H^-1 (X'WX) H^-1
+
+    The leading zero in P is because scikit-learn does not penalize the
+    intercept, so the intercept column is prepended and left alone. W is
+    diag(p(1-p)) at the fitted probabilities.
+
+    Returns a plain nested list; this goes straight into the JSON artifact.
+    """
+    n, k = x_scaled.shape
+    augmented = np.column_stack([np.ones(n), x_scaled])
+    eta = intercept + x_scaled @ coef
+    p = 1.0 / (1.0 + np.exp(-eta))
+    w = p * (1.0 - p)
+
+    information = augmented.T @ (augmented * w[:, None])
+    penalty = np.zeros((k + 1, k + 1))
+    penalty[1:, 1:] = np.eye(k) / LOGISTIC_C
+
+    try:
+        bread = np.linalg.inv(information + penalty)
+    except np.linalg.LinAlgError:
+        # Singular only if a feature is constant or perfectly collinear, which
+        # would be a data problem worth seeing rather than papering over -- but
+        # it must not take the whole training run down with it.
+        return []
+    cov = bread @ information @ bread
+    return [[float(v) for v in row] for row in cov]
+
+
 def fit(
     *, corpus_dir: Path, pitcher_dir: Path, pa_dir: Path, seasons: range,
     verbose: bool = True,
@@ -173,7 +220,14 @@ def fit(
     )
 
     # -- held-out metrics, season by season, before the final fit -----------
+    # Each fold's coefficients are kept as well as its score. Predicting one
+    # game with all of them and taking the spread is the only estimate of our
+    # own uncertainty that reaches past the coefficients to our inputs and to
+    # misspecification, and the fits happen here anyway.
     per_season = {}
+    folds: list[dict] = []
+    held_out_y: list[np.ndarray] = []
+    held_out_p: list[np.ndarray] = []
     for test_season in range(FIRST_TEST_SEASON, int(games["season"].max()) + 1):
         train = frame[frame["season"] < test_season]
         test = frame[frame["season"] == test_season]
@@ -187,6 +241,51 @@ def fit(
         )
         probability = fitted.predict_proba(scaler.transform(x_test))[:, 1]
         per_season[test_season] = backtest.evaluate(y_test, probability)
+        folds.append({
+            "season": int(test_season),
+            "coef": [float(c) for c in fitted.coef_[0]],
+            "intercept": float(fitted.intercept_[0]),
+            "mean": [float(v) for v in scaler.mean_],
+            "scale": [float(v) for v in scaler.scale_],
+        })
+        # Kept so calibration can be measured against outcomes rather than
+        # against other versions of this same model.
+        held_out_y.append(np.asarray(y_test, dtype=float))
+        held_out_p.append(np.asarray(probability, dtype=float))
+
+    calibration = backtest.calibration_bins(
+        np.concatenate(held_out_y), np.concatenate(held_out_p),
+    ) if held_out_y else []
+
+    # -- disjoint-era fits, purely to measure our own uncertainty ------------
+    # The walk-forward folds above are nested: the 2026 fit trains on 2015-2025
+    # and the 2025 fit on 2015-2024, sharing over ninety percent of their rows.
+    # Their spread therefore measures almost nothing, which is exactly how a
+    # first attempt at this returned a smaller figure than the delta method.
+    # These blocks share no games at all, so where they disagree the
+    # disagreement is real.
+    blocks: list[dict] = []
+    span = list(seasons)
+    for start in range(span[0], span[-1] + 1, BLOCK_YEARS):
+        window = frame[
+            (frame["season"] >= start) & (frame["season"] < start + BLOCK_YEARS)
+        ]
+        if len(window) < MIN_BLOCK_GAMES:
+            continue
+        x_block, y_block = features.design_matrix(window, win_cols)
+        block_scaler = StandardScaler().fit(x_block)
+        block_fit = LogisticRegression(C=LOGISTIC_C, max_iter=3000).fit(
+            block_scaler.transform(x_block), y_block
+        )
+        blocks.append({
+            "label": f"{start}-{min(start + BLOCK_YEARS - 1, span[-1])}",
+            "coef": [float(c) for c in block_fit.coef_[0]],
+            "intercept": float(block_fit.intercept_[0]),
+            "mean": [float(v) for v in block_scaler.mean_],
+            "scale": [float(v) for v in block_scaler.scale_],
+        })
+    if verbose:
+        print(f"  {len(blocks)} disjoint-era fits for the uncertainty spread")
 
     summary = backtest.summarize(per_season)
     if verbose:
@@ -202,6 +301,11 @@ def fit(
     scaler = StandardScaler().fit(x_all)
     logistic = LogisticRegression(C=LOGISTIC_C, max_iter=3000).fit(
         scaler.transform(x_all), y_all
+    )
+    win_cov = _win_covariance(
+        scaler.transform(x_all),
+        logistic.coef_[0],
+        float(logistic.intercept_[0]),
     )
 
     x_score, y_score, offset, _ = score.design(data, score_cols)
@@ -252,6 +356,18 @@ def fit(
         win_intercept=float(logistic.intercept_[0]),
         win_mean=[float(v) for v in scaler.mean_],
         win_scale=[float(v) for v in scaler.scale_],
+        win_cov=win_cov,
+        win_fold_seasons=[f["season"] for f in folds],
+        win_fold_coef=[f["coef"] for f in folds],
+        win_fold_intercept=[f["intercept"] for f in folds],
+        win_fold_mean=[f["mean"] for f in folds],
+        win_fold_scale=[f["scale"] for f in folds],
+        win_block_labels=[b["label"] for b in blocks],
+        win_block_coef=[b["coef"] for b in blocks],
+        win_block_intercept=[b["intercept"] for b in blocks],
+        win_block_mean=[b["mean"] for b in blocks],
+        win_block_scale=[b["scale"] for b in blocks],
+        win_calibration=calibration,
         score_columns=score_cols,
         score_coef=[float(c) for c in negbin.params],
         score_mean=[float(v) for v in np.nanmean(x_score, axis=0)],

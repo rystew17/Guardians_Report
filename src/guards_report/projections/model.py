@@ -68,6 +68,42 @@ class OutcomeModel:
     win_mean: list[float] = field(default_factory=list)
     win_scale: list[float] = field(default_factory=list)
 
+    # How uncertain this model is about its own output.
+    #
+    # `win_cov` is the sandwich covariance of the fitted coefficients, with the
+    # unpenalized intercept first, so the delta method can put a standard error
+    # on a single prediction. It captures uncertainty in the coefficients and
+    # nothing else -- not that our inputs are themselves estimates, and not that
+    # the model may be misspecified for a particular matchup.
+    #
+    # `win_fold_*` are the per-season walk-forward fits, which are computed
+    # anyway to produce the held-out metrics and were previously thrown away.
+    # Predicting one game with all of them and taking the spread reaches the
+    # sources the delta method cannot see, at the cost of also absorbing genuine
+    # drift between eras -- so it runs large. That is the safe direction:
+    # understating this figure fires more bets and stakes each one bigger, and
+    # the two errors compound.
+    win_cov: list[list[float]] = field(default_factory=list)
+    win_fold_seasons: list[int] = field(default_factory=list)
+    win_fold_coef: list[list[float]] = field(default_factory=list)
+    win_fold_intercept: list[float] = field(default_factory=list)
+    win_fold_mean: list[list[float]] = field(default_factory=list)
+    win_fold_scale: list[list[float]] = field(default_factory=list)
+
+    # Disjoint-era fits, which share no games with each other. The walk-forward
+    # folds above are nested and agree with themselves almost by construction;
+    # where these disagree, the disagreement is real.
+    win_block_labels: list[str] = field(default_factory=list)
+    win_block_coef: list[list[float]] = field(default_factory=list)
+    win_block_intercept: list[float] = field(default_factory=list)
+    win_block_mean: list[list[float]] = field(default_factory=list)
+    win_block_scale: list[list[float]] = field(default_factory=list)
+
+    # Out-of-sample calibration by prediction region, with binomial noise
+    # subtracted. The only stored figure that compares this model against
+    # outcomes rather than against other versions of itself.
+    win_calibration: list[dict[str, float]] = field(default_factory=list)
+
     # Model B: negative binomial, one coefficient set applied to both sides
     score_columns: list[str] = field(default_factory=list)
     score_coef: list[float] = field(default_factory=list)
@@ -114,6 +150,63 @@ class OutcomeModel:
                 value = mean
             z += coef * ((value - mean) / (scale or 1.0))
         return float(1.0 / (1.0 + np.exp(-z)))
+
+    def win_design_vector(
+        self,
+        features: dict[str, float],
+        *,
+        mean: list[float] | None = None,
+        scale: list[float] | None = None,
+    ) -> list[float]:
+        """The standardized feature row, with a leading 1 for the intercept.
+
+        Shared by `win_probability` and by the delta method so the two cannot
+        drift apart -- a standard error computed against a different vector
+        than the probability it qualifies would be wrong in a way nothing on
+        the page could show.
+
+        `mean` and `scale` override the final fit's, which is what lets one
+        game be pushed through a walk-forward fold's own scaler.
+        """
+        mean = self.win_mean if mean is None else mean
+        scale = self.win_scale if scale is None else scale
+        row = [1.0]
+        for name, mu, sd in zip(self.win_columns, mean, scale):
+            value = features.get(name)
+            if value is None or (isinstance(value, float) and np.isnan(value)):
+                value = mu
+            row.append((value - mu) / (sd or 1.0))
+        return row
+
+    def win_probability_folds(self, features: dict[str, float]) -> list[float]:
+        """This game's probability under every walk-forward fit.
+
+        Empty when the artifact predates these being stored, which the caller
+        must treat as "not measurable" rather than as agreement.
+        """
+        return self._probability_ensemble(
+            features, self.win_fold_coef, self.win_fold_intercept,
+            self.win_fold_mean, self.win_fold_scale)
+
+    def win_probability_blocks(self, features: dict[str, float]) -> list[float]:
+        """This game's probability under every disjoint-era fit."""
+        return self._probability_ensemble(
+            features, self.win_block_coef, self.win_block_intercept,
+            self.win_block_mean, self.win_block_scale)
+
+    def _probability_ensemble(
+        self, features: dict[str, float], coefs, intercepts, means, scales,
+    ) -> list[float]:
+        out = []
+        for coef, intercept, mean, scale in zip(
+            coefs, intercepts, means, scales,
+        ):
+            z = intercept
+            for c, value in zip(coef, self.win_design_vector(
+                    features, mean=mean, scale=scale)[1:]):
+                z += c * value
+            out.append(float(1.0 / (1.0 + np.exp(-z))))
+        return out
 
     def out_of_range(self, features: dict[str, float], *, limit: float = 5.0) -> list[dict]:
         """Features standing far outside the distribution the model was fitted on.
