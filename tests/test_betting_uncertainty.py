@@ -1,13 +1,22 @@
 """How wrong our own probability might be.
 
 The whole feature turns on this number, and the first two attempts at it were
-both wrong in the same direction and for the same reason: they measured how
-much the model agrees with itself. A model can be perfectly self-consistent and
-perfectly wrong, and this one is -- it overstates favorites in the 0.56 to 0.61
-band by about three points, which is exactly the region a bet would land in.
+wrong in the same direction for the same reason: they measured how much the
+model agrees with itself. A model can be perfectly self-consistent and perfectly
+wrong, so a third estimator compares predictions against outcomes, and it is
+allowed to overrule the other two.
 
-So the property that matters most here is that the estimator which looks at
-outcomes is allowed to overrule the two that do not.
+The third attempt was wrong as well, and more instructively. Read per bin, the
+calibration table appeared to show this model overstating favorites by three
+points in the 0.56 to 0.61 band -- exactly where a moderate favorite sits, and
+exactly where a bet would land. That finding did not survive its own test:
+chi-square 13.62 on 10 degrees of freedom, p about 0.19, largest deviation 2.14
+against an expected maximum near 1.96 for ten draws. It was ten bins scanned and
+the two largest kept, which is precisely the selection effect this feature exists
+to stop us making with money.
+
+So sigma is pooled across the table, the per-bin resolution is the floor, and
+the tests below pin both of those rather than any particular bin's number.
 """
 
 from __future__ import annotations
@@ -145,18 +154,46 @@ BINS = [
 ]
 
 
-def test_the_region_containing_the_prediction_is_the_one_consulted():
-    """Miscalibration is rarely uniform, and bets live where it is worst."""
-    assert uncertainty.calibration_sigma(_calibrated(BINS), FEATURES) == pytest.approx(0.030)
+def test_one_deviant_bin_does_not_set_sigma_on_its_own():
+    """The correction this module needed, and the reason for pooling.
+
+    A per-bin systematic term is a noisy unbiased estimate floored at zero, and
+    flooring one biases it upward -- so whichever bin happened to deviate
+    reports an inflated figure. Read per-bin, the real model looked overconfident
+    by three points exactly where a moderate favorite sits. The global test put
+    that at chi-square 13.62 on 10 df, p about 0.19: ten bins scanned and the
+    two largest kept, which is the selection effect this whole feature exists to
+    avoid making with money.
+    """
+    value = uncertainty.calibration_sigma(_calibrated(BINS), FEATURES)
+    assert value < 0.030, "a single bin's deviation must not drive sigma"
+    assert value == pytest.approx(0.015, abs=1e-3), "the resolution floor binds"
 
 
-def test_a_bin_calibrated_within_its_resolution_reports_the_resolution():
+def test_the_pooled_estimate_reads_the_whole_table_not_one_row():
+    """Every bin deviating in the same direction is a different claim from one
+    bin deviating, and must produce a bigger number."""
+    one_bad = uncertainty.pooled_systematic(BINS)
+    all_bad = uncertainty.pooled_systematic([
+        dict(entry, frequency=entry["p_mean"] - 0.03) for entry in BINS])
+    assert all_bad > one_bad
+
+
+def test_a_calibrated_table_pools_to_nothing():
+    """Predictions matching frequencies leave only noise, and subtracting it
+    must not leave a residue to stake against."""
+    clean = [dict(entry, frequency=entry["p_mean"]) for entry in BINS]
+    assert uncertainty.pooled_systematic(clean) == 0.0
+    assert uncertainty.pooled_systematic([]) == 0.0
+
+
+def test_the_resolution_floor_is_never_undercut_by_pooling():
     """Zero systematic error means "we cannot detect any", not "there is none".
 
-    Reporting zero would claim a precision 1,000 games cannot support, and the
-    claim lands directly on the stake.
+    Reporting zero would claim a precision a thousand games cannot support, and
+    the claim lands directly on the stake.
     """
-    low = dict(BINS[0]); low.update(p_low=0.0, p_high=1.0)
+    low = dict(BINS[0]); low.update(p_low=0.0, p_high=1.0, frequency=0.40)
     value = uncertainty.calibration_sigma(_calibrated([low]), FEATURES)
     assert value == pytest.approx(0.015)
 
@@ -165,9 +202,12 @@ def test_an_artifact_without_calibration_says_so():
     assert uncertainty.calibration_sigma(_model(), FEATURES) is None
 
 
-def test_a_prediction_outside_every_measured_region_uses_the_nearest():
+def test_a_prediction_outside_every_measured_region_still_gets_a_floor():
+    """A prediction the model has never made before is not one to be confident
+    about, but it still has to be priced with something."""
     far = [dict(BINS[1], p_low=0.90, p_high=0.99, p_mean=0.95)]
-    assert uncertainty.calibration_sigma(_calibrated(far), FEATURES) == pytest.approx(0.030)
+    value = uncertainty.calibration_sigma(_calibrated(far), FEATURES)
+    assert value is not None and value > 0
 
 
 # ---------------------------------------------------------------------------
@@ -176,21 +216,27 @@ def test_a_prediction_outside_every_measured_region_uses_the_nearest():
 
 def test_the_largest_estimate_wins():
     combined = uncertainty.estimate(_calibrated(BINS), FEATURES)
-    assert combined.value == pytest.approx(0.030)
-    assert combined.source == "calibration"
     assert combined.measured
+    assert combined.value == max(
+        v for v in (combined.delta, combined.folds, combined.calibration)
+        if v is not None)
 
 
 def test_measuring_against_outcomes_can_overrule_measuring_against_ourselves():
-    """The finding this whole module was rebuilt for.
+    """The reason this module carries a third estimator.
 
-    The delta method sees 27,000 games and reports 0.005. The calibration data
-    sees that this model overstates favorites by three points and reports 0.03.
-    The second is the one that must reach the stake.
+    The delta method sees 27,000 games and reports about 0.005, which is a true
+    statement about the coefficients and a misleading one about tonight. When
+    the calibration data says we are further off than that, it has to be the
+    figure that reaches the stake.
     """
-    combined = uncertainty.estimate(_calibrated(BINS), FEATURES)
+    tight = _model(
+        win_cov=[[1e-6, 0, 0], [0, 1e-6, 0], [0, 0, 1e-6]],
+        win_calibration=BINS)
+    combined = uncertainty.estimate(tight, FEATURES)
     assert combined.delta < combined.calibration
-    assert combined.value == combined.calibration
+    assert combined.value == pytest.approx(combined.calibration)
+    assert combined.source == "calibration"
 
 
 def test_nothing_measurable_falls_to_the_floor_and_admits_it():
