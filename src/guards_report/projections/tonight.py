@@ -59,11 +59,38 @@ class StarterProp:
 
     @property
     def line(self) -> float:
-        """The half-integer total closest to an even split, as a book would set it."""
-        for k in range(0, 20):
-            if self.at_least(k + 1) < 0.5:
-                return k + 0.5
-        return 9.5
+        """The half-integer total closest to an even split, as a book would set it.
+
+        Actually closest, which is the fix. This used to return the *first*
+        half-integer whose over came in under 50%, and those are different
+        numbers whenever the crossing is not near the middle of a step. On a
+        starter projected for 4.02 strikeouts it returned 4.5, where the over is
+        37.5% -- while 3.5, at 59.2%, is nearer an even split by three points.
+
+        The gap mattered because the published line is read as our own fair
+        number. A line of 4.5 beside a 37.5% over does not look like a rounding
+        choice, it looks like the projection is wrong, and it sent an
+        investigation after a mean that turned out to be correct.
+
+        No half-integer will sit at exactly 50%: the count is discrete, and on a
+        mean near four the over steps from 59% to 38% in one move. `line_
+        probability` carries the real figure so the two are never shown apart.
+        """
+        candidates = range(0, 20)
+        return min(
+            (k + 0.5 for k in candidates),
+            key=lambda half: abs(self.at_least(int(half) + 1) - 0.5),
+        )
+
+    @property
+    def line_probability(self) -> float:
+        """Our chance of going over the line above.
+
+        Published beside it deliberately. A half-integer line implies an even
+        split and this one frequently is not, so stating the line without the
+        probability overstates how balanced the projection is.
+        """
+        return self.at_least(int(self.line) + 1)
 
 
 @dataclass

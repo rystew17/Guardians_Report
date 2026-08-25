@@ -197,13 +197,20 @@ def test_strikeout_total_is_a_distribution_not_a_point(artifact, plate):
 
 
 def test_the_line_splits_the_distribution(artifact, plate):
-    """The half-integer where the chance of going over first drops below half."""
+    """The half-integer nearest an even split.
+
+    This asserted the old rule -- the first half-integer whose over drops below
+    half -- and kept passing after the rule changed, because on this fixture the
+    two happen to agree. A test that only holds while the fixture cooperates is
+    how a fix gets reverted a year later, so it now pins the property instead.
+    """
     k = tonight.starter_strikeouts(
         artifact, plate, on=date(2026, 6, 10), pitcher_id=900, name="",
         opposing_lineup=CARD, stands=STANDS, throws="R", expected_bf=22,
     )
-    assert k.at_least(int(k.line) + 1) < 0.5
-    assert k.at_least(int(k.line)) >= 0.5
+    chosen = abs(k.line_probability - 0.5)
+    for candidate in range(0, 14):
+        assert abs(k.at_least(candidate + 1) - 0.5) >= chosen - 1e-12
 
 
 def test_a_missing_pitcher_returns_nothing_rather_than_a_guess(artifact, plate):
@@ -252,3 +259,70 @@ def test_first_five_keeps_ties_rather_than_resolving_them():
 
 def test_a_missing_artifact_returns_nothing(plate):
     assert tonight.first_five(None, {}) is None
+
+
+# ---------------------------------------------------------------------------
+# The published strikeout line
+# ---------------------------------------------------------------------------
+# A half-integer line is read as our own fair number, so it has to sit as close
+# to an even split as the discreteness allows. It used to return the *first*
+# half-integer whose over came in under 50%, which is a different number
+# whenever the crossing is not near the middle of a step -- and the mismatch
+# read as a broken projection rather than as a rounding choice.
+
+def _prop(distribution, **kwargs):
+    from guards_report.projections.tonight import StarterProp
+
+    return StarterProp(player_id=1, name="Test", distribution=distribution, **kwargs)
+
+
+# Tanner Bibee, 2026-08-22, projected 4.02 strikeouts. Poisson-shaped, and the
+# case that exposed the bug.
+BIBEE = {0: 0.011, 1: 0.057, 2: 0.136, 3: 0.204, 4: 0.217, 5: 0.175,
+         6: 0.110, 7: 0.056, 8: 0.023, 9: 0.008, 10: 0.002, 11: 0.001}
+
+
+def test_the_line_is_the_half_integer_nearest_an_even_split():
+    prop = _prop(BIBEE, expected=4.02)
+    assert prop.line == 3.5
+    assert prop.line_probability == pytest.approx(0.592, abs=0.002)
+
+
+def test_the_line_is_not_merely_the_first_one_under_a_half():
+    """The old rule. On this distribution it returned 4.5, where the over is
+    37.5% -- while 3.5 at 59.2% is nearer an even split by three points."""
+    prop = _prop(BIBEE, expected=4.02)
+    first_under = next(k + 0.5 for k in range(20) if prop.at_least(k + 1) < 0.5)
+    assert first_under == 4.5
+    assert prop.line != first_under
+
+
+def test_no_other_half_integer_sits_closer_to_even():
+    """Stated as the property rather than as a transcribed answer."""
+    prop = _prop(BIBEE, expected=4.02)
+    chosen = abs(prop.line_probability - 0.5)
+    for k in range(0, 12):
+        assert abs(prop.at_least(k + 1) - 0.5) >= chosen - 1e-12
+
+
+def test_the_probability_is_published_with_the_line():
+    """A half-integer implies an even split and often is not one, so stating
+    the line alone overstates how balanced the projection is."""
+    prop = _prop(BIBEE, expected=4.02)
+    assert prop.line_probability == prop.at_least(int(prop.line) + 1)
+
+
+def test_a_higher_strikeout_pitcher_gets_a_higher_line():
+    """The sign, which nothing downstream would flag if inverted."""
+    low = _prop({2: 0.3, 3: 0.4, 4: 0.3}, expected=3.0)
+    high = _prop({7: 0.3, 8: 0.4, 9: 0.3}, expected=8.0)
+    assert high.line > low.line
+
+
+def test_a_line_can_land_above_the_crossing_when_that_is_closer():
+    """Symmetry check: the rule must be able to choose either side of 50%, or
+    it is the old rule wearing a different coat."""
+    # Over 2.5 is 55%, over 3.5 is 15% -- 2.5 is much nearer even.
+    near_below = _prop({2: 0.45, 3: 0.40, 4: 0.15}, expected=2.7)
+    assert near_below.line == 2.5
+    assert near_below.line_probability > 0.5
