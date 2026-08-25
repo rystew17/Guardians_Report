@@ -85,6 +85,11 @@ class Play:
     confidence: float      # Phi(z): probability this is genuinely +EV
     stake: float           # fraction of bankroll, after the Kelly discount
 
+    # The posted number for totals, run lines and props. Carried because
+    # "over" at 8.5 and "over" at 9 are different bets that share a selection
+    # name, and a record keyed without it silently keeps only one of them.
+    line: float | None = None
+
     @property
     def disagreement(self) -> float:
         """Our probability minus the market's, before any shrinkage.
@@ -123,6 +128,7 @@ def assess(
     selection: str,
     american: float,
     p_model: float,
+    line: float | None = None,
     sigma: float,
     p_market: float,
     tau: float,
@@ -174,6 +180,7 @@ def assess(
         selection=selection,
         american=float(american),
         decimal=decimal,
+        line=line,
         p_model=p_model,
         sigma=sigma,
         p_market=p_market,

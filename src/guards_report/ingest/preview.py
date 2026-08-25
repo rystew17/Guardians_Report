@@ -178,6 +178,10 @@ class ReportBundle:
     # the analysis layer is additive and never blocks a build.
     analyses: dict[str, Any] = field(default_factory=dict)
     analysis_summary: dict[str, Any] = field(default_factory=dict)
+    # Posted prices against our own numbers, when odds have been entered for
+    # this game. None means none were, and the report is complete without it --
+    # the betting block is additive and never blocks a build.
+    betting: Any | None = None
     # League-wide leaderboard values, kept as populations rather than only as
     # the means beside each box. A player's speed and defense have to be graded
     # against every other player, and twenty-six men on one card is not a

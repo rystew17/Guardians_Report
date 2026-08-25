@@ -591,6 +591,45 @@
            border-bottom:1px solid var(--border)}
 .pprops th.l,.pprops td.l{text-align:left}
 .pprops tr.rel-noise td{opacity:.72}
+
+/* ---- odds and disagreements ---------------------------------------- */
+/* Built on the tokens this page already declares rather than fresh literals,
+   so the block inherits the report's palette instead of drifting beside it.
+   An undeclared var() voids the whole declaration silently, which is why a
+   test pins this. */
+.notadvice{display:inline-block;margin-left:.6rem;padding:.15rem .5rem;
+  border:1px solid var(--border);border-radius:2px;
+  font-size:.62rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--bad);background:#fdf3f2;vertical-align:middle;white-space:nowrap}
+table.odds{width:100%;table-layout:fixed;border-collapse:collapse;
+  font-variant-numeric:tabular-nums}
+table.odds th,table.odds td{padding:.4rem .5rem;text-align:left;
+  border-bottom:1px solid var(--border);vertical-align:baseline}
+table.odds thead th{font-size:.64rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--muted);font-weight:600}
+table.odds td.n,table.odds th.n{text-align:right}
+table.odds .ln{color:var(--muted);font-weight:400}
+table.odds .pos{color:var(--good)}table.odds .neg{color:var(--bad)}
+table.odds tr.why td{border-bottom:1px solid var(--border);
+  padding-top:0;padding-bottom:.55rem;font-size:.82rem;line-height:1.5}
+table.odds tr.why .reason{color:var(--ink)}
+table.odds tr.why .detail{color:var(--muted);display:block;margin-top:.15rem}
+/* A bet is the exception, so it is the only row that carries a tint. */
+table.odds tr.v-bet th,table.odds tr.v-bet td{background:#f2f8f4}
+.verdict{display:inline-block;padding:.1rem .45rem;border-radius:2px;
+  font-size:.7rem;font-weight:700;letter-spacing:.03em;white-space:nowrap}
+.verdict.bet{background:var(--good);color:#fff}
+.verdict.inside-error{background:#fdf2e0;color:#8a5a00;border:1px solid #e8d4a8}
+.verdict.unmeasured{background:var(--panel);color:var(--muted);
+  border:1px solid var(--border)}
+.verdict.priced-in{background:var(--panel);color:var(--muted);
+  border:1px solid var(--border);font-weight:600}
+.settings{font-size:.78rem;color:var(--muted);letter-spacing:.01em}
+#pbet .pos{color:var(--good)}#pbet .neg{color:var(--bad)}
+@media (max-width:640px){
+  table.odds{table-layout:auto;font-size:.8rem}
+  table.odds th,table.odds td{padding:.35rem .3rem}
+}
 </style>
 </head>
 <body>
@@ -638,6 +677,11 @@
   {% if bundle.projection %}
   <button role="tab" id="tab-pproj" aria-controls="pproj" data-page="pproj"
           tabindex="-1" aria-selected="false"><span class="full">Projections</span></button>
+  {% endif %}
+  {% if bundle.betting and bundle.betting.has_prices %}
+  <button role="tab" id="tab-pbet" aria-controls="pbet" data-page="pbet"
+          tabindex="-1" aria-selected="false"
+          data-short="Odds"><span class="full">Odds</span></button>
   {% endif %}
 </nav>
 </div>
@@ -1901,6 +1945,166 @@
 {% endfor %}
 
 {#- ========================== audit ========================== -#}
+
+{#- ======================== odds and disagreements ========================
+
+   Every priced selection, both sides of every market, with the numbers that
+   produced each verdict. Both sides on purpose: printing only the attractive
+   half would hide that the other half is the same disagreement with its sign
+   flipped, which makes an arithmetic necessity look like a discovery.
+
+   The header disclaimer is not decoration. Nothing here has been validated
+   against a closing-line record, so these are disagreements with a bookmaker
+   rather than known edges, and the page has to say so before it says anything
+   else.
+-#}
+{% if bundle.betting and bundle.betting.has_prices %}
+{% set bet = bundle.betting %}
+<section class="page" id="pbet" role="tabpanel" aria-labelledby="tab-pbet" tabindex="0">
+
+  <div class="card">
+    <h2>Tonight's prices <span class="notadvice">{{ bet.disclaimer }}</span></h2>
+    <p class="lede">{{ bet.summary }}</p>
+
+    <div class="tablewrap">
+      <table class="odds">
+        <colgroup>
+          <col style="width:15%"><col style="width:14%"><col style="width:8%">
+          <col style="width:9%"><col style="width:9%"><col style="width:9%">
+          <col style="width:8%"><col style="width:7%"><col style="width:7%">
+          <col style="width:14%">
+        </colgroup>
+        <thead>
+          <tr>
+            <th scope="col">Market</th>
+            <th scope="col">Selection</th>
+            <th scope="col" class="n">Price</th>
+            <th scope="col" class="n">Ours</th>
+            <th scope="col" class="n">Book</th>
+            <th scope="col" class="n">Break-even</th>
+            <th scope="col" class="n">Edge</th>
+            <th scope="col" class="n">z</th>
+            <th scope="col" class="n">Stake</th>
+            <th scope="col">Verdict</th>
+          </tr>
+        </thead>
+        <tbody>
+          {%- for row in bet.rows %}
+          <tr class="v-{{ row.verdict.action }}">
+            <th scope="row">{{ row.market_label }}{% if row.line is not none %}
+              <span class="ln">{{ '%g'|format(row.line) }}</span>{% endif %}</th>
+            <td>{{ row.selection }}</td>
+            <td class="n">{{ row.american }}</td>
+            <td class="n">{{ '%.1f'|format(row.p_model * 100) }}%</td>
+            <td class="n">{{ '%.1f'|format(row.p_market * 100) }}%</td>
+            <td class="n">{{ '%.1f'|format(row.break_even * 100) }}%</td>
+            <td class="n {{ 'pos' if row.edge > 0 else 'neg' }}">
+              {{ '%+.1f'|format(row.edge * 100) }}</td>
+            <td class="n">{{ '%.2f'|format(row.z) }}</td>
+            <td class="n">{% if row.stake > 0 %}{{ '%.1f'|format(row.stake * 100) }}%{% else %}&mdash;{% endif %}</td>
+            <td><span class="verdict {{ row.verdict.action }}">{{ row.verdict.label }}</span></td>
+          </tr>
+          <tr class="why v-{{ row.verdict.action }}">
+            <td colspan="10">
+              <span class="reason">{{ row.verdict.reason }}</span>
+              <span class="detail">{{ row.verdict.detail }}</span>
+            </td>
+          </tr>
+          {%- endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if bet.unmatched %}
+    <p class="warn"><b>Not priced:</b> {{ bet.unmatched|join('; ') }} &mdash;
+      we have no projection matching {{ 'these selections' if bet.unmatched|length > 1 else 'this selection' }}.
+      Most often a team code that does not match the game.</p>
+    {% endif %}
+    {% if bet.warnings %}
+    <p class="warn"><b>Check:</b> {{ bet.warnings|join('; ') }}</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h3>How this is decided</h3>
+    <p>
+      A price carries two different probabilities and both matter.
+      <b>Break-even</b> is what the price charges &mdash; at &minus;110 that is
+      52.4%, and it is the number a bet has to clear. <b>Book</b> is what the
+      market believes once the margin is removed. The gap between them is the
+      bookmaker's cut, and matching the book's opinion exactly still loses that
+      much on every bet.
+    </p>
+    <p>
+      Our own number is not used raw. It is pulled toward the market in
+      proportion to how uncertain we are &mdash; the same shrinkage this report
+      applies to player talent &mdash; so a noisy projection collapses onto the
+      market's and produces nothing. <b>Edge</b> is what survives after both the
+      shrinkage and the margin. <b>z</b> is that edge measured in units of our
+      own standard error, and it is what plays are ranked by. Ranking on the raw
+      gap instead would sort on our own error and surface the games we
+      understand worst.
+    </p>
+    <p class="settings">
+      Assumed market error &tau; = {{ '%.3f'|format(bet.tau) }} &middot;
+      bar z &ge; {{ '%.1f'|format(bet.z_threshold) }} &middot;
+      margin removed by {{ bet.devig }} &middot;
+      stakes at quarter Kelly
+    </p>
+    {% if bet.sigma_note %}<p class="note">{{ bet.sigma_note }}</p>{% endif %}
+    <p class="note">
+      &tau; is an assumption, not a measurement. It says how wrong the closing
+      line typically is, which cannot be known without a record of closing
+      lines &mdash; so it is set deliberately and shown here rather than hidden.
+      Everything above depends on it.
+    </p>
+  </div>
+
+  <div class="card">
+    <h3>Has any of this worked?</h3>
+    {% if bet.record %}
+    <p class="lede">
+      Across {{ bet.record.n }} flagged selection{{ '' if bet.record.n == 1 else 's' }},
+      the market moved
+      <b class="{{ 'pos' if bet.record.mean_points > 0 else 'neg' }}">{{ '%+.2f'|format(bet.record.mean_points * 100) }}
+      points</b> toward us on average, beating the close
+      {{ '%.0f'|format(bet.record.beat_rate * 100) }}% of the time.
+    </p>
+    {% if not bet.record.enough %}
+    <p class="warn">
+      Far too few to read as anything. Closing line value needs a few hundred
+      observations before its mean separates from noise; this is
+      {{ bet.record.n }}. Reported so the record starts somewhere, not because
+      it currently says something.
+    </p>
+    {% endif %}
+    {% else %}
+    <p class="lede">Nothing measured yet. The record starts with the first
+      priced night that also has a closing line to compare against.</p>
+    {% endif %}
+    <p>
+      Profit and loss cannot answer this question on any useful horizon.
+      Detecting a 2% return edge with 80% power needs roughly 17,800 bets
+      &mdash; about ninety-six seasons at one play a night. So the scoreboard is
+      whether the market moved toward us after we flagged something, which is
+      near-continuous rather than win-or-lose and settles in hundreds of
+      observations rather than tens of thousands.
+    </p>
+  </div>
+
+  {{ glossary([
+    ('Break-even', 'The win rate a bet needs to lose nothing, equal to 1/decimal odds. Includes the bookmaker&rsquo;s margin, which is why both sides of a &minus;110 market break even above 50%.'),
+    ('Book', 'What the market believes with the margin stripped out. Sums to 100% across a complete market.'),
+    ('Edge', 'Our shrunk probability minus break-even. Positive means the price is worse than we think the outcome is.'),
+    ('z', 'Edge divided by our own standard error, after shrinkage. Roughly, how many times larger the edge is than our uncertainty about it.'),
+    ('&tau;', 'Assumed typical size of a genuine market error. Sets how much of our own number survives contact with the price.'),
+    ('Quarter Kelly', 'A quarter of the mathematically optimal stake. Full Kelly assumes the probability is known exactly; ours is an estimate, and Kelly oversizes hardest where the estimate is worst.'),
+    ('Closing line value', 'Whether the price moved toward the side we flagged, measured on margin-free probabilities. The only scoreboard here that reports back inside a season.'),
+  ]) }}
+
+</section>
+{% endif %}
+
 <section>
   <h2 style="margin-top:2.5rem;border-top:1px solid var(--border);padding-top:var(--sp-4);">Sources &amp; audit</h2>
   <p class="sub">Every figure is either reported directly by a source below or computed from one by a

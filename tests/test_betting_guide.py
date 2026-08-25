@@ -231,17 +231,24 @@ def test_the_two_sides_of_a_moneyline_are_one_number_and_its_complement():
         "a model with no calibration must not claim a measured sigma")
 
 
-def test_a_total_landing_on_the_number_is_a_push_not_a_loss():
+# The shape the simulator actually emits. An earlier fixture here used a plain
+# mapping, which agreed with a wrong assumption in the code and passed while the
+# real build raised on a list.
+ROWS = [{"total": 8, "p": 0.3}, {"total": 9, "p": 0.4}, {"total": 10, "p": 0.3}]
+MAPPING = {8: 0.3, 9: 0.4, 10: 0.3}
+
+
+@pytest.mark.parametrize("distribution", [ROWS, MAPPING])
+def test_a_total_landing_on_the_number_is_a_push_not_a_loss(distribution):
     """On a whole-number total the mass sitting exactly on the line is neither
     side. Counting it as a loss understates the over by all of it."""
-    distribution = {8: 0.3, 9: 0.4, 10: 0.3}
     beliefs = sources.total({"total_distribution": distribution}, 9.0)
     # 0.3 over, 0.3 under, 0.4 pushed and removed from the denominator.
     assert beliefs[(types.TOTAL, "over")].probability == pytest.approx(0.5)
 
 
-def test_a_half_point_total_has_nothing_to_push_on():
-    distribution = {8: 0.3, 9: 0.4, 10: 0.3}
+@pytest.mark.parametrize("distribution", [ROWS, MAPPING])
+def test_a_half_point_total_has_nothing_to_push_on(distribution):
     beliefs = sources.total({"total_distribution": distribution}, 8.5)
     assert beliefs[(types.TOTAL, "over")].probability == pytest.approx(0.7)
 

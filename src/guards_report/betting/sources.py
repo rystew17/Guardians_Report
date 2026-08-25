@@ -66,13 +66,12 @@ def total(simulation: dict[str, Any], line: float) -> dict[tuple[str, str], Beli
     either. Counting a push as a loss would understate the over by the entire
     probability mass sitting on the line, which on a total of 9 is not small.
     """
-    distribution = simulation.get("total_distribution") or {}
+    distribution = _weights(simulation.get("total_distribution"))
     if not distribution:
         return {}
 
     over = pushed = under = 0.0
     for runs, weight in distribution.items():
-        runs = float(runs)
         if runs > line:
             over += weight
         elif runs < line:
@@ -93,6 +92,32 @@ def total(simulation: dict[str, Any], line: float) -> dict[tuple[str, str], Beli
             probability=1.0 - p_over, sigma=uncertainty.MINIMUM_SIGMA,
             measured=False, basis=BASIS[types.TOTAL]),
     }
+
+
+def _weights(distribution) -> dict[float, float]:
+    """Normalize either shape a distribution arrives in.
+
+    The simulator emits a list of {"total": n, "p": weight} rows; a mapping of
+    n to weight is the obvious thing to assume and is what the first version of
+    this read. Handling only the assumed shape raised on a list and took the
+    whole betting section out of the build -- caught only because the section is
+    guarded, which is exactly how a silent version of this would have survived.
+    """
+    if not distribution:
+        return {}
+    if isinstance(distribution, dict):
+        return {float(k): float(v) for k, v in distribution.items()}
+
+    out: dict[float, float] = {}
+    for row in distribution:
+        if not isinstance(row, dict):
+            continue
+        key = row.get("total", row.get("runs", row.get("value")))
+        weight = row.get("p", row.get("probability", row.get("weight")))
+        if key is None or weight is None:
+            continue
+        out[float(key)] = float(weight)
+    return out
 
 
 def first_five(projection, *, home: str, away: str) -> dict[tuple[str, str], Belief]:
@@ -140,11 +165,34 @@ def strikeouts(prop, line: float) -> dict[tuple[str, str], Belief]:
     if not name:
         return {}
 
-    return {
-        (types.STRIKEOUTS, f"{name} over"): Belief(
+    out: dict[tuple[str, str], Belief] = {}
+    for alias in name_aliases(name):
+        out[(types.STRIKEOUTS, f"{alias} over")] = Belief(
             probability=p_over, sigma=uncertainty.MINIMUM_SIGMA,
-            measured=False, basis=BASIS[types.STRIKEOUTS]),
-        (types.STRIKEOUTS, f"{name} under"): Belief(
+            measured=False, basis=BASIS[types.STRIKEOUTS])
+        out[(types.STRIKEOUTS, f"{alias} under")] = Belief(
             probability=1.0 - p_over, sigma=uncertainty.MINIMUM_SIGMA,
-            measured=False, basis=BASIS[types.STRIKEOUTS]),
-    }
+            measured=False, basis=BASIS[types.STRIKEOUTS])
+    return out
+
+
+def name_aliases(name: str) -> list[str]:
+    """Every way a pitcher's name might reasonably be typed.
+
+    The projection carries "tanner bibee" and a person types "Bibee", so
+    matching on the full name alone silently prices nothing. The surname is the
+    form actually used, and registering only the full name meant the whole
+    strikeout market arrived as unmatched.
+
+    Ambiguity is resolved by the caller, not here: two starters sharing a
+    surname must not both answer to it, and this function cannot see the other
+    one.
+    """
+    name = " ".join(name.split()).lower()
+    if not name:
+        return []
+    parts = name.split(" ")
+    aliases = [name]
+    if len(parts) > 1 and parts[-1] not in aliases:
+        aliases.append(parts[-1])
+    return aliases

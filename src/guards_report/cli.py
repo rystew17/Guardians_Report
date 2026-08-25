@@ -220,6 +220,21 @@ def cmd_build(args: argparse.Namespace) -> int:
         # needing to be checked back against one.
         attach_computed_analysis(bundle, settings, on=on)
 
+    # Prices, when there are any. Runs last, after every number it compares
+    # against is final, and never blocks a build: a report without odds is a
+    # complete report.
+    try:
+        from guards_report.betting import attach as betting_attach
+
+        odds_text = args.odds or ""
+        if args.odds_file:
+            odds_text = Path(args.odds_file).read_text(encoding="utf-8")
+        # `data/`, the same root the model artifacts and corpus live under.
+        betting_attach.attach(
+            bundle, root=settings.raw_archive_dir.parent, odds_text=odds_text)
+    except Exception as exc:  # noqa: BLE001 -- never cost the report
+        print(f"warning: odds section skipped ({exc})", file=sys.stderr)
+
     path = render(
         bundle, output_dir=settings.output_dir,
         # The canonical URL has to be known at render time, because the tags go
@@ -346,6 +361,12 @@ def main(argv: list[str] | None = None) -> int:
 
     build = sub.add_parser("build", help="build a game preview")
     build.add_argument("--date", default="today", help="today|tomorrow|YYYY-MM-DD")
+    build.add_argument(
+        "--odds", default="",
+        help="posted prices, e.g. 'ml CLE -135 DET +115; total o8.5 -105 u8.5 -115'")
+    build.add_argument(
+        "--odds-file", default="",
+        help="read the same format from a file, one market per line")
     build.add_argument("--team", type=int, default=CLEVELAND_GUARDIANS_TEAM_ID)
     build.add_argument(
         "--no-store", action="store_true", help="skip BigQuery persistence"

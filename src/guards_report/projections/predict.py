@@ -150,6 +150,11 @@ class Projection:
     # own historical spread. Both exist so the page can show why, and how
     # unusual, rather than only what.
     contributions: list[dict] = field(default_factory=list)
+    # The exact standardized inputs Model A saw. Kept so a standard error can be
+    # computed against the same vector that produced the probability -- an error
+    # qualifying a different number than the one shown would be wrong in a way
+    # nothing on the page could reveal.
+    win_features: dict[str, float] = field(default_factory=dict)
     confidence_percentile: float = 50.0
     reference: dict[str, Any] = field(default_factory=dict)
 
@@ -377,6 +382,7 @@ def project(
         score=simulation,
         missing=missing,
         contributions=contributions,
+        win_features=dict(win_features),
         confidence_percentile=model.percentile_of(win_probability),
         reference=model.reference,
         metrics=model.metrics,

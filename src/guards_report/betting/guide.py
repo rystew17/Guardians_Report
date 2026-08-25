@@ -108,6 +108,7 @@ def build(
                 market=market.name,
                 selection=quote.selection,
                 american=quote.american,
+                line=quote.line,
                 p_model=belief.probability,
                 sigma=belief.sigma,
                 p_market=p_market,
