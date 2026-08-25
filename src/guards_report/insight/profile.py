@@ -121,6 +121,12 @@ class PlayerProfile:
     tools: dict[str, Tool] = field(default_factory=dict)
     matches: list[Match] = field(default_factory=list)
     runs_per_150: float | None = None
+    bat_per_150: float | None = None   # the bat alone, before glove and position
+    bat_grade: str = ""
+    glove_per_150: float | None = None
+    position: str = ""
+    job_score: float | None = None     # weighted by what the position asks for
+    job_grade: str = ""
     tier: str = ""
     tier_grade: float | None = None
     sample: int = 0
@@ -311,19 +317,73 @@ def fielding_runs(box: Any, games: int) -> float:
     what makes a glove-first catcher legible as valuable rather than as an
     average fielder who cannot hit.
     """
+    return sum(fielding_parts(box, games))
+
+
+def fielding_parts(box: Any, games: int) -> tuple[float, float]:
+    """The measured glove and the positional adjustment, kept apart.
+
+    Separated because only one of them is an estimate. Outs above average is
+    measured and noisy and deserves to be shrunk toward zero; where a man stands
+    is a fact about the position, and shrinking it would quietly move a
+    shortstop toward a first baseman's baseline.
+    """
     prevented = (getattr(box, "fielding", {}) or {}).get("fielding_runs_prevented")
     runs = float(prevented) if prevented is not None else 0.0
     position = (getattr(box, "position", "") or "").upper()
     adjustment = POSITION_ADJUSTMENT.get(position, 0.0) * (games / 150.0)
-    return runs + adjustment
+    return runs, adjustment
 
 
+# Ten tiers, in runs above average per 150 games.
+#
+# Five was too few, and the bands were the wrong width in the place it mattered
+# most: "roughly average" ran from -2 to +12, so fourteen runs of real
+# difference disappeared into one label and a genuinely plus bat came out
+# average. The cuts below are tighter through the middle, where most regulars
+# actually sit, and wider at the ends where the population thins out.
 TIERS = (
-    (25.0, "an excellent player"),
-    (12.0, "a good player"),
-    (-2.0, "a roughly average player"),
-    (-14.0, "a below-average player"),
+    (45.0, "an MVP-caliber player"),
+    (33.0, "a superstar"),
+    (24.0, "an All-Star"),
+    (17.0, "a very good player"),
+    (11.0, "a solid regular"),
+    (5.0, "an above-average regular"),
+    (-2.0, "an average regular"),
+    (-8.0, "a fringe regular"),
+    (-16.0, "a bench player"),
 )
+
+
+# The bat on its own, in runs above average per 150 games. Separate from the
+# overall tier on purpose.
+#
+# Total value is the right answer to "how good is this player" and the wrong
+# answer to "what happens when he bats". A right fielder carries a -6.9
+# positional adjustment, so a genuinely plus bat with an ordinary glove comes
+# out average overall -- true of the player, misleading about the at-bat the
+# report is previewing. He steps in four times tonight and fields eight balls;
+# the bat is the part that decides the game being described.
+BAT_TIERS = (
+    (35.0, "an elite bat"),
+    (25.0, "a dangerous bat"),
+    (17.0, "a serious bat"),
+    (11.0, "a plus bat"),
+    (5.0, "an above-average bat"),
+    (-2.0, "an average bat"),
+    (-8.0, "a light bat"),
+    (-16.0, "a weak bat"),
+)
+
+
+def bat_tier(batting_runs_per_150: float | None) -> str:
+    """What his bat alone is worth, independent of glove and position."""
+    if batting_runs_per_150 is None or not np.isfinite(batting_runs_per_150):
+        return ""
+    for cut, label in BAT_TIERS:
+        if batting_runs_per_150 >= cut:
+            return label
+    return "a bat that costs his team runs"
 
 
 def tier_for(runs_per_150: float | None) -> str:
@@ -808,6 +868,79 @@ def external_grades(box: Any, populations: dict[str, list[float]]) -> dict[str, 
 BASERUNNING_FLOOR = 60.0
 
 
+# How much of each component survives into the headline number.
+#
+# Not a preference for hitting -- a correction for how differently these three
+# are measured. The bat is estimated from xwOBA, which settles inside a season
+# and predicts itself year to year at r ~ 0.7. Fielding run values are the
+# noisiest thing on the page: a season of defensive runs predicts the next at
+# roughly r ~ 0.35, so most of a large defensive figure is sampling, not talent.
+# Adding them at face value lets the least reliable term swing the verdict.
+#
+# The visible consequence: a plus bat with an ordinary glove used to land in the
+# same bucket as a poor bat with a spectacular one -- +13.6 batting with -10.6
+# fielding and -10.0 batting with +14.8 fielding both read as "a roughly average
+# player", which is true of the sum and useless about the players.
+RELIABILITY = {"bat": 1.00, "legs": 0.80, "glove": 0.55}
+
+
+# What each position is actually asked for, as (bat, glove) emphasis.
+#
+# Distinct from POSITION_ADJUSTMENT, which is already in the total and answers a
+# different question. The adjustment says what a position is *worth* -- a
+# shortstop's runs count for more than a first baseman's because the job is
+# harder. This says what the job is *for*, which is what decides whether a
+# player is filling it.
+#
+# A first baseman hitting at the league average is a problem; a shortstop
+# hitting at the league average is fine, and the difference is not captured by
+# a single run total. Nobody watches a designated hitter's glove, and nobody
+# forgives a catcher's.
+POSITION_EMPHASIS = {
+    "DH": (1.00, 0.00),
+    "1B": (0.88, 0.12),
+    "LF": (0.85, 0.15),
+    "RF": (0.85, 0.15),
+    "3B": (0.68, 0.32),
+    "2B": (0.60, 0.40),
+    "CF": (0.58, 0.42),
+    "SS": (0.55, 0.45),
+    "C":  (0.45, 0.55),
+}
+DEFAULT_EMPHASIS = (0.70, 0.30)
+
+
+def position_emphasis(position: str) -> tuple[float, float]:
+    return POSITION_EMPHASIS.get(
+        (position or "").upper().strip(), DEFAULT_EMPHASIS)
+
+
+def fills_the_job(
+    bat_per_150: float | None,
+    glove_per_150: float | None,
+    position: str,
+) -> tuple[float, str]:
+    """How well a player meets what his own position asks for.
+
+    Weighted by the job rather than by the run ledger, then read on the same
+    ten-tier scale. A corner outfielder is graded almost entirely on his bat and
+    a catcher close to evenly, which is how the positions are actually judged.
+
+    Returns the weighted figure and its label, so the page can show both rather
+    than asserting one.
+    """
+    bat_weight, glove_weight = position_emphasis(position)
+    bat = 0.0 if bat_per_150 is None or not np.isfinite(bat_per_150) else bat_per_150
+    glove = 0.0 if glove_per_150 is None or not np.isfinite(glove_per_150) else glove_per_150
+
+    # A weighted mean, not a sum. The weights already sum to one, so this stays
+    # on the run scale the tiers are cut on -- scaling it up to "look like" runs
+    # turned a +15 bat at designated hitter into an All-Star, which is a
+    # statement about the arithmetic rather than about the player.
+    score = bat_weight * bat + glove_weight * glove
+    return float(score), tier_for(score)
+
+
 def value_runs(box: Any, xwoba: float | None, plate_appearances: int) -> tuple[float, float]:
     """Runs above average, total and per 150 games.
 
@@ -820,11 +953,17 @@ def value_runs(box: Any, xwoba: float | None, plate_appearances: int) -> tuple[f
     season = getattr(box, "season", {}) or {}
     games = float(season.get("gamesPlayed") or season.get("games") or 0)
 
-    runs = batting_runs(
-        xwoba, plate_appearances, getattr(box, "batting_runs", None))
-    runs += baserunning_runs(
-        season, getattr(box, "baserunning_runs", None))
-    runs += fielding_runs(box, games)
+    glove, positional = fielding_parts(box, games)
+    runs = (
+        RELIABILITY["bat"] * batting_runs(
+            xwoba, plate_appearances, getattr(box, "batting_runs", None))
+        + RELIABILITY["legs"] * baserunning_runs(
+            season, getattr(box, "baserunning_runs", None))
+        # Only the measured glove is shrunk. The positional adjustment is a
+        # structural fact rather than an estimate and enters at full weight.
+        + RELIABILITY["glove"] * glove
+        + positional
+    )
     per150 = runs * 150.0 / games if games else float("nan")
     return float(runs), float(per150)
 
@@ -889,11 +1028,31 @@ def build_batter(
 
     total, per150 = value_runs(box, row.get("xwoba"), plate_appearances)
     thin = plate_appearances < minimum_pa
+
+    # The bat on its own, on the same per-150 footing as the overall figure, so
+    # a plus hitter reads as one even when his position and glove pull the total
+    # back to the middle.
+    season = getattr(box, "season", {}) or {}
+    games = float(season.get("gamesPlayed") or season.get("games") or 0)
+    bat = batting_runs(
+        row.get("xwoba"), plate_appearances, getattr(box, "batting_runs", None))
+    bat_per150 = (bat * 150.0 / games) if games else float("nan")
+    measured_glove, _ = fielding_parts(box, games)
+    glove_per150 = (measured_glove * 150.0 / games) if games else float("nan")
+    position = (getattr(box, "position", "") or "").upper()
+    job_score, job_grade = fills_the_job(bat_per150, glove_per150, position)
+
     return PlayerProfile(
         player_id=int(getattr(box, "player_id", 0) or 0),
         kind="batter", tools=tools,
         matches=[] if thin else match_profiles(tools, extra, kind="batter"),
         runs_per_150=None if thin else per150,
+        bat_per_150=None if thin else bat_per150,
+        bat_grade="" if thin else bat_tier(bat_per150),
+        glove_per_150=None if thin else glove_per150,
+        position=position,
+        job_score=None if thin else job_score,
+        job_grade="" if thin else job_grade,
         tier="" if thin else tier_for(per150),
         tier_grade=per150, sample=plate_appearances, thin=thin,
     )

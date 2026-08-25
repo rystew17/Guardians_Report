@@ -46,6 +46,11 @@ ALIASES = {
     "f5total": types.F5_TOTAL, "f5tot": types.F5_TOTAL, "f5ou": types.F5_TOTAL,
     "k": types.STRIKEOUTS, "ks": types.STRIKEOUTS, "so": types.STRIKEOUTS,
     "strikeouts": types.STRIKEOUTS, "punchouts": types.STRIKEOUTS,
+    "h": types.HITS, "hit": types.HITS, "hits": types.HITS,
+    "hr": types.HOME_RUNS, "homer": types.HOME_RUNS,
+    "homers": types.HOME_RUNS, "homeruns": types.HOME_RUNS,
+    "tb": types.TOTAL_BASES, "bases": types.TOTAL_BASES,
+    "totalbases": types.TOTAL_BASES,
 }
 
 # -135, +115, 135 all read as prices. A bare number without a sign is taken as
@@ -169,7 +174,10 @@ def parse_markets(text: str, **kwargs) -> list[types.Market]:
     normalizes it to 1.0 -- which reads as a certainty rather than as a missing
     other side.
     """
-    markets = [_inherit_subject(m) for m in types.group(parse(text, **kwargs))]
+    # Subjects are filled in before grouping, not after. Markets are keyed by
+    # player, so a bare "under" carries no subject yet and would land in its own
+    # market -- leaving both halves of one bet looking one-sided.
+    markets = types.group(_inherit_subject(parse(text, **kwargs)))
     incomplete = [m for m in markets if not m.complete]
     if incomplete:
         described = ", ".join(
@@ -181,27 +189,29 @@ def parse_markets(text: str, **kwargs) -> list[types.Market]:
     return markets
 
 
-def _inherit_subject(market: types.Market) -> types.Market:
+def _inherit_subject(quotes: list[types.Quote]) -> list[types.Quote]:
     """Give the bare side of an over/under the subject typed on the other.
 
     Nobody types the pitcher's name twice, so `k Bibee o5.5 -120 u5.5 +100`
-    leaves the under reading as "under +100" with nothing to be under. The
-    subject is unambiguous -- it is the same market -- and a page that prints
-    the price without the player is worse than useless.
+    leaves the under reading as "under" with nothing to be under. The subject is
+    unambiguous within a market and line, and a page that prints the price
+    without the player is worse than useless.
     """
-    subjects = {
-        q.selection.rsplit(" ", 1)[0]
-        for q in market.quotes
-        if q.selection.rsplit(" ", 1)[-1] in ("over", "under")
-        and " " in q.selection
-    }
-    if len(subjects) != 1:
-        return market
-    subject = subjects.pop()
+    # Keyed on the normalized subject but stored with its original casing, so
+    # the repaired side reads "Bibee under" rather than "bibee under".
+    named: dict[tuple, str] = {}
+    for quote in quotes:
+        if quote.subject:
+            display = quote.selection.strip().rsplit(" ", 1)[0]
+            named.setdefault((quote.market, quote.line, quote.book), display)
 
-    repaired = [
-        q if q.selection not in ("over", "under")
-        else types.Quote(**{**vars(q), "selection": f"{subject} {q.selection}"})
-        for q in market.quotes
-    ]
-    return types.Market(name=market.name, quotes=repaired)
+    repaired = []
+    for quote in quotes:
+        side = quote.selection.strip().lower()
+        subject = named.get((quote.market, quote.line, quote.book))
+        if side in ("over", "under") and subject:
+            repaired.append(types.Quote(
+                **{**vars(quote), "selection": f"{subject} {side}"}))
+        else:
+            repaired.append(quote)
+    return repaired

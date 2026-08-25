@@ -27,6 +27,7 @@ from typing import Any
 import numpy as np
 
 from guards_report.insight import profile as prof
+from guards_report.insight import profile as profile_module
 from guards_report.insight import voice as voice_module
 
 
@@ -198,7 +199,30 @@ def write_profile(player: prof.PlayerProfile, *, surname: str, voice=None) -> st
         # every time is harder to scan, not easier. What it needed was to be
         # shorter -- the old form spent nine words restating what "all in"
         # already says.
-        pieces.append(f"{player.runs_per_150:+.0f} runs per 150 games, all in")
+        # The bat gets said out loud when it disagrees with the total, which is
+        # exactly when the total misleads: a plus hitter at a corner carries a
+        # positional adjustment that drags him to average, and "average" is the
+        # wrong word for the man about to take four swings.
+        if (player.kind == "batter" and player.bat_grade
+                and player.bat_per_150 is not None
+                and np.isfinite(player.bat_per_150)):
+            line = (
+                f"{player.bat_per_150:+.0f} runs per 150 with the bat alone — "
+                f"{player.bat_grade} — against {player.runs_per_150:+.0f} all in")
+            # Positions are not judged alike. A corner outfielder is there to
+            # hit and a shortstop is not, so the same two numbers make one a
+            # regular and the other a problem.
+            if player.job_grade and player.position:
+                bat_weight, _ = profile_module.position_emphasis(player.position)
+                asks = ("almost entirely for the bat" if bat_weight >= 0.85 else
+                        "mostly for the bat" if bat_weight >= 0.65 else
+                        "for the glove as much as the bat" if bat_weight >= 0.5 else
+                        "for the glove first")
+                line += (f". {player.position} is judged {asks}, and on that "
+                         f"standard he is {player.job_grade}")
+            pieces.append(line)
+        else:
+            pieces.append(f"{player.runs_per_150:+.0f} runs per 150 games, all in")
 
     return ". ".join(p[0].upper() + p[1:] for p in pieces) + "."
 

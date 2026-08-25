@@ -183,7 +183,38 @@ def _beliefs(bundle, markets, root: Path) -> dict:
                 if key[1] in {q.selection.strip().lower() for q in market.quotes}:
                     beliefs[key] = belief
 
+    # Batter props, resolved the same way: each hitter against his own posted
+    # number, never the cartesian product of every hitter and every line.
+    batters = _batter_props(projection)
+    batter_ambiguous = _shared_surnames(batters)
+    for market in markets:
+        if market.name not in (types.HITS, types.HOME_RUNS) or market.line is None:
+            continue
+        posted = {q.selection.strip().lower() for q in market.quotes}
+        for prop in batters:
+            if not _names_this_market(prop, market, batter_ambiguous):
+                continue
+            for key, belief in sources.batter_prop(
+                    prop, market.name, market.line).items():
+                if any(key[1].startswith(f"{s} ") for s in batter_ambiguous):
+                    continue
+                if key[1] in posted:
+                    beliefs[key] = belief
+
     return beliefs
+
+
+def _batter_props(projection) -> list:
+    """Every hitter projected tonight, both lineups."""
+    block = getattr(projection, "player_props", None)
+    if not isinstance(block, dict):
+        return []
+    found = []
+    for value in block.values():
+        if value is None:
+            continue
+        found.extend(value if isinstance(value, (list, tuple)) else [value])
+    return found
 
 
 def _names_this_market(prop, market, ambiguous: set[str]) -> bool:

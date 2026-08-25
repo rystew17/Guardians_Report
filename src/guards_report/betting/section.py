@@ -28,6 +28,9 @@ MARKET_LABELS = {
     types.F5_MONEYLINE: "First five",
     types.F5_TOTAL: "First five total",
     types.STRIKEOUTS: "Strikeouts",
+    types.HITS: "Hits",
+    types.HOME_RUNS: "Home runs",
+    types.TOTAL_BASES: "Total bases",
 }
 
 
@@ -86,6 +89,94 @@ class Section:
     def has_prices(self) -> bool:
         return bool(self.rows)
 
+    @property
+    def featured(self) -> Row | None:
+        """The row worth reading in full -- only ever an actual bet.
+
+        A near miss used to be promoted here when nothing cleared, and it read
+        as a recommendation. On a night when we made Cleveland 58.1% at a price
+        needing 61.7%, the only positive-value side was the Angels at +150 --
+        so the page led with the team we expect to lose, under a heading that
+        looked like a pick. The arithmetic was right and the presentation was
+        indefensible.
+
+        Nothing is promoted unless it is a bet. A quiet night says so at the
+        top and leaves the rest in its group.
+        """
+        found = [r for r in self.rows if r.verdict.action == verdict_module.BET]
+        return found[0] if found else None
+
+    # Markets a reader thinks about together. A game bet and a hitter prop are
+    # different questions and belong in different tables; the first version put
+    # forty of them in one list sorted by edge, which is a dump, not a page.
+    FAMILIES = (
+        ("The game", (types.MONEYLINE, types.RUNLINE, types.TOTAL,
+                      types.F5_MONEYLINE, types.F5_TOTAL)),
+        ("Starting pitchers", (types.STRIKEOUTS,)),
+        ("Hitters", (types.HITS, types.HOME_RUNS, types.TOTAL_BASES)),
+    )
+
+    @property
+    def families(self) -> list[dict]:
+        """Rows split by what a reader is actually deciding between.
+
+        Within a family the verdict still leads, because "can I bet this" is the
+        question and the answer sorts the rows. Across families nothing is
+        compared, because a moneyline and a hitter's total bases are not
+        alternatives to each other.
+        """
+        order = {verdict_module.BET: 0, verdict_module.PASS_INSIDE_ERROR: 1,
+                 verdict_module.PASS_UNMEASURED: 2,
+                 verdict_module.PASS_PRICED_IN: 3}
+        out = []
+        for heading, markets in self.FAMILIES:
+            members = [r for r in self.rows if r.market in markets]
+            if not members:
+                continue
+            members.sort(key=lambda r: (order.get(r.verdict.action, 9), -r.edge))
+            reasons: list[str] = []
+            for row in members:
+                if row.verdict.reason not in reasons:
+                    reasons.append(row.verdict.reason)
+            out.append({
+                "heading": heading,
+                "rows": members,
+                "playable": [r for r in members if r.is_bet],
+                "reasons": reasons,
+            })
+        return out
+
+    @property
+    def groups(self) -> list[dict]:
+        """The remaining rows, gathered under one shared explanation each.
+
+        The reason text depends only on the verdict, so it belongs to the group
+        rather than to every row inside it. The numbers that do vary are already
+        in the columns.
+        """
+        featured = self.featured
+        order = [
+            (verdict_module.BET, "Worth a bet"),
+            (verdict_module.PASS_INSIDE_ERROR, "Close, but inside our own error"),
+            (verdict_module.PASS_UNMEASURED, "No record yet"),
+            (verdict_module.PASS_PRICED_IN, "Already priced in"),
+        ]
+        out = []
+        for action, heading in order:
+            members = [
+                r for r in self.rows
+                if r.verdict.action == action and r is not featured
+            ]
+            if not members:
+                continue
+            out.append({
+                "action": action,
+                "heading": heading,
+                "reason": members[0].verdict.reason,
+                "rows": members,
+            })
+        return out
+
 
 # Why sigma is what it is. Worth stating on the page rather than burying,
 # because it is a limit of the evidence rather than of the model: with 11,668
@@ -116,7 +207,7 @@ def build(
     rows: list[Row] = []
 
     for play in night.considered:
-        key = (play.market, play.selection.lower())
+        key = (play.market, play.selection.lower(), play.line)
         belief = beliefs.get(key)
         measured = bool(belief and belief.measured)
         basis = belief.basis if belief else ""

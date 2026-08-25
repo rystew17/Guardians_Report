@@ -104,7 +104,14 @@ def latest_markets(root: Path, game_date: date) -> list[types.Market]:
     newest: dict[tuple, types.Quote] = {}
     for quote in quotes:                    # already oldest first
         newest[(quote.market, quote.selection, quote.book)] = quote
-    return types.group(list(newest.values()))
+
+    # The record keeps every book, which is what makes a price history. Pricing
+    # wants one of them per market -- otherwise the page shows the same bet once
+    # per book, which is what it did.
+    from guards_report.odds import client
+
+    return client._one_book(
+        [m for m in types.group(list(newest.values())) if m.complete])
 
 
 def _as_quote(row) -> types.Quote:

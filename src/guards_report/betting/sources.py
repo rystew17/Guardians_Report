@@ -1,5 +1,12 @@
 """Where each market's probability comes from, and how sure we may be about it.
 
+Beliefs are keyed by market, selection *and* line. The line is not decoration:
+books post alternate numbers on the same bet, and Mike Trout's hits were quoted
+at both 0.5 and 1.5 on the same night. Keyed without it, the second wrote over
+the first and his chance of clearing 0.5 hits was reported as his chance of
+clearing 1.5 -- 79% where the truth was 37%, displayed against the 0.5 line.
+
+
 One market at a time, because they do not share a model and they do not share
 an evidence base:
 
@@ -35,6 +42,9 @@ BASIS = {
     types.F5_MONEYLINE: "first-five model",
     types.F5_TOTAL: "first-five model",
     types.STRIKEOUTS: "starter strikeout distribution",
+    types.HITS: "batter hit distribution",
+    types.HOME_RUNS: "batter home run distribution",
+    types.TOTAL_BASES: "batter total base distribution",
 }
 
 
@@ -68,7 +78,7 @@ def moneyline(
         for name in names:
             if not name:
                 continue
-            out[(market, name.strip().lower())] = Belief(
+            out[(market, name.strip().lower(), None)] = Belief(
                 probability=probability, sigma=sigma.value,
                 measured=sigma.measured, basis=BASIS.get(market, ""))
     return out
@@ -102,10 +112,10 @@ def total(simulation: dict[str, Any], line: float) -> dict[tuple[str, str], Beli
     p_over = over / live
 
     return {
-        (types.TOTAL, "over"): Belief(
+        (types.TOTAL, "over", line): Belief(
             probability=p_over, sigma=uncertainty.MINIMUM_SIGMA,
             measured=False, basis=BASIS[types.TOTAL]),
-        (types.TOTAL, "under"): Belief(
+        (types.TOTAL, "under", line): Belief(
             probability=1.0 - p_over, sigma=uncertainty.MINIMUM_SIGMA,
             measured=False, basis=BASIS[types.TOTAL]),
     }
@@ -165,7 +175,7 @@ def first_five(
         for name in names:
             if not name:
                 continue
-            out[(types.F5_MONEYLINE, name.strip().lower())] = Belief(
+            out[(types.F5_MONEYLINE, name.strip().lower(), None)] = Belief(
                 probability=probability, sigma=uncertainty.MINIMUM_SIGMA,
                 measured=False, basis=BASIS[types.F5_MONEYLINE])
     return out
@@ -191,10 +201,10 @@ def strikeouts(prop, line: float) -> dict[tuple[str, str], Belief]:
 
     out: dict[tuple[str, str], Belief] = {}
     for alias in name_aliases(name):
-        out[(types.STRIKEOUTS, f"{alias} over")] = Belief(
+        out[(types.STRIKEOUTS, f"{alias} over", line)] = Belief(
             probability=p_over, sigma=uncertainty.MINIMUM_SIGMA,
             measured=False, basis=BASIS[types.STRIKEOUTS])
-        out[(types.STRIKEOUTS, f"{alias} under")] = Belief(
+        out[(types.STRIKEOUTS, f"{alias} under", line)] = Belief(
             probability=1.0 - p_over, sigma=uncertainty.MINIMUM_SIGMA,
             measured=False, basis=BASIS[types.STRIKEOUTS])
     return out
@@ -220,3 +230,44 @@ def name_aliases(name: str) -> list[str]:
     if len(parts) > 1 and parts[-1] not in aliases:
         aliases.append(parts[-1])
     return aliases
+
+
+def batter_prop(prop, market: str, line: float) -> dict[tuple[str, str], Belief]:
+    """P(a batter clears his posted number) for hits or home runs.
+
+    The distribution is over a whole game rather than a fixed number of plate
+    appearances -- how many turns a hitter gets is itself uncertain and already
+    folded in -- so this only has to read the tail.
+
+    Clearing 0.5 means at least one, clearing 1.5 means at least two: the
+    ceiling of the line, not the line rounded. Every book posts hits and home
+    runs at half-integers, so there is never a push to remove.
+    """
+    if prop is None:
+        return {}
+    import math
+
+    field = {types.HITS: "hits", types.HOME_RUNS: "home_runs"}.get(market)
+    if field is None:
+        return {}
+    block = getattr(prop, field, None) or {}
+    distribution = block.get("distribution") or {}
+    if not distribution:
+        return {}
+
+    needed = math.floor(line) + 1
+    p_over = float(sum(
+        weight for count, weight in distribution.items() if int(count) >= needed))
+    name = (getattr(prop, "name", "") or "").strip().lower()
+    if not name:
+        return {}
+
+    out: dict[tuple[str, str], Belief] = {}
+    for alias in name_aliases(name):
+        out[(market, f"{alias} over", line)] = Belief(
+            probability=p_over, sigma=uncertainty.MINIMUM_SIGMA,
+            measured=False, basis=BASIS[market])
+        out[(market, f"{alias} under", line)] = Belief(
+            probability=1.0 - p_over, sigma=uncertainty.MINIMUM_SIGMA,
+            measured=False, basis=BASIS[market])
+    return out

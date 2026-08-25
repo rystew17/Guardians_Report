@@ -37,8 +37,23 @@ def test_a_players_worth_decides_the_band_not_the_wording():
     """Two runs values in one band may read differently; across bands they must not."""
     good = {voice.value_phrase(15.0, i)[1] for i in range(50)}
     poor = {voice.value_phrase(-15.0, i)[1] for i in range(50)}
-    assert good == {"good"} and poor == {"poor"}
+    assert len(good) == 1 and len(poor) == 1
+    assert good != poor
     assert not (set(voice.VALUE_BANDS[2][2]) & set(voice.VALUE_BANDS[6][2]))
+
+
+def test_there_are_enough_tiers_to_separate_real_players():
+    """Three grades put a plus bat, a glove-first shortstop and a genuine
+    average regular in one bucket. Ten is enough to tell them apart."""
+    assert len(voice.VALUE_BANDS) >= 10
+    from guards_report.insight import profile
+    assert len(profile.TIERS) + 1 == len(voice.VALUE_BANDS)
+
+
+def test_every_tier_is_reachable_and_distinct():
+    seen = {voice.value_phrase(v, "k", 1)[1]
+            for v in (60, 40, 28, 20, 14, 8, 2, -5, -12, -25)}
+    assert len(seen) == len(voice.VALUE_BANDS)
 
 
 def test_the_bands_are_ordered_and_do_not_overlap():

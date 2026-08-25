@@ -41,47 +41,60 @@ from typing import Any, Sequence
 # never has to know which article a phrase wants.
 
 VALUE_BANDS: tuple[tuple[float, str, tuple[str, ...]], ...] = (
-    (38.0, "superstar", (
-        "an MVP-caliber player", "one of the best players in the league",
+    (45.0, "mvp", (
+        "an MVP-caliber player", "one of the two or three best in the league",
+        "as good as this gets", "the best player on most fields he walks onto",
+        "a season people will remember", "carrying a franchise",
+    )),
+    (33.0, "superstar", (
         "a genuine superstar", "the kind of player a team is built around",
-        "a perennial All-Star", "as good as this gets",
+        "a perennial All-Star", "a star by any measure",
+        "one of the best players in the league", "a headliner",
     )),
-    (25.0, "excellent", (
-        "an excellent player", "a star", "one of the better players in the game",
-        "an All-Star-caliber player", "a difference-maker",
-        "a player who decides games",
+    (24.0, "allstar", (
+        "an All-Star", "a difference-maker", "a player who decides games",
+        "one of the better players in the game", "a legitimate star",
+        "the best player in most lineups",
     )),
-    (12.0, "good", (
-        "a good player", "a solid regular", "a quality everyday player",
-        "an above-average regular", "a player who helps a team win",
-        "comfortably above average",
+    (17.0, "verygood", (
+        "a very good player", "well above an everyday standard",
+        "a clear plus regular", "the sort of player contenders want",
+        "good enough to build around", "a genuine asset",
     )),
-    (2.0, "useful", (
-        "a useful regular", "a serviceable everyday player",
-        "a little better than average", "a player who holds his own",
-        "an honest regular", "average with a bit left over",
+    (11.0, "solid", (
+        "a solid regular", "a quality everyday player",
+        "comfortably above average", "a player who helps a team win",
+        "a dependable starter", "better than most who play his position",
+    )),
+    (5.0, "aboveaverage", (
+        "an above-average regular", "a little better than average",
+        "an honest regular with something extra", "a useful everyday player",
+        "a shade above the everyday line", "worth a lineup spot on merit",
     )),
     (-2.0, "average", (
-        "a roughly average player", "an average big-leaguer",
-        "the definition of a league-average player", "squarely average",
-        "the middle of the league", "neither an asset nor a problem",
+        "an average regular", "about what an everyday player should be",
+        "right at the everyday standard", "a league-average bat and body",
+        "neither a strength nor a hole", "the middle of the distribution",
     )),
-    (-10.0, "limited", (
-        "a limited player", "a flawed player", "a second-division regular",
-        "a player with real holes", "below average and playing anyway",
-        "a stopgap",
+    (-8.0, "fringe", (
+        "a fringe regular", "playable but stretched as an everyday piece",
+        "a second-division starter", "better suited to a smaller role",
+        "hanging on to a lineup spot", "more of a platoon piece",
     )),
-    (-20.0, "poor", (
-        "a poor player", "a bad big-leaguer", "a liability most nights",
-        "someone a contender would not start", "well below average",
-        "a weak link",
+    (-16.0, "bench", (
+        "a bench player", "a reserve rather than a regular",
+        "someone a good team carries rather than starts",
+        "a depth piece", "playing above his level as a starter",
+        "a bench bat pressed into service",
     )),
-    (float("-inf"), "replacement", (
-        "a replacement-level player", "the roster's last man",
-        "freely available talent", "a player on borrowed time",
-        "replacement level in every sense", "the bottom of a major-league roster",
+    (-9e9, "replacement", (
+        "a replacement-level player", "the sort of player freely available",
+        "costing his team runs every time he plays",
+        "below what a call-up would give", "a genuine hole",
+        "not an everyday player at this level",
     )),
 )
+
 
 
 # Tool grades, by percentile.

@@ -131,7 +131,7 @@ COMPLEMENT = Belief(probability=0.383, sigma=0.0142, measured=True, basis="test"
 def test_a_market_is_actually_priced():
     night = guide.build(
         _markets("ml CLE -135 DET +115"),
-        {(types.MONEYLINE, "cle"): MEASURED, (types.MONEYLINE, "det"): COMPLEMENT},
+        {(types.MONEYLINE, "cle", None): MEASURED, (types.MONEYLINE, "det", None): COMPLEMENT},
         tau=0.03, z_threshold=2.5)
     assert len(night.considered) == 2
     assert not night.warnings, night.warnings
@@ -141,7 +141,7 @@ def test_a_selection_we_cannot_match_is_reported_rather_than_dropped():
     """A mistyped team code and a night with no edge must not look the same."""
     night = guide.build(
         _markets("ml CLW -135 DET +115"),
-        {(types.MONEYLINE, "cle"): MEASURED, (types.MONEYLINE, "det"): COMPLEMENT},
+        {(types.MONEYLINE, "cle", None): MEASURED, (types.MONEYLINE, "det", None): COMPLEMENT},
         tau=0.03, z_threshold=2.5)
     assert night.unmatched == ["moneyline: CLW"]
 
@@ -157,7 +157,7 @@ def test_an_unmeasured_standard_error_is_priced_but_never_staked():
     other = Belief(probability=0.35, sigma=0.005, measured=False, basis="test")
     night = guide.build(
         _markets("total o8.5 -105 u8.5 -115"),
-        {(types.TOTAL, "over"): guess, (types.TOTAL, "under"): other},
+        {(types.TOTAL, "over", 8.5): guess, (types.TOTAL, "under", 8.5): other},
         tau=0.03, z_threshold=2.5)
 
     assert night.considered, "it must still be priced and shown"
@@ -170,7 +170,7 @@ def test_a_night_that_recommends_nothing_says_so_deliberately():
     not as a page that failed to load."""
     night = guide.build(
         _markets("ml CLE -135 DET +115"),
-        {(types.MONEYLINE, "cle"): MEASURED, (types.MONEYLINE, "det"): COMPLEMENT},
+        {(types.MONEYLINE, "cle", None): MEASURED, (types.MONEYLINE, "det", None): COMPLEMENT},
         tau=0.03, z_threshold=2.5)
     assert night.quiet
     assert night.plays == []
@@ -182,7 +182,7 @@ def test_a_big_enough_disagreement_does_produce_a_play():
     weak = Belief(probability=0.28, sigma=0.0142, measured=True, basis="test")
     night = guide.build(
         _markets("ml CLE -135 DET +115"),
-        {(types.MONEYLINE, "cle"): strong, (types.MONEYLINE, "det"): weak},
+        {(types.MONEYLINE, "cle", None): strong, (types.MONEYLINE, "det", None): weak},
         tau=0.03, z_threshold=2.5)
     assert len(night.plays) == 1
     assert night.plays[0].selection == "CLE"
@@ -195,8 +195,8 @@ def test_plays_are_ranked_by_confidence_not_by_the_size_of_the_gap():
     to avoid that."""
     night = guide.build(
         _markets("ml CLE -200 DET +170"),
-        {(types.MONEYLINE, "cle"): Belief(0.80, 0.0142, True),
-         (types.MONEYLINE, "det"): Belief(0.20, 0.0142, True)},
+        {(types.MONEYLINE, "cle", None): Belief(0.80, 0.0142, True),
+         (types.MONEYLINE, "det", None): Belief(0.20, 0.0142, True)},
         tau=0.03, z_threshold=1.0)
     zs = [p.z for p in night.considered]
     assert zs == sorted(zs, reverse=True)
@@ -206,7 +206,7 @@ def test_a_market_with_no_margin_is_flagged_loudly():
     """A feed that arrives already de-vigged makes every play look profitable."""
     night = guide.build(
         _markets("ml CLE +100 DET +100"),
-        {(types.MONEYLINE, "cle"): MEASURED, (types.MONEYLINE, "det"): COMPLEMENT},
+        {(types.MONEYLINE, "cle", None): MEASURED, (types.MONEYLINE, "det", None): COMPLEMENT},
         tau=0.03, z_threshold=2.5)
     assert any("no margin" in w for w in night.warnings)
 
@@ -225,9 +225,9 @@ def test_the_two_sides_of_a_moneyline_are_one_number_and_its_complement():
         def win_probability_folds(self, f): return []
 
     beliefs = sources.moneyline(_Model(), {}, home="CLE", away="DET")
-    assert beliefs[(types.MONEYLINE, "cle")].probability == pytest.approx(0.62)
-    assert beliefs[(types.MONEYLINE, "det")].probability == pytest.approx(0.38)
-    assert not beliefs[(types.MONEYLINE, "cle")].measured, (
+    assert beliefs[(types.MONEYLINE, "cle", None)].probability == pytest.approx(0.62)
+    assert beliefs[(types.MONEYLINE, "det", None)].probability == pytest.approx(0.38)
+    assert not beliefs[(types.MONEYLINE, "cle", None)].measured, (
         "a model with no calibration must not claim a measured sigma")
 
 
@@ -244,13 +244,13 @@ def test_a_total_landing_on_the_number_is_a_push_not_a_loss(distribution):
     side. Counting it as a loss understates the over by all of it."""
     beliefs = sources.total({"total_distribution": distribution}, 9.0)
     # 0.3 over, 0.3 under, 0.4 pushed and removed from the denominator.
-    assert beliefs[(types.TOTAL, "over")].probability == pytest.approx(0.5)
+    assert beliefs[(types.TOTAL, "over", 9.0)].probability == pytest.approx(0.5)
 
 
 @pytest.mark.parametrize("distribution", [ROWS, MAPPING])
 def test_a_half_point_total_has_nothing_to_push_on(distribution):
     beliefs = sources.total({"total_distribution": distribution}, 8.5)
-    assert beliefs[(types.TOTAL, "over")].probability == pytest.approx(0.7)
+    assert beliefs[(types.TOTAL, "over", 8.5)].probability == pytest.approx(0.7)
 
 
 def test_clearing_a_strikeout_line_means_the_next_whole_number():
@@ -263,7 +263,7 @@ def test_clearing_a_strikeout_line_means_the_next_whole_number():
             return sum(p for n, p in self.distribution.items() if n >= k)
 
     beliefs = sources.strikeouts(_Prop(), 5.5)
-    assert beliefs[(types.STRIKEOUTS, "bibee over")].probability == pytest.approx(0.5)
+    assert beliefs[(types.STRIKEOUTS, "bibee over", 5.5)].probability == pytest.approx(0.5)
 
 
 def test_a_first_five_tie_leaves_the_denominator():
@@ -271,7 +271,7 @@ def test_a_first_five_tie_leaves_the_denominator():
         home_leads, tied, away_leads = 0.45, 0.20, 0.35
 
     beliefs = sources.first_five(_F5(), home="CLE", away="DET")
-    assert beliefs[(types.F5_MONEYLINE, "cle")].probability == pytest.approx(
+    assert beliefs[(types.F5_MONEYLINE, "cle", None)].probability == pytest.approx(
         0.45 / 0.80)
 
 
@@ -279,3 +279,122 @@ def test_a_source_with_nothing_behind_it_returns_nothing():
     assert sources.total({}, 8.5) == {}
     assert sources.strikeouts(None, 5.5) == {}
     assert sources.first_five(None, home="CLE", away="DET") == {}
+
+
+# ---------------------------------------------------------------------------
+# Prices that are wrong rather than generous
+# ---------------------------------------------------------------------------
+
+def test_a_wildly_different_price_is_flagged_not_staked():
+    """The failure this exists for.
+
+    A game already underway drifted the trailing side to +1600 while our
+    pregame projection sat unchanged at 41.9%. The gap cleared every threshold
+    and the page recommended staking almost eight percent of bankroll on a
+    price that had moved because the game was being lost.
+
+    Past thirty points the explanation is a bad price -- in-play odds, a
+    mis-mapped market, a stale line -- and every one of them looks like free
+    money.
+    """
+    confident = Belief(probability=0.42, sigma=0.0142, measured=True, basis="t")
+    other = Belief(probability=0.58, sigma=0.0142, measured=True, basis="t")
+    night = guide.build(
+        _markets("ml LAA +1600 CLE -2000"),
+        {(types.MONEYLINE, "laa", None): confident, (types.MONEYLINE, "cle", None): other},
+        tau=0.03, z_threshold=2.5)
+
+    assert night.plays == [], "a 30-point gap must never be staked"
+    assert any("bad price" in w for w in night.warnings), night.warnings
+    assert night.considered, "it is still shown, so the reader can see why"
+
+
+def test_an_ordinary_disagreement_is_untouched():
+    """The guard must not swallow the edges the feature exists to find."""
+    strong = Belief(probability=0.72, sigma=0.0142, measured=True, basis="t")
+    weak = Belief(probability=0.28, sigma=0.0142, measured=True, basis="t")
+    night = guide.build(
+        _markets("ml CLE -135 DET +115"),
+        {(types.MONEYLINE, "cle", None): strong, (types.MONEYLINE, "det", None): weak},
+        tau=0.03, z_threshold=2.5)
+    assert len(night.plays) == 1
+    assert not night.warnings
+
+
+def test_the_threshold_sits_above_any_real_edge():
+    """Wide enough that nothing genuine trips it, narrow enough to catch a
+    price that has come from a different game state."""
+    assert 0.20 <= guide.IMPLAUSIBLE_DISAGREEMENT <= 0.40
+
+
+def test_two_lines_on_the_same_bet_do_not_answer_for_each_other():
+    """Books post alternate numbers on the same market.
+
+    Mike Trout's hits were quoted at both 0.5 and 1.5 on one night. Keyed
+    without the line the second wrote over the first, and his chance of
+    clearing 0.5 hits was reported as his chance of clearing 1.5 -- 79% against
+    a truth of 37%, printed beside the 0.5 line.
+    """
+    class _Prop:
+        name = "Mike Trout"
+        hits = {"distribution": {0: 0.38, 1: 0.41, 2: 0.17, 3: 0.04}}
+
+    low = sources.batter_prop(_Prop(), types.HITS, 0.5)
+    high = sources.batter_prop(_Prop(), types.HITS, 1.5)
+
+    assert (types.HITS, "mike trout over", 0.5) in low
+    assert (types.HITS, "mike trout over", 1.5) in high
+    assert not set(low) & set(high), "the two lines must not share a key"
+
+    # over 0.5 is at least one hit; over 1.5 is at least two.
+    assert low[(types.HITS, "mike trout over", 0.5)].probability == pytest.approx(0.62)
+    assert high[(types.HITS, "mike trout over", 1.5)].probability == pytest.approx(0.21)
+
+
+# ---------------------------------------------------------------------------
+# Choosing which book to price against
+# ---------------------------------------------------------------------------
+
+def _book(book: str, over: float, under: float, *, line: float = 0.5):
+    return types.Market(name=types.HITS, quotes=[
+        types.Quote(TODAY, types.HITS, "vaughn grissom over", over,
+                    book=book, line=line),
+        types.Quote(TODAY, types.HITS, "vaughn grissom under", under,
+                    book=book, line=line),
+    ])
+
+
+def test_a_book_disagreeing_with_every_other_one_is_dropped():
+    """Two books priced the same hitter to record a hit at -189 and +340 --
+    65% against 23%, so one of them is not the bet it claims to be. Both had a
+    margin near six percent, so choosing on tightness could not tell them
+    apart and the odd one won."""
+    from guards_report.odds import client
+
+    kept = client._one_book([
+        _book("BetOnline.ag", -189, 143),
+        _book("BetMGM", -175, 140),
+        _book("DraftKings", 340, -500),
+    ])
+    assert len(kept) == 1
+    assert kept[0].book != "DraftKings"
+
+
+def test_a_single_book_is_kept_rather_than_discarded():
+    """One book is not a consensus, but it is the only price there is."""
+    from guards_report.odds import client
+
+    kept = client._one_book([_book("BetOnline.ag", -189, 143)])
+    assert len(kept) == 1
+
+
+def test_different_lines_are_never_collapsed_into_one_choice():
+    """0.5 and 1.5 on the same hitter are different bets, and each needs its
+    own book."""
+    from guards_report.odds import client
+
+    kept = client._one_book([
+        _book("BetOnline.ag", -189, 143, line=0.5),
+        _book("DraftKings", 380, -550, line=1.5),
+    ])
+    assert {m.line for m in kept} == {0.5, 1.5}

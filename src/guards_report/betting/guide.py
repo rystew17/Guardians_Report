@@ -29,6 +29,11 @@ from dataclasses import dataclass, field
 from guards_report.betting import edge as edge_module, prices
 from guards_report.betting.edge import Play
 
+# Beyond this gap between our number and the market's, the price is more likely
+# wrong than we are. Nothing legitimate on a major market disagrees by thirty
+# points with a book that has taken money on it.
+IMPLAUSIBLE_DISAGREEMENT = 0.30
+
 
 @dataclass(frozen=True)
 class Belief:
@@ -98,7 +103,9 @@ def build(
                 f"-- they may already have been de-vigged")
 
         for quote, p_market in zip(market.quotes, fair):
-            key = (market.name, quote.selection.lower())
+            # The line is part of the key. Books post alternate numbers on the
+            # same bet, and without it the second silently answers for the first.
+            key = (market.name, quote.selection.lower(), quote.line)
             belief = beliefs.get(key)
             if belief is None:
                 night.unmatched.append(f"{market.name}: {quote.selection}")
@@ -118,6 +125,20 @@ def build(
             if play is None:
                 night.warnings.append(
                     f"{market.name}: {quote.selection} could not be priced")
+                continue
+
+            if abs(play.disagreement) > IMPLAUSIBLE_DISAGREEMENT:
+                # Past this the likely explanation is a bad price, not an edge.
+                # In-play odds reaching a pregame projection is the case that
+                # produced it, but a mis-mapped market or a stale line does the
+                # same thing, and every one of them looks like free money.
+                night.warnings.append(
+                    f"{market.name}: {quote.selection} at {quote.american:+.0f} "
+                    f"differs from our number by "
+                    f"{abs(play.disagreement) * 100:.0f} points, which is far "
+                    f"more likely a bad price than an edge -- not staked")
+                night.considered.append(play)
+                night.unstakeable.append(f"{market.name}: {quote.selection}")
                 continue
 
             night.considered.append(play)

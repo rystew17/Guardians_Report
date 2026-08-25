@@ -24,8 +24,12 @@ RUNLINE = "runline"
 F5_MONEYLINE = "f5_moneyline"
 F5_TOTAL = "f5_total"
 STRIKEOUTS = "strikeouts"
+HITS = "hits"
+HOME_RUNS = "home_runs"
+TOTAL_BASES = "total_bases"
 
-TWO_WAY = frozenset({MONEYLINE, TOTAL, RUNLINE, F5_MONEYLINE, F5_TOTAL, STRIKEOUTS})
+TWO_WAY = frozenset({MONEYLINE, TOTAL, RUNLINE, F5_MONEYLINE, F5_TOTAL,
+                     STRIKEOUTS, HITS, HOME_RUNS, TOTAL_BASES})
 
 
 @dataclass(frozen=True)
@@ -40,6 +44,24 @@ class Quote:
     captured_at: datetime | None = None
     game_pk: int | None = None
     line: float | None = None     # the number for totals, run lines and props
+
+    @property
+    def subject(self) -> str:
+        """Whose bet this is, for markets quoted per player.
+
+        A market is the complete set of outcomes that partition one bet, and on
+        a player prop that means one player -- "Mike Trout over 0.5 hits" and
+        "Mike Trout under 0.5" are a market; Trout's over and Jose Ramirez's
+        under are two halves of two different ones.
+
+        Without this every hitter on the card collapsed into a single market of
+        thirty-four quotes, which is never complete, so the entire hits board
+        was dropped as "quoted one way only".
+        """
+        parts = self.selection.strip().lower().rsplit(" ", 1)
+        if len(parts) == 2 and parts[1] in ("over", "under"):
+            return parts[0]
+        return ""
 
     def as_row(self) -> dict:
         return {
@@ -75,6 +97,12 @@ class Market:
     def book(self) -> str:
         books = {q.book for q in self.quotes}
         return books.pop() if len(books) == 1 else "mixed"
+
+    @property
+    def subject(self) -> str:
+        """The player this market is about, empty for team and game markets."""
+        found = {q.subject for q in self.quotes if q.subject}
+        return found.pop() if len(found) == 1 else ""
 
     @property
     def line(self) -> float | None:
@@ -118,6 +146,7 @@ def group(quotes: list[Quote]) -> list[Market]:
     """
     buckets: dict[tuple, list[Quote]] = {}
     for quote in quotes:
-        key = (quote.market, quote.line, quote.book, quote.game_date)
+        key = (quote.market, quote.line, quote.book, quote.game_date,
+               quote.subject)
         buckets.setdefault(key, []).append(quote)
     return [Market(name=key[0], quotes=found) for key, found in buckets.items()]

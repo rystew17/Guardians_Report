@@ -254,14 +254,58 @@ def test_a_missing_value_yields_no_tier_rather_than_replacement_level():
     assert prof.tier_for(float("nan")) == ""
 
 
-def test_value_is_the_three_terms_added():
-    pop = _population()
+def test_value_weights_each_term_by_how_well_it_is_measured():
+    """Not a preference for hitting -- a correction for measurement error.
+
+    xwOBA settles inside a season; fielding run values predict themselves at
+    roughly half that reliability, so a large defensive figure is mostly
+    sampling. Added at face value the noisiest term swung the verdict, and a
+    plus bat with an ordinary glove landed in the same bucket as a poor bat
+    with a spectacular one.
+    """
     box = _Box(batting_runs=10.0, baserunning_runs=2.0, position="LF")
     box.fielding = {"fielding_runs_prevented": 4.0}
     total, per150 = prof.value_runs(box, xwoba=0.320, plate_appearances=600)
-    expected = 10.0 + 2.0 + 4.0 + prof.POSITION_ADJUSTMENT["LF"]
+    expected = (
+        10.0 * prof.RELIABILITY["bat"]
+        + 2.0 * prof.RELIABILITY["legs"]
+        + 4.0 * prof.RELIABILITY["glove"]
+        + prof.POSITION_ADJUSTMENT["LF"]
+    )
     assert total == pytest.approx(expected)
     assert per150 == pytest.approx(expected)   # 150 games
+
+
+def test_the_positional_adjustment_is_not_shrunk():
+    """Where a man stands is a fact, not an estimate. Shrinking it would move a
+    shortstop quietly toward a first baseman's baseline."""
+    short = _Box(batting_runs=0.0, baserunning_runs=0.0, position="SS")
+    short.fielding = {"fielding_runs_prevented": 0.0}
+    total, _ = prof.value_runs(short, xwoba=0.320, plate_appearances=600)
+    assert total == pytest.approx(prof.POSITION_ADJUSTMENT["SS"])
+
+
+def test_a_plus_bat_is_graded_on_its_own_not_through_the_glove():
+    """The complaint this exists to answer.
+
+    A right fielder carries a -6.9 positional adjustment, so a genuinely plus
+    bat with an ordinary glove is an average *player* -- true of the player and
+    misleading about the at-bat a game preview is describing. The bat gets its
+    own tier so it can be said plainly.
+    """
+    assert prof.bat_tier(12.0) == "a plus bat"
+    assert "average" not in prof.bat_tier(12.0)
+    # and the overall figure is still honest about total value
+    bat = _Box(batting_runs=12.0, baserunning_runs=0.0, position="RF")
+    bat.fielding = {"fielding_runs_prevented": -5.0}
+    _, per150 = prof.value_runs(bat, xwoba=0.340, plate_appearances=600)
+    assert prof.tier_for(per150) == "an average regular"
+
+
+def test_the_bat_scale_has_the_same_resolution_as_the_overall_one():
+    assert len(prof.BAT_TIERS) + 1 == len(prof.TIERS) + 1 - 1
+    grades = {prof.bat_tier(v) for v in (40, 28, 20, 13, 7, 1, -5, -12, -25)}
+    assert len(grades) == len(prof.BAT_TIERS) + 1
 
 
 def test_value_is_a_rate_so_a_short_season_is_not_penalised():
@@ -482,3 +526,69 @@ def test_the_count_of_dangerous_bats_is_kept_beside_the_average():
 def test_an_empty_reference_yields_an_empty_lineup_rather_than_raising():
     assert prof.lineup_profile([_Box()], pd.DataFrame(), {}).hitters == 0
     assert prof.lineup_profile([], None, {}).tools == {}
+
+
+# ---------------------------------------------------------------------------
+# What the position asks for
+# ---------------------------------------------------------------------------
+# POSITION_ADJUSTMENT already says what a position is *worth*, and it is in the
+# run total. This is the other half: what the job is *for*. A first baseman
+# hitting at the league average is a problem and a shortstop hitting at the
+# league average is fine, and no single run figure carries that.
+
+def test_the_same_player_fills_some_jobs_and_not_others():
+    """A plus bat with a poor glove: ideal at designated hitter, a problem
+    behind the plate."""
+    designated, _ = prof.fills_the_job(15.0, -8.0, "DH")
+    catcher, _ = prof.fills_the_job(15.0, -8.0, "C")
+    assert designated > catcher
+    assert designated == pytest.approx(15.0)
+
+
+def test_a_glove_first_player_reads_better_up_the_middle():
+    weak_bat_elite_glove = (-10.0, 15.0)
+    short, _ = prof.fills_the_job(*weak_bat_elite_glove, "SS")
+    first, _ = prof.fills_the_job(*weak_bat_elite_glove, "1B")
+    assert short > first
+    assert "bench" in prof.fills_the_job(*weak_bat_elite_glove, "DH")[1]
+
+
+def test_a_designated_hitter_is_graded_on_the_bat_alone():
+    """Nobody watches a designated hitter's glove."""
+    bat_weight, glove_weight = prof.position_emphasis("DH")
+    assert glove_weight == 0.0
+    with_glove, _ = prof.fills_the_job(12.0, 20.0, "DH")
+    without, _ = prof.fills_the_job(12.0, -20.0, "DH")
+    assert with_glove == pytest.approx(without)
+
+
+def test_every_emphasis_is_a_split_of_one():
+    """Weights that did not sum to one would move a position's whole
+    population up or down the tier scale for no reason."""
+    for position, (bat, glove) in prof.POSITION_EMPHASIS.items():
+        assert bat + glove == pytest.approx(1.0), position
+        assert 0.0 <= bat <= 1.0 and 0.0 <= glove <= 1.0
+
+
+def test_the_up_the_middle_positions_ask_more_of_the_glove():
+    """The premise: catcher, shortstop, second and centre are defensive jobs;
+    the corners and designated hitter are there to hit."""
+    for glove_first in ("C", "SS", "2B", "CF"):
+        for bat_first in ("DH", "1B", "LF", "RF"):
+            assert (prof.position_emphasis(glove_first)[1]
+                    > prof.position_emphasis(bat_first)[1]), (
+                        f"{glove_first} should ask more of the glove than {bat_first}")
+
+
+def test_the_job_grade_stays_on_the_run_scale():
+    """A weighted mean, not a sum. Scaling it up to 'look like' runs turned a
+    +15 bat at designated hitter into an All-Star."""
+    score, label = prof.fills_the_job(15.0, 15.0, "SS")
+    assert score == pytest.approx(15.0)
+    assert label == prof.tier_for(15.0)
+
+
+def test_an_unknown_position_still_grades():
+    score, label = prof.fills_the_job(10.0, 0.0, "")
+    assert label
+    assert score == pytest.approx(10.0 * prof.DEFAULT_EMPHASIS[0])
