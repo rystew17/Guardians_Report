@@ -662,24 +662,47 @@ table.odds tbody tr:last-child th,table.odds tbody tr:last-child td{border-botto
   color:var(--muted);border:1px solid var(--border)}
 .famteam{font-size:.66rem;letter-spacing:.09em;text-transform:uppercase;
   color:var(--muted);font-weight:600}
-table.lineup th.bat{font-weight:500;color:var(--ink)}
-table.lineup td.pc{text-align:right;padding:.32rem .45rem;line-height:1.35;
-  border-left:1px solid var(--border)}
-table.lineup td.pc.empty{color:var(--muted);text-align:center}
-.pprice{display:block;font-weight:600;color:var(--ink);font-size:.86rem}
-.pours{display:block;font-size:.72rem;color:var(--muted)}
-.pneed{color:var(--muted)}
-.pedge{display:inline-block;font-size:.72rem;font-weight:600}
-.pstake{display:inline-block;margin-left:.3rem;font-size:.7rem;font-weight:700;
-  color:var(--good)}
-/* Only two states earn a colour. Marking anything else would drown them. */
-table.lineup td.pc.bet{background:#e8f5ec;box-shadow:inset 3px 0 0 var(--good)}
-table.lineup td.pc.near{background:#fdf5e3;box-shadow:inset 3px 0 0 #c98a12}
+table.lineup{table-layout:fixed}
+/* The group header names the market once; the row under it names the figures,
+   so no cell has to repeat either. */
+table.lineup thead tr.grp th.mgrp{text-align:center;font-size:.66rem;
+  letter-spacing:.09em;text-transform:uppercase;color:var(--muted);
+  font-weight:700;padding-bottom:.1rem;border-bottom:0;
+  border-left:2px solid var(--border)}
+table.lineup thead tr.sub th{font-size:.6rem;letter-spacing:.04em;
+  text-transform:uppercase;color:var(--muted);font-weight:600;
+  text-align:right;padding:.1rem .4rem .3rem;white-space:nowrap}
+table.lineup thead tr.sub th.l{text-align:left}
+table.lineup thead tr.sub th.first{border-left:2px solid var(--border);
+  padding-left:.5rem}
+table.lineup td.num{color:var(--muted);font-size:.78rem}
+table.lineup th.bat{font-weight:500;color:var(--ink);text-transform:none;
+  letter-spacing:0;font-size:.86rem;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
+table.lineup td.pc{text-align:right;padding:.3rem .4rem;
+  font-size:.82rem;font-variant-numeric:tabular-nums;white-space:nowrap}
+table.lineup td.pc.first{border-left:2px solid var(--border);
+  padding-left:.5rem;font-weight:600;color:var(--ink)}
+table.lineup td.pc.empty{color:var(--border)}
+table.lineup .ours{color:var(--ink);font-weight:600}
+table.lineup .need{color:var(--muted)}
+.pstake{margin-left:.35rem;padding:.02rem .25rem;border-radius:2px;
+  background:var(--good);color:#fff;font-size:.66rem;font-weight:700}
+/* Only two states earn a colour, and the rail sits on the group edge so a
+   marked bet reads as one block rather than three tinted cells. */
+table.lineup td.pc.bet{background:#e8f5ec}
+table.lineup td.pc.near{background:#fdf5e3}
+table.lineup td.pc.bet.first{box-shadow:inset 3px 0 0 var(--good)}
+table.lineup td.pc.near.first{box-shadow:inset 3px 0 0 #c98a12}
 .legend{font-size:.78rem;color:var(--muted);margin-top:.2rem}
 .swatch{display:inline-block;width:.75rem;height:.75rem;border-radius:2px;
   vertical-align:-1px;margin:0 .15rem 0 .5rem}
 .swatch.bet{background:#e8f5ec;box-shadow:inset 3px 0 0 var(--good)}
 .swatch.near{background:#fdf5e3;box-shadow:inset 3px 0 0 #c98a12}
+@media (max-width:640px){
+  table.lineup td.pc{font-size:.75rem;padding:.28rem .3rem}
+  table.lineup th.bat{font-size:.78rem}
+}
 .settings{font-size:.76rem;color:var(--muted)}
 .fam{margin-bottom:1.5rem}
 .famhead{display:flex;align-items:center;gap:.55rem;margin:0 0 .45rem;
@@ -2074,15 +2097,17 @@ details.more>summary:hover{color:var(--ink)}
         flat list the same nine names appeared four times each in edge
         order, which is not how anyone reads a lineup.
     -#}
-    {% macro cell(row) %}
-      {%- if row is none %}<td class="pc empty">&mdash;</td>
+    {#- Three columns per market rather than three lines in one box. Stacked
+        and right-aligned, nothing lined up down the page and every figure had
+        to be decoded from its position; in columns the eye reads straight
+        down. -#}
+    {% macro cells(row) %}
+      {%- if row is none %}
+      <td class="pc empty first">&mdash;</td><td class="pc empty"></td><td class="pc empty last"></td>
       {%- else %}
-      <td class="pc {{ row.tone }}">
-        <span class="pprice">{{ row.american }}</span>
-        <span class="pours">{{ '%.0f'|format(row.p_model * 100) }}%<span class="pneed"> / {{ '%.0f'|format(row.break_even * 100) }}%</span></span>
-        <span class="pedge {{ 'pos' if row.edge > 0 else 'neg' }}">{{ '%+.1f'|format(row.edge * 100) }}</span>
-        {%- if row.stake > 0 %}<span class="pstake">{{ '%.1f'|format(row.stake * 100) }}%</span>{% endif %}
-      </td>
+      <td class="pc first {{ row.tone }}">{{ row.american }}</td>
+      <td class="pc {{ row.tone }}"><span class="ours">{{ '%.0f'|format(row.p_model * 100) }}</span><span class="need">/{{ '%.0f'|format(row.break_even * 100) }}</span></td>
+      <td class="pc last {{ row.tone }}"><span class="{{ 'pos' if row.edge > 0 else 'neg' }}">{{ '%+.1f'|format(row.edge * 100) }}</span>{% if row.stake > 0 %} <span class="pstake">{{ '%.1f'|format(row.stake * 100) }}%</span>{% endif %}</td>
       {%- endif %}
     {% endmacro %}
 
@@ -2167,27 +2192,45 @@ details.more>summary:hover{color:var(--ink)}
       </h3>
       <div class="tablewrap">
         <table class="odds lineup">
-          <colgroup><col style="width:5%"><col style="width:25%">
-            <col style="width:{{ 24 if not side.hr_under else 17 }}%">
-            <col style="width:{{ 23 if not side.hr_under else 17 }}%">
-            <col style="width:{{ 23 if not side.hr_under else 17 }}%">
-            {% if side.hr_under %}<col style="width:17%">{% endif %}</colgroup>
+          {#- Widths as percentages that sum to a hundred. Fixed layout at full
+              width distributes anything left over across every column, so
+              under-specifying them stretched each figure into a wide empty box
+              -- the problem the columns were meant to solve. -#}
+          {%- set n = 4 if side.hr_under else 3 %}
+          {%- set share = (100 - 22) / n %}
+          <colgroup>
+            <col style="width:4%"><col style="width:18%">
+            {%- for _ in range(n) %}
+            <col style="width:{{ (share * 0.30)|round(2) }}%">
+            <col style="width:{{ (share * 0.36)|round(2) }}%">
+            <col style="width:{{ (share * 0.34)|round(2) }}%">
+            {%- endfor %}
+          </colgroup>
           <thead>
-            <tr>
-              <th scope="col" class="l">#</th><th scope="col">Batter</th>
-              <th scope="col">Hits over</th><th scope="col">Hits under</th>
-              <th scope="col">HR over</th>
-              {% if side.hr_under %}<th scope="col">HR under</th>{% endif %}
+            <tr class="grp">
+              <th scope="col" colspan="2" class="l">&nbsp;</th>
+              <th scope="col" colspan="3" class="mgrp">Hits over</th>
+              <th scope="col" colspan="3" class="mgrp">Hits under</th>
+              <th scope="col" colspan="3" class="mgrp">HR over</th>
+              {% if side.hr_under %}<th scope="col" colspan="3" class="mgrp">HR under</th>{% endif %}
+            </tr>
+            <tr class="sub">
+              <th scope="col" class="l">#</th><th scope="col" class="l">Batter</th>
+              {% for _ in range(4 if side.hr_under else 3) %}
+              <th scope="col" class="first">Price</th>
+              <th scope="col">We / need</th>
+              <th scope="col" class="last">Edge</th>
+              {% endfor %}
             </tr>
           </thead>
           <tbody>
             {%- for p in side.players %}
             <tr>
-              <td class="l sub">{{ p.slot or '&ndash;'|safe }}</td>
+              <td class="l num">{{ p.slot or '&ndash;'|safe }}</td>
               <th scope="row" class="bat">{{ p.name|title }}</th>
-              {{ cell(p.hits_over) }}{{ cell(p.hits_under) }}
-              {{ cell(p.hr_over) }}
-              {% if side.hr_under %}{{ cell(p.hr_under) }}{% endif %}
+              {{ cells(p.hits_over) }}{{ cells(p.hits_under) }}
+              {{ cells(p.hr_over) }}
+              {% if side.hr_under %}{{ cells(p.hr_under) }}{% endif %}
             </tr>
             {%- endfor %}
           </tbody>
@@ -2201,8 +2244,10 @@ details.more>summary:hover{color:var(--ink)}
     {% endfor %}
 
     <p class="legend">
-      Each cell reads <b>price</b>, then <b>our chance / what the price needs</b>,
-      then the <b>edge</b> between them and the stake where there is one.
+      <b>We / need</b> is our chance against the one the price demands, and
+      <b>edge</b> is the gap between them &mdash; positive means the price is
+      worse than the outcome deserves. A stake appears beside it where there is
+      one.
       <span class="swatch bet"></span> clears the price and our own error.
       <span class="swatch near"></span> clears the price but not our error.
     </p>
