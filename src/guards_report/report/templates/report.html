@@ -660,6 +660,26 @@ table.odds tbody tr:last-child th,table.odds tbody tr:last-child td{border-botto
 .verdict.duplicate{background:#eef3fa;color:#33507a;border:1px solid #cfdcee}
 .verdict.unmeasured,.verdict.priced-in{background:var(--panel);
   color:var(--muted);border:1px solid var(--border)}
+.famteam{font-size:.66rem;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--muted);font-weight:600}
+table.lineup th.bat{font-weight:500;color:var(--ink)}
+table.lineup td.pc{text-align:right;padding:.32rem .45rem;line-height:1.35;
+  border-left:1px solid var(--border)}
+table.lineup td.pc.empty{color:var(--muted);text-align:center}
+.pprice{display:block;font-weight:600;color:var(--ink);font-size:.86rem}
+.pours{display:block;font-size:.72rem;color:var(--muted)}
+.pneed{color:var(--muted)}
+.pedge{display:inline-block;font-size:.72rem;font-weight:600}
+.pstake{display:inline-block;margin-left:.3rem;font-size:.7rem;font-weight:700;
+  color:var(--good)}
+/* Only two states earn a colour. Marking anything else would drown them. */
+table.lineup td.pc.bet{background:#e8f5ec;box-shadow:inset 3px 0 0 var(--good)}
+table.lineup td.pc.near{background:#fdf5e3;box-shadow:inset 3px 0 0 #c98a12}
+.legend{font-size:.78rem;color:var(--muted);margin-top:.2rem}
+.swatch{display:inline-block;width:.75rem;height:.75rem;border-radius:2px;
+  vertical-align:-1px;margin:0 .15rem 0 .5rem}
+.swatch.bet{background:#e8f5ec;box-shadow:inset 3px 0 0 var(--good)}
+.swatch.near{background:#fdf5e3;box-shadow:inset 3px 0 0 #c98a12}
 .settings{font-size:.76rem;color:var(--muted)}
 .fam{margin-bottom:1.5rem}
 .famhead{display:flex;align-items:center;gap:.55rem;margin:0 0 .45rem;
@@ -674,9 +694,16 @@ details.more>summary{cursor:pointer;font-size:.78rem;color:var(--muted);
   padding:.3rem 0;list-style:revert}
 details.more>summary:hover{color:var(--ink)}
 
+/* A seven-column table does not fit a phone. It scrolls inside its own
+   container so the page body never does -- the rule this section had before
+   the layout was rewritten, and lost with it. */
+#pbet .tablewrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
 @media (max-width:640px){
-  table.odds{font-size:.8rem}
-  table.odds th,table.odds td{padding:.35rem .28rem}
+  table.odds{font-size:.78rem}
+  table.odds th,table.odds td{padding:.32rem .3rem}
+  table.lineup td.pc{padding:.3rem .35rem}
+  .pprice{font-size:.8rem}
+  .pours,.pedge,.pstake{font-size:.68rem}
   .fnums{gap:.35rem 1rem}
   .fsel,.fprice{font-size:1rem}
 }
@@ -2041,35 +2068,44 @@ details.more>summary:hover{color:var(--ink)}
     </div>
     {% endif %}
 
-    {#- Three tables, because a game bet and a hitter prop are different
-        questions. Inside each, the verdict leads and the shared reasons are
-        stated once underneath rather than repeated on every row. -#}
-    {% for family in bet.families %}
+    {#- ---------------------------------------------------------------
+        A cell per bet, a row per player, a table per lineup -- the same
+        shape the projections page already uses for a batting order. As a
+        flat list the same nine names appeared four times each in edge
+        order, which is not how anyone reads a lineup.
+    -#}
+    {% macro cell(row) %}
+      {%- if row is none %}<td class="pc empty">&mdash;</td>
+      {%- else %}
+      <td class="pc {{ row.tone }}">
+        <span class="pprice">{{ row.american }}</span>
+        <span class="pours">{{ '%.0f'|format(row.p_model * 100) }}%<span class="pneed"> / {{ '%.0f'|format(row.break_even * 100) }}%</span></span>
+        <span class="pedge {{ 'pos' if row.edge > 0 else 'neg' }}">{{ '%+.1f'|format(row.edge * 100) }}</span>
+        {%- if row.stake > 0 %}<span class="pstake">{{ '%.1f'|format(row.stake * 100) }}%</span>{% endif %}
+      </td>
+      {%- endif %}
+    {% endmacro %}
+
+    {#- ---------------- the game ---------------- -#}
+    {% if bet.game_rows %}
     <div class="fam">
-      <h3 class="famhead">{{ family.heading }}
-        <span class="famcount">{{ family.rows|length }}</span>
-        {% if family.playable %}<span class="verdict bet">{{ family.playable|length }} to bet</span>{% endif %}
+      <h3 class="famhead">The game
+        <span class="famcount">{{ bet.game_rows|length }}</span>
+        {% set gb = bet.game_rows|selectattr('is_bet')|list %}
+        {% if gb %}<span class="verdict bet">{{ gb|length }} to bet</span>{% endif %}
       </h3>
       <div class="tablewrap">
         <table class="odds">
-          <colgroup>
-            <col style="width:30%"><col style="width:11%"><col style="width:12%">
-            <col style="width:13%"><col style="width:10%"><col style="width:10%">
-            <col style="width:14%">
-          </colgroup>
-          <thead>
-            <tr>
-              <th scope="col">Bet</th>
-              <th scope="col" class="n">Price</th>
-              <th scope="col" class="n">We say</th>
-              <th scope="col" class="n">Needs</th>
-              <th scope="col" class="n">Edge</th>
-              <th scope="col" class="n">Stake</th>
-              <th scope="col">Verdict</th>
-            </tr>
-          </thead>
+          <colgroup><col style="width:30%"><col style="width:11%"><col style="width:12%">
+            <col style="width:13%"><col style="width:10%"><col style="width:10%"><col style="width:14%"></colgroup>
+          <thead><tr>
+            <th scope="col">Bet</th><th scope="col" class="n">Price</th>
+            <th scope="col" class="n">We say</th><th scope="col" class="n">Needs</th>
+            <th scope="col" class="n">Edge</th><th scope="col" class="n">Stake</th>
+            <th scope="col">Verdict</th>
+          </tr></thead>
           <tbody>
-            {%- for row in family.rows[:8] %}
+            {%- for row in bet.game_rows %}
             <tr class="v-{{ row.verdict.action }}">
               <th scope="row"><span class="mk">{{ row.market_label }}{% if row.line is not none %} {{ '%g'|format(row.line) }}{% endif %}</span>
                 <span class="sel">{{ row.selection }}</span></th>
@@ -2084,41 +2120,92 @@ details.more>summary:hover{color:var(--ink)}
           </tbody>
         </table>
       </div>
-      {% if family.rows|length > 8 %}
-      <details class="more">
-        <summary>{{ family.rows|length - 8 }} more, further from a bet</summary>
-        <div class="tablewrap">
-          <table class="odds">
-            <colgroup>
-              <col style="width:30%"><col style="width:11%"><col style="width:12%">
-              <col style="width:13%"><col style="width:10%"><col style="width:10%">
-              <col style="width:14%">
-            </colgroup>
-            <tbody>
-              {%- for row in family.rows[8:] %}
-              <tr class="v-{{ row.verdict.action }}">
-                <th scope="row"><span class="mk">{{ row.market_label }}{% if row.line is not none %} {{ '%g'|format(row.line) }}{% endif %}</span>
-                  <span class="sel">{{ row.selection }}</span></th>
-                <td class="n">{{ row.american }}</td>
-                <td class="n">{{ '%.1f'|format(row.p_model * 100) }}%</td>
-                <td class="n">{{ '%.1f'|format(row.break_even * 100) }}%</td>
-                <td class="n {{ 'pos' if row.edge > 0 else 'neg' }}">{{ '%+.1f'|format(row.edge * 100) }}</td>
-                <td class="n">{% if row.stake > 0 %}{{ '%.1f'|format(row.stake * 100) }}%{% else %}&mdash;{% endif %}</td>
-                <td><span class="verdict {{ row.verdict.action }}">{{ row.verdict.label }}</span></td>
-              </tr>
-              {%- endfor %}
-            </tbody>
-          </table>
-        </div>
-      </details>
-      {% endif %}
-      <ul class="why">
-        {%- for reason in family.reasons %}
-        <li>{{ reason }}</li>
-        {%- endfor %}
-      </ul>
+    </div>
+    {% endif %}
+
+    {#- ---------------- one table per starter ---------------- -#}
+    {% for arm in bet.pitchers %}
+    <div class="fam">
+      <h3 class="famhead">{{ arm.name|title }}{% if arm.team %} <span class="famteam">{{ arm.team }}</span>{% endif %}
+        <span class="famcount">{{ arm.rows|length }}</span>
+        {% if arm.bets %}<span class="verdict bet">{{ arm.bets }} to bet</span>{% endif %}
+      </h3>
+      <div class="tablewrap">
+        <table class="odds">
+          <colgroup><col style="width:26%"><col style="width:12%"><col style="width:13%">
+            <col style="width:13%"><col style="width:11%"><col style="width:11%"><col style="width:14%"></colgroup>
+          <thead><tr>
+            <th scope="col">Strikeouts</th><th scope="col" class="n">Price</th>
+            <th scope="col" class="n">We say</th><th scope="col" class="n">Needs</th>
+            <th scope="col" class="n">Edge</th><th scope="col" class="n">Stake</th>
+            <th scope="col">Verdict</th>
+          </tr></thead>
+          <tbody>
+            {%- for row in arm.rows %}
+            <tr class="v-{{ row.verdict.action }}">
+              <th scope="row"><span class="sel">{{ '%g'|format(row.line) }} {{ row.side }}</span></th>
+              <td class="n">{{ row.american }}</td>
+              <td class="n">{{ '%.1f'|format(row.p_model * 100) }}%</td>
+              <td class="n">{{ '%.1f'|format(row.break_even * 100) }}%</td>
+              <td class="n {{ 'pos' if row.edge > 0 else 'neg' }}">{{ '%+.1f'|format(row.edge * 100) }}</td>
+              <td class="n">{% if row.stake > 0 %}{{ '%.1f'|format(row.stake * 100) }}%{% else %}&mdash;{% endif %}</td>
+              <td><span class="verdict {{ row.verdict.action }}">{{ row.verdict.label }}</span></td>
+            </tr>
+            {%- endfor %}
+          </tbody>
+        </table>
+      </div>
     </div>
     {% endfor %}
+
+    {#- ---------------- a lineup per side ---------------- -#}
+    {% for side in bet.lineups %}
+    <div class="fam">
+      <h3 class="famhead">{{ side.team or 'Hitters' }}
+        <span class="famcount">{{ side.players|length }}</span>
+        {% if side.bets %}<span class="verdict bet">{{ side.bets }} to bet</span>{% endif %}
+      </h3>
+      <div class="tablewrap">
+        <table class="odds lineup">
+          <colgroup><col style="width:5%"><col style="width:25%">
+            <col style="width:{{ 24 if not side.hr_under else 17 }}%">
+            <col style="width:{{ 23 if not side.hr_under else 17 }}%">
+            <col style="width:{{ 23 if not side.hr_under else 17 }}%">
+            {% if side.hr_under %}<col style="width:17%">{% endif %}</colgroup>
+          <thead>
+            <tr>
+              <th scope="col" class="l">#</th><th scope="col">Batter</th>
+              <th scope="col">Hits over</th><th scope="col">Hits under</th>
+              <th scope="col">HR over</th>
+              {% if side.hr_under %}<th scope="col">HR under</th>{% endif %}
+            </tr>
+          </thead>
+          <tbody>
+            {%- for p in side.players %}
+            <tr>
+              <td class="l sub">{{ p.slot or '&ndash;'|safe }}</td>
+              <th scope="row" class="bat">{{ p.name|title }}</th>
+              {{ cell(p.hits_over) }}{{ cell(p.hits_under) }}
+              {{ cell(p.hr_over) }}
+              {% if side.hr_under %}{{ cell(p.hr_under) }}{% endif %}
+            </tr>
+            {%- endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if not side.carded %}
+      <p class="note">Batting order not posted yet, so these are listed
+        alphabetically. The book pricing a hitter is what put him on this list.</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+
+    <p class="legend">
+      Each cell reads <b>price</b>, then <b>our chance / what the price needs</b>,
+      then the <b>edge</b> between them and the stake where there is one.
+      <span class="swatch bet"></span> clears the price and our own error.
+      <span class="swatch near"></span> clears the price but not our error.
+    </p>
 
     {% if bet.unmatched %}
     <p class="warn"><b>Not priced:</b> {{ bet.unmatched|join('; ') }} &mdash;

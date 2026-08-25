@@ -177,3 +177,115 @@ def test_every_market_produces_a_usable_standard_error():
         assert sigma is not None, market
         # Wide enough to be honest, narrow enough that a real edge can clear it.
         assert 0.001 < sigma < 0.15, f"{market}: {sigma}"
+
+
+# ---------------------------------------------------------------------------
+# How the page is laid out
+# ---------------------------------------------------------------------------
+
+def _row(market, selection, *, team="CLE", slot=None, edge=0.02, bet=False,
+         line=0.5):
+    from guards_report.betting import section as sec, verdict as vd
+
+    action = vd.BET if bet else vd.PASS_INSIDE_ERROR
+    return sec.Row(
+        market=market, market_label=market.title(), selection=selection,
+        line=line, american="+120", p_model=0.5, p_market=0.48,
+        break_even=0.48, disagreement=0.02, edge=edge, sigma=0.02, z=1.0,
+        confidence=0.8, stake=0.01, basis="t",
+        verdict=vd.Verdict(action=action, label="x", reason="r", detail="d"),
+        subject=selection.rsplit(" ", 1)[0], team=team, slot=slot)
+
+
+def test_hitters_are_laid_out_as_lineups_not_as_a_list():
+    """A hitter is one row and his bets are columns, the way the projections
+    page already shows a batting order. Flattened by edge, the same nine names
+    appeared four times each in an order nobody reads a lineup in."""
+    from guards_report.betting import section as sec
+    from guards_report.odds import types as ot
+
+    block = sec.Section(teams=("CLE", "LAA"), rows=[
+        _row(ot.HITS, "steven kwan over", team="CLE", slot=1),
+        _row(ot.HITS, "steven kwan under", team="CLE", slot=1),
+        _row(ot.HOME_RUNS, "steven kwan over", team="CLE", slot=1, bet=True),
+        _row(ot.HITS, "mike trout over", team="LAA", slot=2),
+    ])
+    lineups = block.lineups
+    assert [s["team"] for s in lineups] == ["CLE", "LAA"]
+    kwan = lineups[0]["players"][0]
+    assert kwan["hits_over"] is not None and kwan["hits_under"] is not None
+    assert kwan["hr_over"] is not None
+    assert lineups[0]["bets"] == 1
+
+
+def test_the_home_run_under_column_appears_only_when_it_has_something_in_it():
+    """Books post home runs to happen and not to not happen, so the column is
+    usually empty and an always-blank column is noise."""
+    from guards_report.betting import section as sec
+    from guards_report.odds import types as ot
+
+    over_only = sec.Section(teams=("CLE",), rows=[
+        _row(ot.HOME_RUNS, "jose ramirez over", team="CLE")])
+    assert not over_only.lineups[0]["hr_under"]
+
+    both = sec.Section(teams=("CLE",), rows=[
+        _row(ot.HOME_RUNS, "jose ramirez over", team="CLE"),
+        _row(ot.HOME_RUNS, "jose ramirez under", team="CLE")])
+    assert both.lineups[0]["hr_under"]
+
+
+def test_each_starter_gets_his_own_table():
+    """Two pitchers stacked together read as one list of eight strikeout prices
+    with no indication which four belong to whom."""
+    from guards_report.betting import section as sec
+    from guards_report.odds import types as ot
+
+    block = sec.Section(rows=[
+        _row(ot.STRIKEOUTS, "gavin williams over", line=8.5),
+        _row(ot.STRIKEOUTS, "gavin williams under", line=8.5),
+        _row(ot.STRIKEOUTS, "walbert urena over", line=4.5, bet=True),
+        _row(ot.STRIKEOUTS, "walbert urena under", line=4.5),
+    ])
+    arms = block.pitchers
+    assert len(arms) == 2
+    assert {a["subject"] for a in arms} == {"gavin williams", "walbert urena"}
+    assert arms[0]["bets"] == 1, "the one with a bet leads"
+
+
+def test_a_batting_order_is_used_when_it_is_known():
+    from guards_report.betting import section as sec
+    from guards_report.odds import types as ot
+
+    carded = sec.Section(teams=("CLE",), rows=[
+        _row(ot.HITS, "b over", team="CLE", slot=2),
+        _row(ot.HITS, "a over", team="CLE", slot=1)])
+    assert [p["slot"] for p in carded.lineups[0]["players"]] == [1, 2]
+    assert carded.lineups[0]["carded"]
+
+    uncarded = sec.Section(teams=("CLE",), rows=[
+        _row(ot.HITS, "b over", team="CLE"),
+        _row(ot.HITS, "a over", team="CLE")])
+    assert not uncarded.lineups[0]["carded"]
+    assert [p["name"] for p in uncarded.lineups[0]["players"]] == ["a", "b"]
+
+
+def test_only_a_bet_or_a_real_near_miss_is_coloured():
+    """An edge that rounds to +0.0 is not close, whatever its sign. Marking it
+    implies a near miss where there is only a rounding artifact, and on a full
+    board that is most of the colour on the page."""
+    from guards_report.odds import types as ot
+
+    assert _row(ot.HITS, "x over", bet=True).tone == "bet"
+    assert _row(ot.HITS, "x over", edge=0.02).tone == "near"
+    assert _row(ot.HITS, "x over", edge=0.0001).tone == ""
+
+
+def test_game_bets_are_kept_apart_from_player_bets():
+    from guards_report.betting import section as sec
+    from guards_report.odds import types as ot
+
+    block = sec.Section(rows=[
+        _row(ot.MONEYLINE, "CLE", line=None),
+        _row(ot.HITS, "steven kwan over"),
+    ])
+    assert [r.market for r in block.game_rows] == [ot.MONEYLINE]

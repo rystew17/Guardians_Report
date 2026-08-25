@@ -43,6 +43,12 @@ def _subject(selection: str) -> str:
     return text
 
 
+# Below this an edge is not worth marking. Half a point is inside the rounding
+# the page prints at, so anything under it would highlight a cell whose numbers
+# read as identical.
+NOTEWORTHY_EDGE = 0.005
+
+
 def american(value: float) -> str:
     """As a book prints it, with the plus that a bare number loses."""
     return f"{value:+.0f}"
@@ -68,10 +74,40 @@ class Row:
     stake: float
     basis: str
     verdict: verdict_module.Verdict
+    subject: str = ""      # the player, for markets quoted per player
+    team: str = ""
+    slot: int | None = None
 
     @property
     def is_bet(self) -> bool:
         return self.verdict.is_bet
+
+    @property
+    def side(self) -> str:
+        """over | under, for a market that has sides."""
+        text = self.selection.strip().lower()
+        for word in ("over", "under"):
+            if text.endswith(word):
+                return word
+        return ""
+
+    @property
+    def tone(self) -> str:
+        """How strongly the page should mark this cell.
+
+        Only two states earn a color: one we would bet, and one that cleared the
+        price but not our own error. Everything else is the ordinary case and
+        colouring it would drown the two that matter.
+        """
+        if self.verdict.is_bet:
+            return "bet"
+        # An edge that rounds to +0.0 is not "close", whatever the verdict says
+        # about its sign. Marking it implies a near miss where there is only a
+        # rounding artifact, and on a full board that is most of the colour.
+        if (self.verdict.action == verdict_module.PASS_INSIDE_ERROR
+                and self.edge >= NOTEWORTHY_EDGE):
+            return "near"
+        return ""
 
 
 @dataclass
@@ -89,6 +125,7 @@ class Section:
     notes: list[str] = field(default_factory=list)
     unmatched: list[str] = field(default_factory=list)
     assumed_margin: list[str] = field(default_factory=list)
+    teams: tuple = ()
     sigma_note: str = ""
 
     @property
@@ -125,6 +162,111 @@ class Section:
         ("Starting pitchers", (types.STRIKEOUTS,)),
         ("Hitters", (types.HITS, types.HOME_RUNS, types.TOTAL_BASES)),
     )
+
+    @property
+    def lineups(self) -> list[dict]:
+        """One table per side, laid out like the projections lineup card.
+
+        A hitter is one row and his bets are columns, which is how the rest of
+        this report already presents a lineup. Flattened into a list sorted by
+        edge, the same nine names appeared four times each in no order anyone
+        reads a lineup in, and fifty rows said less than nine do.
+        """
+        players: dict[str, dict] = {}
+        for row in self.rows:
+            if row.market not in (types.HITS, types.HOME_RUNS) or not row.subject:
+                continue
+            entry = players.setdefault(row.subject, {
+                "subject": row.subject,
+                "name": row.selection.rsplit(" ", 1)[0],
+                "team": row.team, "slot": row.slot,
+                "hits_over": None, "hits_under": None,
+                "hr_over": None, "hr_under": None,
+            })
+            field_name = {
+                (types.HITS, "over"): "hits_over",
+                (types.HITS, "under"): "hits_under",
+                (types.HOME_RUNS, "over"): "hr_over",
+                (types.HOME_RUNS, "under"): "hr_under",
+            }.get((row.market, row.side))
+            if field_name:
+                entry[field_name] = row
+
+        order = [t for t in self.teams if t] or sorted(
+            {p["team"] for p in players.values() if p["team"]})
+        out = []
+        for team in order:
+            found = [p for p in players.values() if p["team"] == team]
+            if not found:
+                continue
+            # Batting order where it is known, alphabetical where it is not --
+            # which is the honest presentation when the card has not posted.
+            found.sort(key=lambda p: (p["slot"] is None, p["slot"] or 0, p["name"]))
+            out.append({
+                "team": team,
+                "players": found,
+                "carded": any(p["slot"] for p in found),
+                # Books post home runs to happen and not to not happen, so the
+                # under column is usually empty. An always-blank column is
+                # noise, so it appears only when something is in it.
+                "hr_under": any(p["hr_under"] for p in found),
+                "bets": sum(
+                    1 for p in found
+                    for cell in (p["hits_over"], p["hits_under"],
+                                 p["hr_over"], p["hr_under"])
+                    if cell is not None and cell.is_bet),
+            })
+
+        loose = [p for p in players.values() if not p["team"]]
+        if loose:
+            loose.sort(key=lambda p: p["name"])
+            out.append({"team": "", "players": loose, "carded": False,
+                        "hr_under": any(p["hr_under"] for p in loose),
+                        "bets": sum(
+                            1 for p in loose
+                            for cell in (p["hits_over"], p["hits_under"],
+                                         p["hr_over"], p["hr_under"])
+                            if cell is not None and cell.is_bet)})
+        return out
+
+    @property
+    def pitchers(self) -> list[dict]:
+        """One table per starter rather than both stacked together.
+
+        Two pitchers in one table read as a single list of eight strikeout
+        prices with no indication which four belong to whom.
+        """
+        found: dict[str, list[Row]] = {}
+        for row in self.rows:
+            if row.market != types.STRIKEOUTS or not row.subject:
+                continue
+            found.setdefault(row.subject, []).append(row)
+
+        out = []
+        for subject, rows in found.items():
+            rows.sort(key=lambda r: (r.line or 0, r.side))
+            out.append({
+                "subject": subject,
+                "name": rows[0].selection.rsplit(" ", 1)[0],
+                "team": rows[0].team,
+                "rows": rows,
+                "bets": sum(1 for r in rows if r.is_bet),
+            })
+        out.sort(key=lambda p: (-p["bets"], p["name"]))
+        return out
+
+    @property
+    def game_rows(self) -> list[Row]:
+        """Everything that is about the game rather than about a player."""
+        markets = (types.MONEYLINE, types.RUNLINE, types.TOTAL,
+                   types.F5_MONEYLINE, types.F5_TOTAL)
+        order = {verdict_module.BET: 0, verdict_module.PASS_DUPLICATE: 1,
+                 verdict_module.PASS_INSIDE_ERROR: 2,
+                 verdict_module.PASS_UNMEASURED: 3,
+                 verdict_module.PASS_PRICED_IN: 4}
+        found = [r for r in self.rows if r.market in markets]
+        found.sort(key=lambda r: (order.get(r.verdict.action, 9), -r.edge))
+        return found
 
     @property
     def families(self) -> list[dict]:
@@ -213,9 +355,12 @@ def build(
     record: Any | None = None,
     lines: dict[tuple[str, str], float] | None = None,
     calibration: list[dict] | None = None,
+    roster: dict[str, tuple[str, int | None]] | None = None,
+    teams: tuple = (),
 ) -> Section:
     """Turn a priced night into the rows the template renders."""
     lines = lines or {}
+    roster = roster or {}
     rows: list[Row] = []
 
     staked = {(p.market, p.selection, p.line) for p in night.plays}
@@ -255,6 +400,9 @@ def build(
             confidence=play.confidence,
             stake=(play.stake if measured and not superseded else 0.0),
             basis=basis,
+            subject=_subject(play.selection),
+            team=roster.get(_subject(play.selection), ("", None))[0],
+            slot=roster.get(_subject(play.selection), ("", None))[1],
             verdict=verdict_module.decide(
                 play, measured=measured, z_threshold=z_threshold, basis=basis,
                 superseded_by=superseded),
@@ -277,6 +425,7 @@ def build(
         warnings=list(night.warnings),
         unmatched=list(night.unmatched),
         assumed_margin=list(night.assumed_margin),
+        teams=teams or (),
         sigma_note=_sigma_note(calibration),
     )
 

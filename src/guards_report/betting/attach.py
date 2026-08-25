@@ -115,7 +115,10 @@ def attach(
 
     built = section.build(
         night, beliefs, tau=TAU, z_threshold=Z_THRESHOLD, devig=DEVIG,
-        record=record, lines=lines, calibration=calibration)
+        record=record, lines=lines, calibration=calibration,
+        roster=_roster(bundle, markets, root),
+        teams=(getattr(bundle.away, "abbreviation", "") or bundle.away.name,
+               getattr(bundle.home, "abbreviation", "") or bundle.home.name))
     # Where the prices came from is information, not a problem. Filing it under
     # warnings made "pulled from DraftKings" read as something to check.
     built.notes = notes
@@ -240,6 +243,36 @@ def _batter_props(projection) -> list:
             continue
         found.extend(value if isinstance(value, (list, tuple)) else [value])
     return found
+
+
+def _roster(bundle, markets, root: Path) -> dict:
+    """Which side each priced player bats for, and where in the order.
+
+    Taken from the report's own team sections rather than from the odds feed,
+    which does not say. Without it the hitters cannot be laid out as two
+    lineups, only as one undifferentiated list.
+    """
+    from guards_report.betting import sources as _sources
+
+    out: dict[str, tuple[str, int | None]] = {}
+    slots: dict[str, int] = {}
+    for prop in _batter_props(getattr(bundle, "projection", None)):
+        name = _sources.strip_accents(
+            (getattr(prop, "name", "") or "").strip().lower())
+        if name and getattr(prop, "slot", None):
+            slots[name] = int(prop.slot)
+
+    for section_ in (bundle.away, bundle.home):
+        team = getattr(section_, "abbreviation", "") or section_.name
+        for player in list(getattr(section_, "batters", []) or []) + list(
+                getattr(section_, "pitchers", []) or []):
+            plain = _sources.strip_accents((player.name or "").strip().lower())
+            if not plain:
+                continue
+            out.setdefault(plain, (team, slots.get(plain)))
+            surname = plain.split(" ")[-1]
+            out.setdefault(surname, (team, slots.get(plain)))
+    return out
 
 
 def _posted_hitters(markets) -> set[str]:
