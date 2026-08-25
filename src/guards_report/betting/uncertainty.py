@@ -141,20 +141,70 @@ def fold_spread(outcome_model, features: dict[str, float]) -> tuple[float | None
     return float(values.std(ddof=1)), len(chosen)
 
 
+def pooled_systematic(bins: list[dict[str, float]]) -> float:
+    """One systematic-error figure for the model, from all bins at once.
+
+    Per-bin figures cannot be used directly, and the reason is a mistake this
+    project made and caught. Each bin's systematic term is a noisy unbiased
+    estimate floored at zero, and flooring a noisy unbiased estimate biases it
+    upward: whichever bin happened to deviate reports an inflated sigma. Read
+    per-bin, this model appeared overconfident by three points in exactly the
+    band where a moderate favorite sits -- a finding produced by scanning ten
+    bins and keeping the two largest.
+
+    The global test says otherwise. Summing the squared standardized residuals
+    gave chi-square 13.62 on 10 degrees of freedom, p about 0.19, with a largest
+    single deviation of 2.14 against an expected maximum near 1.96 for ten
+    draws. The model is calibrated to within what this much data can resolve.
+
+    Pooling uses the excess of that statistic over its expectation:
+
+        E[sum z^2]  =  df  +  sigma^2 * sum(1 / se_b^2)
+
+    which here returns about 0.009 rather than 0.027. Below the per-bin
+    resolution floor, so the floor is what ends up being reported -- the honest
+    statement that miscalibration under about 1.4 points is not measurable with
+    eleven thousand games, rather than a claim about which regions are worse.
+    """
+    if not bins:
+        return 0.0
+    excess = 0.0
+    precision = 0.0
+    for entry in bins:
+        n = float(entry.get("n", 0))
+        mean_p = float(entry.get("p_mean", 0.0))
+        frequency = float(entry.get("frequency", 0.0))
+        if n <= 0 or not (0.0 < mean_p < 1.0):
+            continue
+        variance = mean_p * (1.0 - mean_p) / n
+        if variance <= 0:
+            continue
+        excess += ((frequency - mean_p) ** 2) / variance - 1.0
+        precision += 1.0 / variance
+    if precision <= 0 or excess <= 0:
+        # Calibrated to within the resolution of the data. Not the same as
+        # calibrated, which is why the per-bin floor still applies downstream.
+        return 0.0
+    return float(sqrt(excess / precision))
+
+
 def calibration_sigma(outcome_model, features: dict[str, float]) -> float | None:
-    """Systematic error measured against outcomes, in this prediction's region.
+    """Systematic error measured against outcomes.
 
     The other two estimators ask how much the model agrees with itself. This one
     asks whether it is right, by comparing out-of-sample predictions to realized
     frequencies with the binomial component subtracted out.
 
-    Looked up by region rather than pooled, because miscalibration is rarely
-    uniform and bets live in the tails, where it is usually worst.
+    Pooled across bins rather than read per-region. Regional variation is real in
+    principle -- miscalibration is usually worst in the tails, where bets live --
+    but claiming to have measured it here would be overreach: see
+    `pooled_systematic` for the test that says this model's apparent regional
+    structure is noise.
 
-    A bin whose systematic term came back at zero is calibrated to within what
-    that much data can resolve -- which is not the same as calibrated. The bin's
-    own resolution floor is returned in that case, so a region we cannot measure
-    reports the limit of our measurement instead of a confident zero.
+    The bin's own resolution is still the floor, because a region we cannot
+    measure should report the limit of our measurement rather than a confident
+    zero. In practice that floor is what binds, which makes sigma limited by how
+    much history we have rather than by how good the model is.
     """
     bins = getattr(outcome_model, "win_calibration", None)
     if not bins:
@@ -172,9 +222,7 @@ def calibration_sigma(outcome_model, features: dict[str, float]) -> float | None
         # about, but it still has to be priced with something.
         chosen = min(bins, key=lambda e: abs(e["p_mean"] - p))
 
-    systematic = float(chosen.get("sigma_systematic", 0.0))
-    resolution = float(chosen.get("resolution", 0.0))
-    return max(systematic, resolution)
+    return max(pooled_systematic(bins), float(chosen.get("resolution", 0.0)))
 
 
 def estimate(outcome_model, features: dict[str, float]) -> Sigma:
