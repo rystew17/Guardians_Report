@@ -74,6 +74,7 @@ class Section:
     devig: str = "shin"
     record: Any | None = None
     warnings: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
     unmatched: list[str] = field(default_factory=list)
     sigma_note: str = ""
 

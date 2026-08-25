@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from guards_report.betting import clv, guide, section, sources, verdict
-from guards_report.odds import store, types
+from guards_report.odds import client, store, types
 
 # Chosen deliberately and shown on the page rather than hidden. Tau says how
 # wrong the closing line typically is, which cannot be measured without a record
@@ -37,6 +37,8 @@ def attach(
     """Price tonight's markets against our projections. Returns the section."""
     game_date: date = bundle.game_date
 
+    notes: list[str] = []
+
     if odds_text.strip():
         try:
             store.record(root, odds_text, game_date=game_date,
@@ -47,9 +49,33 @@ def attach(
             bundle.betting = section.Section(
                 warnings=[f"Could not read the prices: {exc}"])
             return bundle.betting
+    elif client.configured():
+        # Pulled rather than typed, when a key is present. Failures are
+        # reported and never fall back to an older capture -- comparing
+        # tonight's projection against last week's line is worse than showing
+        # nothing.
+        try:
+            pull = client.fetch(
+                game_date=game_date,
+                home_team=bundle.home.name,
+                away_team=bundle.away.name,
+            )
+            if pull.markets:
+                store.append(root, [q for m in pull.markets for q in m.quotes])
+                notes.append(
+                    f"Prices pulled from {pull.markets[0].book}"
+                    + (f", {pull.credits_remaining} API credits left this month"
+                       if pull.credits_remaining is not None else ""))
+            if pull.note:
+                notes.append(pull.note)
+        except client.OddsAPIError as exc:
+            notes.append(f"Could not pull odds: {exc}")
 
     markets = store.latest_markets(root, game_date)
     if not markets:
+        if notes:
+            bundle.betting = section.Section(warnings=notes)
+            return bundle.betting
         return None
 
     beliefs = _beliefs(bundle, markets, root)
@@ -86,9 +112,13 @@ def attach(
     fitted = _fitted_model(root)
     calibration = getattr(fitted, "win_calibration", None) if fitted else None
 
-    bundle.betting = section.build(
+    built = section.build(
         night, beliefs, tau=TAU, z_threshold=Z_THRESHOLD, devig=DEVIG,
         record=record, lines=lines, calibration=calibration)
+    # Where the prices came from is information, not a problem. Filing it under
+    # warnings made "pulled from DraftKings" read as something to check.
+    built.notes = notes
+    bundle.betting = built
     return bundle.betting
 
 
@@ -110,13 +140,18 @@ def _beliefs(bundle, markets, root: Path) -> dict:
 
     home = getattr(bundle.home, "abbreviation", "") or bundle.home.name
     away = getattr(bundle.away, "abbreviation", "") or bundle.away.name
+    # Typed prices use the abbreviation, the feed uses the full club name.
+    home_aliases = (bundle.home.name,)
+    away_aliases = (bundle.away.name,)
 
     beliefs: dict = {}
 
     features = getattr(projection, "win_features", None)
     outcome = _fitted_model(root)
     if outcome is not None and features:
-        beliefs.update(sources.moneyline(outcome, features, home=home, away=away))
+        beliefs.update(sources.moneyline(
+            outcome, features, home=home, away=away,
+            home_aliases=home_aliases, away_aliases=away_aliases))
 
     score = getattr(projection, "score", None)
     if isinstance(score, dict):
@@ -124,21 +159,49 @@ def _beliefs(bundle, markets, root: Path) -> dict:
             beliefs.update(sources.total(score, line))
 
     beliefs.update(sources.first_five(
-        getattr(projection, "first_five", None), home=home, away=away))
+        getattr(projection, "first_five", None), home=home, away=away,
+        home_aliases=home_aliases, away_aliases=away_aliases))
 
+    # Each prop is priced against *its own* market's line, resolved market by
+    # market rather than by pairing every pitcher with every line on the board.
+    # The cartesian version wrote the same key once per line and the last one
+    # won, so on a night with two starters posted at 4.5 and 7.5 the pitcher
+    # listed at 4.5 was priced against 7.5 -- his chance of going over came out
+    # at 2.9% instead of 35%, which reads as a 42-point disagreement with the
+    # book rather than as a bug.
     props = _starter_props(projection)
     ambiguous = _shared_surnames(props)
-    for prop in props:
-        for line in _lines_for(markets, types.STRIKEOUTS):
-            for key, belief in sources.strikeouts(prop, line).items():
-                # Both starters answering to the same surname would price one
-                # pitcher's market with the other's distribution, and the page
-                # would show a number rather than a problem.
+    for market in markets:
+        if market.name != types.STRIKEOUTS or market.line is None:
+            continue
+        for prop in props:
+            if not _names_this_market(prop, market, ambiguous):
+                continue
+            for key, belief in sources.strikeouts(prop, market.line).items():
                 if any(key[1].startswith(f"{surname} ") for surname in ambiguous):
                     continue
-                beliefs[key] = belief
+                if key[1] in {q.selection.strip().lower() for q in market.quotes}:
+                    beliefs[key] = belief
 
     return beliefs
+
+
+def _names_this_market(prop, market, ambiguous: set[str]) -> bool:
+    """Whether this market is quoting this pitcher.
+
+    Matched on the selection text the book sent, which carries the player's
+    name. Without the check every prop would be priced against every line on
+    the board.
+    """
+    name = (getattr(prop, "name", "") or "").strip().lower()
+    if not name:
+        return False
+    aliases = set(sources.name_aliases(name)) - ambiguous
+    for quote in market.quotes:
+        selection = quote.selection.strip().lower()
+        if any(selection.startswith(f"{alias} ") for alias in aliases):
+            return True
+    return False
 
 
 def _shared_surnames(props) -> set[str]:

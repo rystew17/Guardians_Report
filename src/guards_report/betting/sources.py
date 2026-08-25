@@ -39,22 +39,39 @@ BASIS = {
 
 
 def moneyline(
-    outcome_model, features: dict[str, float], *, home: str, away: str,
+    outcome_model,
+    features: dict[str, float],
+    *,
+    home: str,
+    away: str,
+    home_aliases: tuple[str, ...] = (),
+    away_aliases: tuple[str, ...] = (),
+    market: str = types.MONEYLINE,
 ) -> dict[tuple[str, str], Belief]:
-    """P(home win) and its complement, with the measured standard error."""
+    """P(home win) and its complement, with the measured standard error.
+
+    Registered under every name a side goes by. Hand-typed prices use the
+    abbreviation ("CLE"); the odds feed uses the full club name ("Cleveland
+    Guardians"). Keying on one of them means the other arrives unmatched and the
+    page reports no price for a game it has prices for.
+    """
     p_home = outcome_model.win_probability(features)
     sigma = uncertainty.estimate(outcome_model, features)
 
     # The same sigma applies to both sides: they are one number and its
     # complement, so an error in one is exactly an error in the other.
-    return {
-        (types.MONEYLINE, home.lower()): Belief(
-            probability=p_home, sigma=sigma.value,
-            measured=sigma.measured, basis=BASIS[types.MONEYLINE]),
-        (types.MONEYLINE, away.lower()): Belief(
-            probability=1.0 - p_home, sigma=sigma.value,
-            measured=sigma.measured, basis=BASIS[types.MONEYLINE]),
-    }
+    out: dict[tuple[str, str], Belief] = {}
+    for names, probability in (
+        ((home, *home_aliases), p_home),
+        ((away, *away_aliases), 1.0 - p_home),
+    ):
+        for name in names:
+            if not name:
+                continue
+            out[(market, name.strip().lower())] = Belief(
+                probability=probability, sigma=sigma.value,
+                measured=sigma.measured, basis=BASIS.get(market, ""))
+    return out
 
 
 def total(simulation: dict[str, Any], line: float) -> dict[tuple[str, str], Belief]:
@@ -120,7 +137,10 @@ def _weights(distribution) -> dict[float, float]:
     return out
 
 
-def first_five(projection, *, home: str, away: str) -> dict[tuple[str, str], Belief]:
+def first_five(
+    projection, *, home: str, away: str,
+    home_aliases: tuple[str, ...] = (), away_aliases: tuple[str, ...] = (),
+) -> dict[tuple[str, str], Belief]:
     """First-five moneyline, with the tie removed.
 
     F5 is quoted three ways at most books but two ways on the main line, where
@@ -137,14 +157,18 @@ def first_five(projection, *, home: str, away: str) -> dict[tuple[str, str], Bel
         return {}
     p_home = home_leads / live
 
-    return {
-        (types.F5_MONEYLINE, home.lower()): Belief(
-            probability=p_home, sigma=uncertainty.MINIMUM_SIGMA,
-            measured=False, basis=BASIS[types.F5_MONEYLINE]),
-        (types.F5_MONEYLINE, away.lower()): Belief(
-            probability=1.0 - p_home, sigma=uncertainty.MINIMUM_SIGMA,
-            measured=False, basis=BASIS[types.F5_MONEYLINE]),
-    }
+    out: dict[tuple[str, str], Belief] = {}
+    for names, probability in (
+        ((home, *home_aliases), p_home),
+        ((away, *away_aliases), 1.0 - p_home),
+    ):
+        for name in names:
+            if not name:
+                continue
+            out[(types.F5_MONEYLINE, name.strip().lower())] = Belief(
+                probability=probability, sigma=uncertainty.MINIMUM_SIGMA,
+                measured=False, basis=BASIS[types.F5_MONEYLINE])
+    return out
 
 
 def strikeouts(prop, line: float) -> dict[tuple[str, str], Belief]:

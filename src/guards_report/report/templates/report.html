@@ -2023,6 +2023,9 @@ table.odds tr.v-bet th,table.odds tr.v-bet td{background:#f2f8f4}
     {% if bet.warnings %}
     <p class="warn"><b>Check:</b> {{ bet.warnings|join('; ') }}</p>
     {% endif %}
+    {% if bet.notes %}
+    <p class="settings">{{ bet.notes|join(' · ') }}</p>
+    {% endif %}
   </div>
 
   <div class="card">
