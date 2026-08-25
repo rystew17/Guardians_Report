@@ -176,10 +176,13 @@ def _beliefs(bundle, markets, root: Path, calibration: dict | None = None) -> di
                 home_aliases=home_aliases, away_aliases=away_aliases,
                 calibration=calibration))
 
+    f5 = getattr(projection, "first_five", None)
     beliefs.update(sources.first_five(
-        getattr(projection, "first_five", None), home=home, away=away,
+        f5, home=home, away=away,
         home_aliases=home_aliases, away_aliases=away_aliases,
         calibration=calibration))
+    for line in _lines_for(markets, types.F5_TOTAL):
+        beliefs.update(sources.first_five_total(f5, line, calibration))
 
     # Each prop is priced against *its own* market's line, resolved market by
     # market rather than by pairing every pitcher with every line on the board.
@@ -206,6 +209,8 @@ def _beliefs(bundle, markets, root: Path, calibration: dict | None = None) -> di
     # Batter props, resolved the same way: each hitter against his own posted
     # number, never the cartesian product of every hitter and every line.
     batters = _batter_props(projection)
+    # The card is often not out yet; the board always is.
+    batters = batters + _fill_missing_hitters(bundle, markets, root)
     batter_ambiguous = _shared_surnames(batters)
     for market in markets:
         if market.name not in (types.HITS, types.HOME_RUNS) or market.line is None:
@@ -237,6 +242,89 @@ def _batter_props(projection) -> list:
     return found
 
 
+def _posted_hitters(markets) -> set[str]:
+    """Every hitter the board has priced, accent-free."""
+    names: set[str] = set()
+    for market in markets:
+        if market.name not in (types.HITS, types.HOME_RUNS):
+            continue
+        for quote in market.quotes:
+            subject = quote.subject
+            if subject:
+                names.add(sources.strip_accents(subject))
+    return names
+
+
+def _fill_missing_hitters(bundle, markets, root: Path) -> list:
+    """Project the hitters the board priced but the lineup card has not named.
+
+    A lineup posts a few hours before first pitch and the prop board goes up
+    well before that, so for most of the day the page had prices for twenty
+    hitters and a projection for none of them -- every one reported as "no
+    projection matching this selection", which reads as a defect rather than as
+    a card that is not out yet.
+
+    The board is itself a lineup signal: a book does not price a hitter it does
+    not expect to play. So the names it posts become the lineup, and each is
+    projected from his own rates the same way a carded hitter is. Batting order
+    is unknown, which only affects how many turns he is expected to get, and
+    that uncertainty is already carried by the unknown-slot distribution.
+    """
+    posted = _posted_hitters(markets)
+    if not posted:
+        return []
+
+    already = {
+        sources.strip_accents((getattr(p, "name", "") or "").strip().lower())
+        for p in _batter_props(getattr(bundle, "projection", None))
+    }
+    missing = posted - already
+    if not missing:
+        return []
+
+    from guards_report.projections import tonight, train_props
+    from guards_report.ingest.preview import _plate_appearances
+    from guards_report.config import load_settings
+
+    artifact = train_props.load_props(Path(root) / "models" / "props.json")
+    if artifact is None:
+        return []
+    try:
+        plate = _plate_appearances(load_settings(), bundle.game_date)
+    except Exception:  # noqa: BLE001 -- never cost the report
+        return []
+    if plate is None or not len(plate):
+        return []
+
+    out = []
+    for section, other in ((bundle.home, bundle.away), (bundle.away, bundle.home)):
+        wanted, names, stands = [], {}, {}
+        for batter in getattr(section, "batters", []) or []:
+            plain = sources.strip_accents((batter.name or "").strip().lower())
+            if plain not in missing:
+                continue
+            wanted.append(int(batter.player_id))
+            names[int(batter.player_id)] = batter.name
+            stands[int(batter.player_id)] = getattr(batter, "bat_side", "R") or "R"
+        if not wanted:
+            continue
+
+        starter = next(
+            (p for p in getattr(other, "pitchers", []) or []
+             if getattr(p, "is_probable_starter", False)), None)
+        try:
+            out.extend(tonight.batter_props(
+                artifact, plate, on=bundle.game_date, lineup=wanted, names=names,
+                opposing_starter=getattr(starter, "player_id", None),
+                opposing_throws=getattr(starter, "hand", "R") or "R",
+                stands=stands,
+                home_team=getattr(bundle.home, "abbreviation", "") or "",
+            ) or [])
+        except Exception:  # noqa: BLE001 -- a missing projection is not fatal
+            continue
+    return out
+
+
 def _names_this_market(prop, market, ambiguous: set[str]) -> bool:
     """Whether this market is quoting this pitcher.
 
@@ -250,7 +338,9 @@ def _names_this_market(prop, market, ambiguous: set[str]) -> bool:
     aliases = set(sources.name_aliases(name)) - ambiguous
     for quote in market.quotes:
         selection = quote.selection.strip().lower()
-        if any(selection.startswith(f"{alias} ") for alias in aliases):
+        plain = sources.strip_accents(selection)
+        if any(selection.startswith(f"{alias} ") or plain.startswith(f"{alias} ")
+               for alias in aliases):
             return True
     return False
 

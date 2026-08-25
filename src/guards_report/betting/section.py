@@ -88,6 +88,7 @@ class Section:
     warnings: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     unmatched: list[str] = field(default_factory=list)
+    assumed_margin: list[str] = field(default_factory=list)
     sigma_note: str = ""
 
     @property
@@ -275,6 +276,7 @@ def build(
         record=record,
         warnings=list(night.warnings),
         unmatched=list(night.unmatched),
+        assumed_margin=list(night.assumed_margin),
         sigma_note=_sigma_note(calibration),
     )
 

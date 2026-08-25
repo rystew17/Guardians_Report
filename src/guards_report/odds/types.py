@@ -34,6 +34,11 @@ TWO_WAY = frozenset({MONEYLINE, TOTAL, RUNLINE, F5_MONEYLINE, F5_TOTAL,
 # Markets whose two sides carry the same number with opposite signs.
 SPREAD_MARKETS = frozenset({RUNLINE})
 
+# Markets books commonly post one way only -- "to hit a home run" is offered to
+# happen and not to not happen. The bet is real and the price is real; what is
+# missing is the counterpart that would let the margin be measured.
+ONE_WAY_ALLOWED = frozenset({HOME_RUNS})
+
 
 @dataclass(frozen=True)
 class Quote:
@@ -92,9 +97,16 @@ class Market:
 
     @property
     def complete(self) -> bool:
+        if self.name in ONE_WAY_ALLOWED:
+            return len(self.quotes) >= 1
         if self.name in TWO_WAY:
             return len(self.quotes) == 2
         return len(self.quotes) >= 2
+
+    @property
+    def one_way(self) -> bool:
+        """Whether the margin has to be assumed rather than measured."""
+        return len(self.quotes) == 1
 
     @property
     def book(self) -> str:

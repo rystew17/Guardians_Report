@@ -49,6 +49,52 @@ BASIS = {
 }
 
 
+def first_five_total(projection, line: float,
+                     calibration: dict | None = None) -> dict[tuple[str, str], Belief]:
+    """P(the first five innings go over the posted number).
+
+    The first-five model carries expected runs per side rather than a joint
+    distribution, so the total is drawn from two negative binomials with the
+    same dispersion the model was fitted under. Same shape as the full-game
+    total, over five innings instead of nine.
+    """
+    if projection is None:
+        return {}
+    home = float(getattr(projection, "expected_home", 0.0) or 0.0)
+    away = float(getattr(projection, "expected_away", 0.0) or 0.0)
+    if home <= 0 or away <= 0:
+        return {}
+
+    import numpy as np
+
+    from guards_report.projections import first5 as f5_module
+
+    alpha = f5_module.FIRST5_ALPHA
+    n = 1.0 / alpha
+    rng = np.random.default_rng(20260825)
+    draws = 20_000
+    total = (rng.negative_binomial(n, n / (n + home), draws)
+             + rng.negative_binomial(n, n / (n + away), draws))
+
+    over = float((total > line).mean())
+    push = float((total == line).mean())
+    live = 1.0 - push
+    if live <= 0:
+        return {}
+    p_over = over / live
+
+    sigma = uncertainty.market_sigma(
+        calibration or {}, types.F5_TOTAL, p_over)
+    return {
+        (types.F5_TOTAL, "over", line): Belief(
+            probability=p_over, sigma=sigma or uncertainty.MINIMUM_SIGMA,
+            measured=sigma is not None, basis=BASIS[types.F5_TOTAL]),
+        (types.F5_TOTAL, "under", line): Belief(
+            probability=1.0 - p_over, sigma=sigma or uncertainty.MINIMUM_SIGMA,
+            measured=sigma is not None, basis=BASIS[types.F5_TOTAL]),
+    }
+
+
 def moneyline(
     outcome_model,
     features: dict[str, float],
@@ -145,8 +191,15 @@ def runline(
     if not margins:
         return {}
 
-    covers = sum(w for m, w in margins.items() if m > line)
-    against = sum(w for m, w in margins.items() if m < line)
+    # The home side covers when its margin beats the number it is spotting,
+    # which is `margin > -line`, not `margin > line`. A home favorite is posted
+    # -1.5 and has to win by two: with the sign the wrong way round that read as
+    # "wins by more than minus one and a half", which is every win and half the
+    # losses. It made Cleveland 73.5% to cover -1.5 while the same model had
+    # them winning the game 57.9% -- a team covering a spread more often than it
+    # wins at all.
+    covers = sum(w for m, w in margins.items() if m > -line)
+    against = sum(w for m, w in margins.items() if m < -line)
     live = covers + against
     if live <= 0:
         return {}
@@ -267,13 +320,28 @@ def strikeouts(prop, line: float,
     return out
 
 
+def strip_accents(text: str) -> str:
+    """The same name without its diacritics.
+
+    Rosters spell a player the way he spells himself and sportsbooks mostly do
+    not. We carry "Walbert Urena" with a tilde and the board posts "walbert
+    urena" without one, so an exact match found nothing and his whole strikeout
+    market arrived unpriced -- a market with prices reporting as one without.
+    """
+    import unicodedata
+
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in decomposed if not unicodedata.combining(c))
+
+
 def name_aliases(name: str) -> list[str]:
-    """Every way a pitcher's name might reasonably be typed.
+    """Every way a player's name might reasonably be written.
 
     The projection carries "tanner bibee" and a person types "Bibee", so
     matching on the full name alone silently prices nothing. The surname is the
     form actually used, and registering only the full name meant the whole
-    strikeout market arrived as unmatched.
+    strikeout market arrived as unmatched. Accent-stripped spellings are
+    registered for the same reason.
 
     Ambiguity is resolved by the caller, not here: two starters sharing a
     surname must not both answer to it, and this function cannot see the other
@@ -282,10 +350,14 @@ def name_aliases(name: str) -> list[str]:
     name = " ".join(name.split()).lower()
     if not name:
         return []
-    parts = name.split(" ")
-    aliases = [name]
-    if len(parts) > 1 and parts[-1] not in aliases:
-        aliases.append(parts[-1])
+
+    aliases: list[str] = []
+    for spelling in (name, strip_accents(name)):
+        if spelling and spelling not in aliases:
+            aliases.append(spelling)
+        parts = spelling.split(" ")
+        if len(parts) > 1 and parts[-1] not in aliases:
+            aliases.append(parts[-1])
     return aliases
 
 

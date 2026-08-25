@@ -201,7 +201,7 @@ def fetch(
     # Saying so beats a market silently missing from the page.
     one_sided = sorted({
         m.name for m in grouped if not m.complete
-    } - {m.name for m in complete})
+    } - {m.name for m in complete} - set(types.ONE_WAY_ALLOWED))
     if one_sided:
         note = (f"{', '.join(one_sided)} quoted one way only, so the margin "
                 f"cannot be removed and they are not priced")
@@ -241,6 +241,13 @@ def _one_book(markets: list[types.Market]) -> list[types.Market]:
         decimals = market.decimal()
         if not decimals:
             return None
+        if len(decimals) == 1:
+            # A one-way market has no second side to normalize against, so the
+            # raw implied price is the only comparable figure. Returning None
+            # here dropped every home run market on the board -- the whole
+            # market silently absent because the book selector could not score
+            # it, rather than because nobody priced it.
+            return price_math.break_even_probability(decimals[0])
         fair = price_math.fair_probabilities(decimals, "multiplicative")
         return fair[0] if fair else None
 

@@ -2127,6 +2127,12 @@ details.more>summary:hover{color:var(--ink)}
     {% if bet.warnings %}
     <p class="warn"><b>Check:</b> {{ bet.warnings|join('; ') }}</p>
     {% endif %}
+    {% if bet.assumed_margin %}
+    <p class="settings"><b>Margin assumed</b> on {{ bet.assumed_margin|join('; ') }}
+      &mdash; posted one way only, so there is no second side to measure it
+      against. The break-even is unaffected; what the book believes is an
+      estimate.</p>
+    {% endif %}
     {% if bet.notes %}
     <p class="settings">{{ bet.notes|join(' · ') }}</p>
     {% endif %}

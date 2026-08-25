@@ -398,3 +398,136 @@ def test_different_lines_are_never_collapsed_into_one_choice():
         _book("DraftKings", 380, -550, line=1.5),
     ])
     assert {m.line for m in kept} == {0.5, 1.5}
+
+
+# ---------------------------------------------------------------------------
+# The run line
+# ---------------------------------------------------------------------------
+
+# Home wins by 2+ thirty percent of the time and wins at all forty-five.
+MARGINS = {"margin_distribution": [
+    {"margin": 3, "p": 0.20}, {"margin": 2, "p": 0.10}, {"margin": 1, "p": 0.15},
+    {"margin": -1, "p": 0.15}, {"margin": -2, "p": 0.15}, {"margin": -3, "p": 0.25},
+]}
+
+
+def test_covering_a_favorite_line_is_harder_than_winning():
+    """The sign, which reads plausibly in both directions.
+
+    A home favorite is posted -1.5 and has to win by two. With the comparison
+    the wrong way round it meant "wins by more than minus one and a half" --
+    every win plus half the losses -- and the page had Cleveland covering -1.5
+    at 73.5% while the same model won them the game 57.9%.
+    """
+    beliefs = sources.runline(MARGINS, -1.5, home="HOME", away="AWAY")
+    covers = beliefs[(types.RUNLINE, "home", -1.5)].probability
+    assert covers == pytest.approx(0.30)
+    assert covers < 0.45, "a team cannot cover -1.5 more often than it wins"
+
+
+def test_taking_the_points_is_easier_than_winning():
+    beliefs = sources.runline(MARGINS, 1.5, home="HOME", away="AWAY")
+    covers = beliefs[(types.RUNLINE, "home", 1.5)].probability
+    assert covers == pytest.approx(0.60)
+    assert covers > 0.45, "a team covers +1.5 more often than it wins outright"
+
+
+def test_each_side_is_keyed_with_its_own_posted_number():
+    """A home favorite is -1.5 and the away side +1.5. Keying both on the home
+    figure left every away price unmatched."""
+    beliefs = sources.runline(MARGINS, -1.5, home="HOME", away="AWAY")
+    assert (types.RUNLINE, "home", -1.5) in beliefs
+    assert (types.RUNLINE, "away", 1.5) in beliefs
+
+
+def test_the_two_sides_of_a_run_line_sum_to_one():
+    beliefs = sources.runline(MARGINS, -1.5, home="HOME", away="AWAY")
+    home = beliefs[(types.RUNLINE, "home", -1.5)].probability
+    away = beliefs[(types.RUNLINE, "away", 1.5)].probability
+    assert home + away == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# Names as rosters spell them and books do not
+# ---------------------------------------------------------------------------
+
+def test_a_name_matches_with_or_without_its_accents():
+    """We carry "Walbert Urena" with a tilde and the board posts it without, so
+    an exact match found nothing and his whole strikeout market went unpriced."""
+    aliases = sources.name_aliases("walbert ureña")
+    assert "walbert urena" in aliases
+    assert "urena" in aliases
+    assert "walbert ureña" in aliases
+
+
+def test_stripping_accents_leaves_a_plain_name_alone():
+    assert sources.strip_accents("gavin williams") == "gavin williams"
+    assert sources.strip_accents("José Ramírez") == "Jose Ramirez"
+
+
+# ---------------------------------------------------------------------------
+# Markets books post one way only
+# ---------------------------------------------------------------------------
+
+def _one_sided(price: float = 540, line: float = 0.5):
+    return types.Market(name=types.HOME_RUNS, quotes=[
+        types.Quote(TODAY, types.HOME_RUNS, "mike trout over", price, line=line),
+    ])
+
+
+def test_a_home_run_market_survives_having_only_one_side():
+    """Books offer "to hit a home run" and not its opposite. The bet is real
+    and the price is real; what is missing is the counterpart that would let
+    the margin be measured -- which is a reason to state an assumption, not to
+    drop the market. Dropped, the whole home run board was silently absent."""
+    assert _one_sided().complete
+    assert _one_sided().one_way
+
+
+def test_a_two_way_market_still_needs_both_sides():
+    half = types.Market(name=types.HITS, quotes=[
+        types.Quote(TODAY, types.HITS, "mike trout over", -170, line=0.5)])
+    assert not half.complete
+
+
+def test_a_one_way_market_is_priced_with_the_margin_declared():
+    belief = Belief(probability=0.21, sigma=0.0067, measured=True, basis="t")
+    night = guide.build(
+        [_one_sided()],
+        {(types.HOME_RUNS, "mike trout over", 0.5): belief},
+        tau=0.03, z_threshold=2.5)
+
+    assert night.considered, "the market must be priced"
+    assert night.assumed_margin, "and the assumption must be reported"
+    assert "mike trout over" in night.assumed_margin[0]
+
+
+def test_the_assumed_margin_lowers_what_the_book_is_taken_to_believe():
+    """An un-adjusted price reads as the market believing the outcome more than
+    it does, which shrinks our number toward something too confident."""
+    belief = Belief(probability=0.21, sigma=0.0067, measured=True, basis="t")
+    night = guide.build(
+        [_one_sided()],
+        {(types.HOME_RUNS, "mike trout over", 0.5): belief},
+        tau=0.03, z_threshold=2.5)
+    play = night.considered[0]
+    assert play.p_market < play.break_even
+    assert play.p_market == pytest.approx(
+        play.break_even / guide.ONE_WAY_OVERROUND)
+
+
+def test_the_assumed_margin_is_a_plausible_one():
+    """Fat, because the book knows nobody is taking the other side -- but not
+    so fat that it manufactures an edge on every longshot."""
+    assert 1.05 <= guide.ONE_WAY_OVERROUND <= 1.35
+
+
+def test_a_one_way_market_is_not_reported_as_having_no_margin():
+    """The zero-overround alarm exists for a feed that arrived de-vigged. A
+    market that never had two sides is a different thing and must not trip it."""
+    belief = Belief(probability=0.21, sigma=0.0067, measured=True, basis="t")
+    night = guide.build(
+        [_one_sided()],
+        {(types.HOME_RUNS, "mike trout over", 0.5): belief},
+        tau=0.03, z_threshold=2.5)
+    assert not any("no margin" in w for w in night.warnings), night.warnings

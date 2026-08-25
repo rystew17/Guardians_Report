@@ -34,6 +34,13 @@ from guards_report.betting.edge import Play
 # points with a book that has taken money on it.
 IMPLAUSIBLE_DISAGREEMENT = 0.30
 
+# Margin assumed on a market posted one way only. Home run props are the case
+# that matters and they are priced fat: twenty percent is a conservative reading
+# of a market where the book knows nobody is taking the other side. Stated as an
+# assumption on the page rather than folded in silently, because unlike every
+# other number here it was not measured.
+ONE_WAY_OVERROUND = 1.20
+
 
 def _subject_of(selection: str) -> str:
     """Whose bet this is, ignoring which side and which number.
@@ -67,6 +74,7 @@ class Night:
     considered: list[Play] = field(default_factory=list)
     unmatched: list[str] = field(default_factory=list)
     unstakeable: list[str] = field(default_factory=list)
+    assumed_margin: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
     @property
@@ -103,12 +111,27 @@ def build(
                 f"{market.name}: a price could not be read as American odds")
             continue
 
-        fair = prices.fair_probabilities(decimals, devig)
+        if market.one_way:
+            # Nothing to normalize against, so the book's belief is the posted
+            # price with an assumed margin taken out. The bet decision itself
+            # does not depend on this -- break-even is 1/d either way -- but the
+            # shrinkage does, and an un-adjusted price would read as the market
+            # believing the outcome more than it does.
+            raw = prices.break_even_probability(decimals[0])
+            if raw is None:
+                night.warnings.append(
+                    f"{market.name}: price could not be read")
+                continue
+            fair = [raw / ONE_WAY_OVERROUND]
+            night.assumed_margin.append(
+                f"{market.name}: {market.quotes[0].selection}")
+        else:
+            fair = prices.fair_probabilities(decimals, devig)
         if fair is None:
             night.warnings.append(f"{market.name}: prices could not be de-vigged")
             continue
 
-        overround = prices.overround(decimals)
+        overround = None if market.one_way else prices.overround(decimals)
         if overround is not None and overround <= 0:
             # Either the feed arrived de-vigged or it is not a real market.
             # Both make every price look better than it is.
