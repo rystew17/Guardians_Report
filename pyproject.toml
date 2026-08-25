@@ -35,7 +35,16 @@ guards-report = "guards_report.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-guards_report = ["report/templates/*.html", "report/assets/*", "store/views/*.sql"]
+# The app's own page is packaged too. Left out, every local run worked --
+# the file was simply on disk beside the source -- and the installed
+# container had no page to serve, which is a 500 on the first request and
+# nothing visible before that.
+guards_report = [
+    "app/*.html",
+    "report/templates/*.html",
+    "report/assets/*",
+    "store/views/*.sql",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
