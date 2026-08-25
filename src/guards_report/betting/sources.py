@@ -45,6 +45,7 @@ BASIS = {
     types.HITS: "batter hit distribution",
     types.HOME_RUNS: "batter home run distribution",
     types.TOTAL_BASES: "batter total base distribution",
+    types.RUNLINE: "Model B, simulated margin distribution",
 }
 
 
@@ -84,7 +85,8 @@ def moneyline(
     return out
 
 
-def total(simulation: dict[str, Any], line: float) -> dict[tuple[str, str], Belief]:
+def total(simulation: dict[str, Any], line: float,
+          calibration: dict | None = None) -> dict[tuple[str, str], Belief]:
     """P(total over the posted number), from the simulated distribution.
 
     Half-integer lines only in practice, but whole numbers are handled: a total
@@ -111,17 +113,65 @@ def total(simulation: dict[str, Any], line: float) -> dict[tuple[str, str], Beli
         return {}
     p_over = over / live
 
+    sigma = uncertainty.market_sigma(calibration or {}, types.TOTAL, p_over)
     return {
         (types.TOTAL, "over", line): Belief(
-            probability=p_over, sigma=uncertainty.MINIMUM_SIGMA,
-            measured=False, basis=BASIS[types.TOTAL]),
+            probability=p_over, sigma=sigma or uncertainty.MINIMUM_SIGMA,
+            measured=sigma is not None, basis=BASIS[types.TOTAL]),
         (types.TOTAL, "under", line): Belief(
-            probability=1.0 - p_over, sigma=uncertainty.MINIMUM_SIGMA,
-            measured=False, basis=BASIS[types.TOTAL]),
+            probability=1.0 - p_over, sigma=sigma or uncertainty.MINIMUM_SIGMA,
+            measured=sigma is not None, basis=BASIS[types.TOTAL]),
     }
 
 
-def _weights(distribution) -> dict[float, float]:
+def runline(
+    simulation: dict[str, Any], line: float, *, home: str, away: str,
+    home_aliases: tuple[str, ...] = (), away_aliases: tuple[str, ...] = (),
+    calibration: dict | None = None,
+) -> dict[tuple[str, str], Belief]:
+    """P(the home side covers the run line), from the simulated margin.
+
+    The number is posted from the home side: a home favorite quoted -1.5 has to
+    win by two, and the away side at +1.5 covers by losing by one or by winning
+    outright. Read off the margin distribution, which comes from the same
+    simulation as the win probability, so the two cannot disagree with each
+    other.
+
+    Calibrated against the totals record. Both are the same score model read a
+    different way, and the run line has no separate measurement of its own --
+    which is worth stating rather than implying a record that does not exist.
+    """
+    margins = _weights(simulation.get("margin_distribution"), key="margin")
+    if not margins:
+        return {}
+
+    covers = sum(w for m, w in margins.items() if m > line)
+    against = sum(w for m, w in margins.items() if m < line)
+    live = covers + against
+    if live <= 0:
+        return {}
+    p_home = covers / live
+    sigma = uncertainty.market_sigma(calibration or {}, types.TOTAL, p_home)
+
+    # Each side is keyed with the number posted to *it*. A home favorite is
+    # quoted -1.5 and the away side +1.5, so keying both on the home figure left
+    # the away price unmatched -- a market with prices reporting as one without.
+    out: dict[tuple[str, str], Belief] = {}
+    for names, probability, posted in (
+        ((home, *home_aliases), p_home, line),
+        ((away, *away_aliases), 1.0 - p_home, -line),
+    ):
+        for name in names:
+            if not name:
+                continue
+            out[(types.RUNLINE, name.strip().lower(), posted)] = Belief(
+                probability=probability,
+                sigma=sigma or uncertainty.MINIMUM_SIGMA,
+                measured=sigma is not None, basis=BASIS[types.RUNLINE])
+    return out
+
+
+def _weights(distribution, key: str = "total") -> dict[float, float]:
     """Normalize either shape a distribution arrives in.
 
     The simulator emits a list of {"total": n, "p": weight} rows; a mapping of
@@ -139,17 +189,18 @@ def _weights(distribution) -> dict[float, float]:
     for row in distribution:
         if not isinstance(row, dict):
             continue
-        key = row.get("total", row.get("runs", row.get("value")))
+        value = row.get(key, row.get("total", row.get("runs", row.get("value"))))
         weight = row.get("p", row.get("probability", row.get("weight")))
-        if key is None or weight is None:
+        if value is None or weight is None:
             continue
-        out[float(key)] = float(weight)
+        out[float(value)] = float(weight)
     return out
 
 
 def first_five(
     projection, *, home: str, away: str,
     home_aliases: tuple[str, ...] = (), away_aliases: tuple[str, ...] = (),
+    calibration: dict | None = None,
 ) -> dict[tuple[str, str], Belief]:
     """First-five moneyline, with the tie removed.
 
@@ -166,6 +217,8 @@ def first_five(
     if live <= 0:
         return {}
     p_home = home_leads / live
+    sigma = uncertainty.market_sigma(
+        calibration or {}, types.F5_MONEYLINE, p_home)
 
     out: dict[tuple[str, str], Belief] = {}
     for names, probability in (
@@ -176,12 +229,15 @@ def first_five(
             if not name:
                 continue
             out[(types.F5_MONEYLINE, name.strip().lower(), None)] = Belief(
-                probability=probability, sigma=uncertainty.MINIMUM_SIGMA,
-                measured=False, basis=BASIS[types.F5_MONEYLINE])
+                probability=probability,
+                sigma=sigma or uncertainty.MINIMUM_SIGMA,
+                measured=sigma is not None,
+                basis=BASIS[types.F5_MONEYLINE])
     return out
 
 
-def strikeouts(prop, line: float) -> dict[tuple[str, str], Belief]:
+def strikeouts(prop, line: float,
+               calibration: dict | None = None) -> dict[tuple[str, str], Belief]:
     """P(starter goes over the posted strikeout number).
 
     `at_least(k)` is inclusive, so clearing a line of 5.5 means at least 6 --
@@ -199,14 +255,15 @@ def strikeouts(prop, line: float) -> dict[tuple[str, str], Belief]:
     if not name:
         return {}
 
+    sigma = uncertainty.market_sigma(calibration or {}, types.STRIKEOUTS, p_over)
     out: dict[tuple[str, str], Belief] = {}
     for alias in name_aliases(name):
         out[(types.STRIKEOUTS, f"{alias} over", line)] = Belief(
-            probability=p_over, sigma=uncertainty.MINIMUM_SIGMA,
-            measured=False, basis=BASIS[types.STRIKEOUTS])
+            probability=p_over, sigma=sigma or uncertainty.MINIMUM_SIGMA,
+            measured=sigma is not None, basis=BASIS[types.STRIKEOUTS])
         out[(types.STRIKEOUTS, f"{alias} under", line)] = Belief(
-            probability=1.0 - p_over, sigma=uncertainty.MINIMUM_SIGMA,
-            measured=False, basis=BASIS[types.STRIKEOUTS])
+            probability=1.0 - p_over, sigma=sigma or uncertainty.MINIMUM_SIGMA,
+            measured=sigma is not None, basis=BASIS[types.STRIKEOUTS])
     return out
 
 
@@ -232,7 +289,8 @@ def name_aliases(name: str) -> list[str]:
     return aliases
 
 
-def batter_prop(prop, market: str, line: float) -> dict[tuple[str, str], Belief]:
+def batter_prop(prop, market: str, line: float,
+                calibration: dict | None = None) -> dict[tuple[str, str], Belief]:
     """P(a batter clears his posted number) for hits or home runs.
 
     The distribution is over a whole game rather than a fixed number of plate
@@ -262,12 +320,13 @@ def batter_prop(prop, market: str, line: float) -> dict[tuple[str, str], Belief]
     if not name:
         return {}
 
+    sigma = uncertainty.market_sigma(calibration or {}, market, p_over)
     out: dict[tuple[str, str], Belief] = {}
     for alias in name_aliases(name):
         out[(market, f"{alias} over", line)] = Belief(
-            probability=p_over, sigma=uncertainty.MINIMUM_SIGMA,
-            measured=False, basis=BASIS[market])
+            probability=p_over, sigma=sigma or uncertainty.MINIMUM_SIGMA,
+            measured=sigma is not None, basis=BASIS[market])
         out[(market, f"{alias} under", line)] = Belief(
-            probability=1.0 - p_over, sigma=uncertainty.MINIMUM_SIGMA,
-            measured=False, basis=BASIS[market])
+            probability=1.0 - p_over, sigma=sigma or uncertainty.MINIMUM_SIGMA,
+            measured=sigma is not None, basis=BASIS[market])
     return out

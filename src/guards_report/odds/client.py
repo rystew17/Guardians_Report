@@ -49,11 +49,19 @@ FEATURED = {
 PLAYER_MARKETS = frozenset({
     types.STRIKEOUTS, types.HITS, types.HOME_RUNS, types.TOTAL_BASES})
 
+# Everything the featured endpoint will not serve. First five is not a prop but
+# it lives here for the same reason the props do: the API calls these
+# "additional markets" and only the per-event endpoint carries them.
 PROPS = {
+    "h2h_1st_5_innings": types.F5_MONEYLINE,
+    "totals_1st_5_innings": types.F5_TOTAL,
     "pitcher_strikeouts": types.STRIKEOUTS,
     "batter_hits": types.HITS,
     "batter_home_runs": types.HOME_RUNS,
-    "batter_total_bases": types.TOTAL_BASES,
+    # Total bases is deliberately not requested. Nothing projects it -- it needs
+    # singles, doubles and triples separately and the props model carries hits
+    # and home runs -- so pulling it spends credits to produce a page full of
+    # prices with no number to compare them against.
 }
 
 

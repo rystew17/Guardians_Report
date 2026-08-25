@@ -31,6 +31,9 @@ TOTAL_BASES = "total_bases"
 TWO_WAY = frozenset({MONEYLINE, TOTAL, RUNLINE, F5_MONEYLINE, F5_TOTAL,
                      STRIKEOUTS, HITS, HOME_RUNS, TOTAL_BASES})
 
+# Markets whose two sides carry the same number with opposite signs.
+SPREAD_MARKETS = frozenset({RUNLINE})
+
 
 @dataclass(frozen=True)
 class Quote:
@@ -107,7 +110,23 @@ class Market:
     @property
     def line(self) -> float | None:
         lines = {q.line for q in self.quotes if q.line is not None}
-        return lines.pop() if len(lines) == 1 else None
+        if len(lines) == 1:
+            return lines.pop()
+        # A spread's sides differ only in sign; report the magnitude rather than
+        # nothing, which is what the page and the belief lookup need.
+        if self.name in SPREAD_MARKETS and lines:
+            magnitudes = {abs(v) for v in lines}
+            if len(magnitudes) == 1:
+                return magnitudes.pop()
+        return None
+
+    def line_for(self, selection: str) -> float | None:
+        """The number as posted to one side, sign included."""
+        wanted = selection.strip().lower()
+        for quote in self.quotes:
+            if quote.selection.strip().lower() == wanted:
+                return quote.line
+        return None
 
     def american(self) -> list[float]:
         return [q.american for q in self.quotes]
@@ -146,7 +165,13 @@ def group(quotes: list[Quote]) -> list[Market]:
     """
     buckets: dict[tuple, list[Quote]] = {}
     for quote in quotes:
-        key = (quote.market, quote.line, quote.book, quote.game_date,
+        # A spread is posted as -1.5 to one side and +1.5 to the other. They are
+        # one bet, so the magnitude keys them; keying on the signed number split
+        # every run line into two one-sided halves, neither de-viggable, both
+        # reported as "quoted one way only".
+        number = (abs(quote.line) if quote.line is not None
+                  and quote.market in SPREAD_MARKETS else quote.line)
+        key = (quote.market, number, quote.book, quote.game_date,
                quote.subject)
         buckets.setdefault(key, []).append(quote)
     return [Market(name=key[0], quotes=found) for key, found in buckets.items()]

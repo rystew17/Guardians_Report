@@ -34,6 +34,15 @@ MARKET_LABELS = {
 }
 
 
+def _subject(selection: str) -> str:
+    """The name a bet is about, ignoring side and number."""
+    text = selection.strip().lower()
+    for side in (" over", " under"):
+        if text.endswith(side):
+            return text[: -len(side)]
+    return text
+
+
 def american(value: float) -> str:
     """As a book prints it, with the plus that a bare number loses."""
     return f"{value:+.0f}"
@@ -125,9 +134,10 @@ class Section:
         compared, because a moneyline and a hitter's total bases are not
         alternatives to each other.
         """
-        order = {verdict_module.BET: 0, verdict_module.PASS_INSIDE_ERROR: 1,
-                 verdict_module.PASS_UNMEASURED: 2,
-                 verdict_module.PASS_PRICED_IN: 3}
+        order = {verdict_module.BET: 0, verdict_module.PASS_DUPLICATE: 1,
+                 verdict_module.PASS_INSIDE_ERROR: 2,
+                 verdict_module.PASS_UNMEASURED: 3,
+                 verdict_module.PASS_PRICED_IN: 4}
         out = []
         for heading, markets in self.FAMILIES:
             members = [r for r in self.rows if r.market in markets]
@@ -157,6 +167,7 @@ class Section:
         featured = self.featured
         order = [
             (verdict_module.BET, "Worth a bet"),
+            (verdict_module.PASS_DUPLICATE, "Already covered by another bet"),
             (verdict_module.PASS_INSIDE_ERROR, "Close, but inside our own error"),
             (verdict_module.PASS_UNMEASURED, "No record yet"),
             (verdict_module.PASS_PRICED_IN, "Already priced in"),
@@ -206,11 +217,26 @@ def build(
     lines = lines or {}
     rows: list[Row] = []
 
+    staked = {(p.market, p.selection, p.line) for p in night.plays}
+    strongest: dict[tuple[str, str], Any] = {}
+    for play in night.plays:
+        strongest[(play.market, _subject(play.selection))] = play
+
     for play in night.considered:
         key = (play.market, play.selection.lower(), play.line)
         belief = beliefs.get(key)
         measured = bool(belief and belief.measured)
         basis = belief.basis if belief else ""
+
+        # A play the selector dropped as a duplicate position must not still be
+        # badged as a bet: only one of them carries a stake.
+        covering = strongest.get((play.market, _subject(play.selection)))
+        superseded = ""
+        if (covering is not None
+                and (play.market, play.selection, play.line) not in staked
+                and play.expected_value > 0 and play.z >= z_threshold
+                and measured):
+            superseded = f"{covering.selection} at {covering.american:+.0f}"
 
         rows.append(Row(
             market=play.market,
@@ -226,16 +252,18 @@ def build(
             sigma=play.sigma,
             z=play.z,
             confidence=play.confidence,
-            stake=play.stake if measured else 0.0,
+            stake=(play.stake if measured and not superseded else 0.0),
             basis=basis,
             verdict=verdict_module.decide(
-                play, measured=measured, z_threshold=z_threshold, basis=basis),
+                play, measured=measured, z_threshold=z_threshold, basis=basis,
+                superseded_by=superseded),
         ))
 
     # Bets first, then near misses, then everything else -- so the reader meets
     # the decision before the arithmetic. Within a group, by confidence.
-    order = {verdict_module.BET: 0, verdict_module.PASS_INSIDE_ERROR: 1,
-             verdict_module.PASS_UNMEASURED: 2, verdict_module.PASS_PRICED_IN: 3}
+    order = {verdict_module.BET: 0, verdict_module.PASS_DUPLICATE: 1,
+             verdict_module.PASS_INSIDE_ERROR: 2,
+             verdict_module.PASS_UNMEASURED: 3, verdict_module.PASS_PRICED_IN: 4}
     rows.sort(key=lambda r: (order.get(r.verdict.action, 9), -r.z))
 
     return Section(

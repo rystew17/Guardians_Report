@@ -39,6 +39,7 @@ BET = "bet"
 PASS_PRICED_IN = "priced-in"
 PASS_INSIDE_ERROR = "inside-error"
 PASS_UNMEASURED = "unmeasured"
+PASS_DUPLICATE = "duplicate"
 
 
 @dataclass(frozen=True)
@@ -77,8 +78,22 @@ def decide(
     measured: bool,
     z_threshold: float,
     basis: str = "",
+    superseded_by: str = "",
 ) -> Verdict:
     """The verdict for one priced selection."""
+    if superseded_by:
+        return Verdict(
+            action=PASS_DUPLICATE,
+            label="Covered",
+            reason=(
+                "The same position is already staked at a better price. Taking "
+                "both would be one wager at double stake wearing two names."
+            ),
+            detail=(
+                f"{superseded_by} carries this bet. These win and lose together, "
+                f"so the stake belongs on one of them."
+            ),
+        )
     if not measured:
         return Verdict(
             action=PASS_UNMEASURED,

@@ -102,6 +102,7 @@ def parse(
         # Walk the remainder as (selection..., price) runs. A price closes the
         # selection that preceded it, which is what lets one line carry both
         # sides without needing a separator.
+        on_this_line: list[types.Quote] = []
         pending: list[str] = []
         found = 0
         for token in rest:
@@ -113,7 +114,7 @@ def parse(
                 raise ParseError(f"price with no selection in: {raw.strip()!r}")
 
             selection, number = _split_selection(pending)
-            quotes.append(types.Quote(
+            on_this_line.append(types.Quote(
                 game_date=game_date,
                 market=market,
                 selection=selection,
@@ -131,7 +132,37 @@ def parse(
         if not found:
             raise ParseError(f"no prices in: {raw.strip()!r}")
 
+        quotes.extend(_fill_subjects(on_this_line))
+
     return quotes
+
+
+def _fill_subjects(quotes: list[types.Quote]) -> list[types.Quote]:
+    """Give the bare side of an over/under the subject typed beside it.
+
+    Nobody types the name twice -- `k Bibee o5.5 -120 u5.5 +100` leaves the
+    under with nothing to be under. Scoped to the one line it was typed on,
+    because a line is where the intent lives: two hitters in the same market
+    would otherwise have the second inherit the first's name, which is how a
+    board of twenty hit props collapsed into one unpriceable market.
+    """
+    subject = ""
+    for quote in quotes:
+        if quote.subject:
+            subject = quote.selection.strip().rsplit(" ", 1)[0]
+            break
+    if not subject:
+        return quotes
+
+    out = []
+    for quote in quotes:
+        side = quote.selection.strip().lower()
+        if side in ("over", "under"):
+            out.append(types.Quote(
+                **{**vars(quote), "selection": f"{subject} {side}"}))
+        else:
+            out.append(quote)
+    return out
 
 
 def _split_selection(tokens: list[str]) -> tuple[str, float | None]:
@@ -177,7 +208,7 @@ def parse_markets(text: str, **kwargs) -> list[types.Market]:
     # Subjects are filled in before grouping, not after. Markets are keyed by
     # player, so a bare "under" carries no subject yet and would land in its own
     # market -- leaving both halves of one bet looking one-sided.
-    markets = types.group(_inherit_subject(parse(text, **kwargs)))
+    markets = types.group(parse(text, **kwargs))
     incomplete = [m for m in markets if not m.complete]
     if incomplete:
         described = ", ".join(
@@ -187,31 +218,3 @@ def parse_markets(text: str, **kwargs) -> list[types.Market]:
         raise ParseError(
             f"incomplete market (need both sides to remove the vig): {described}")
     return markets
-
-
-def _inherit_subject(quotes: list[types.Quote]) -> list[types.Quote]:
-    """Give the bare side of an over/under the subject typed on the other.
-
-    Nobody types the pitcher's name twice, so `k Bibee o5.5 -120 u5.5 +100`
-    leaves the under reading as "under" with nothing to be under. The subject is
-    unambiguous within a market and line, and a page that prints the price
-    without the player is worse than useless.
-    """
-    # Keyed on the normalized subject but stored with its original casing, so
-    # the repaired side reads "Bibee under" rather than "bibee under".
-    named: dict[tuple, str] = {}
-    for quote in quotes:
-        if quote.subject:
-            display = quote.selection.strip().rsplit(" ", 1)[0]
-            named.setdefault((quote.market, quote.line, quote.book), display)
-
-    repaired = []
-    for quote in quotes:
-        side = quote.selection.strip().lower()
-        subject = named.get((quote.market, quote.line, quote.book))
-        if side in ("over", "under") and subject:
-            repaired.append(types.Quote(
-                **{**vars(quote), "selection": f"{subject} {side}"}))
-        else:
-            repaired.append(quote)
-    return repaired

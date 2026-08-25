@@ -78,7 +78,8 @@ def attach(
             return bundle.betting
         return None
 
-    beliefs = _beliefs(bundle, markets, root)
+    measured = client_calibration(root)
+    beliefs = _beliefs(bundle, markets, root, measured)
     if not beliefs:
         bundle.betting = section.Section(
             warnings=["No fitted projection for this game, so nothing to "
@@ -122,7 +123,7 @@ def attach(
     return bundle.betting
 
 
-def _beliefs(bundle, markets, root: Path) -> dict:
+def _beliefs(bundle, markets, root: Path, calibration: dict | None = None) -> dict:
     """What we think about each outcome, gathered from whichever models ran.
 
     Only the moneyline carries a measured standard error, because it is the only
@@ -144,6 +145,7 @@ def _beliefs(bundle, markets, root: Path) -> dict:
     home_aliases = (bundle.home.name,)
     away_aliases = (bundle.away.name,)
 
+    calibration = calibration or {}
     beliefs: dict = {}
 
     features = getattr(projection, "win_features", None)
@@ -156,11 +158,28 @@ def _beliefs(bundle, markets, root: Path) -> dict:
     score = getattr(projection, "score", None)
     if isinstance(score, dict):
         for line in _lines_for(markets, types.TOTAL):
-            beliefs.update(sources.total(score, line))
+            beliefs.update(sources.total(score, line, calibration))
+        for market in markets:
+            if market.name != types.RUNLINE:
+                continue
+            # Signed from the home side: a home favorite is posted -1.5 and has
+            # to win by two. Taking the magnitude would price the wrong side.
+            posted = None
+            for candidate in (home, *home_aliases):
+                posted = market.line_for(candidate)
+                if posted is not None:
+                    break
+            if posted is None:
+                continue
+            beliefs.update(sources.runline(
+                score, posted, home=home, away=away,
+                home_aliases=home_aliases, away_aliases=away_aliases,
+                calibration=calibration))
 
     beliefs.update(sources.first_five(
         getattr(projection, "first_five", None), home=home, away=away,
-        home_aliases=home_aliases, away_aliases=away_aliases))
+        home_aliases=home_aliases, away_aliases=away_aliases,
+        calibration=calibration))
 
     # Each prop is priced against *its own* market's line, resolved market by
     # market rather than by pairing every pitcher with every line on the board.
@@ -177,7 +196,8 @@ def _beliefs(bundle, markets, root: Path) -> dict:
         for prop in props:
             if not _names_this_market(prop, market, ambiguous):
                 continue
-            for key, belief in sources.strikeouts(prop, market.line).items():
+            for key, belief in sources.strikeouts(
+                    prop, market.line, calibration).items():
                 if any(key[1].startswith(f"{surname} ") for surname in ambiguous):
                     continue
                 if key[1] in {q.selection.strip().lower() for q in market.quotes}:
@@ -195,7 +215,7 @@ def _beliefs(bundle, markets, root: Path) -> dict:
             if not _names_this_market(prop, market, batter_ambiguous):
                 continue
             for key, belief in sources.batter_prop(
-                    prop, market.name, market.line).items():
+                    prop, market.name, market.line, calibration).items():
                 if any(key[1].startswith(f"{s} ") for s in batter_ambiguous):
                     continue
                 if key[1] in posted:
@@ -265,6 +285,18 @@ def _starter_props(projection) -> list:
             continue
         found.extend(value if isinstance(value, (list, tuple)) else [value])
     return found
+
+
+def client_calibration(root: Path) -> dict:
+    """Every market's record against outcomes, measured by scripts/calibrate.py.
+
+    Absent, every market outside the moneyline reads as unmeasured and cannot be
+    staked -- which is the correct behavior, and was the only behavior before
+    this file existed.
+    """
+    from guards_report.betting import uncertainty
+
+    return uncertainty.load_market_calibration(root)
 
 
 def _fitted_model(root: Path):

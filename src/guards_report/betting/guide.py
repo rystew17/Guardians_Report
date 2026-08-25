@@ -35,6 +35,20 @@ from guards_report.betting.edge import Play
 IMPLAUSIBLE_DISAGREEMENT = 0.30
 
 
+def _subject_of(selection: str) -> str:
+    """Whose bet this is, ignoring which side and which number.
+
+    "Gavin Williams under" and "Gavin Williams over" are the two halves of one
+    market; across lines they are the same position at a different price. Only
+    the name matters for deciding whether two plays are really one.
+    """
+    text = selection.strip().lower()
+    for side in (" over", " under"):
+        if text.endswith(side):
+            return text[: -len(side)]
+    return text
+
+
 @dataclass(frozen=True)
 class Belief:
     """What we think about one outcome, and how sure we are allowed to be."""
@@ -150,6 +164,22 @@ def build(
                 continue
             if play.expected_value > 0 and play.z >= z_threshold:
                 night.plays.append(play)
+
+    # Alternate lines on the same bet are the same position twice. A starter
+    # under 7.5 and the same starter under 8.5 win and lose together, so taking
+    # both is one wager at double stake wearing two names. The strongest is
+    # kept and the rest are reported.
+    best: dict[tuple[str, str], Play] = {}
+    for play in sorted(night.plays, key=lambda p: p.z, reverse=True):
+        key = (play.market, _subject_of(play.selection))
+        if key in best:
+            night.warnings.append(
+                f"{play.market}: {play.selection} at {play.american:+.0f} is the "
+                f"same position as {best[key].selection} at "
+                f"{best[key].american:+.0f} -- only the stronger is staked")
+            continue
+        best[key] = play
+    night.plays = list(best.values())
 
     night.plays.sort(key=lambda p: p.z, reverse=True)
     night.considered.sort(key=lambda p: p.z, reverse=True)

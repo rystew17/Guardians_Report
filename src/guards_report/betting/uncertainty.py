@@ -251,3 +251,75 @@ def estimate(outcome_model, features: dict[str, float]) -> Sigma:
                      n_folds=n_folds, value=MINIMUM_SIGMA, source="floor")
     return Sigma(delta=delta, folds=folds, calibration=calibrated,
                  n_folds=n_folds, value=value, source=source)
+
+
+# ---------------------------------------------------------------------------
+# The other markets
+# ---------------------------------------------------------------------------
+# The win model carries its calibration inside the fitted artifact. Everything
+# else -- totals, first five, strikeouts, hits, home runs -- is measured by
+# scripts/calibrate.py and written to one file beside the models. Same method,
+# same decomposition, same floor: what differs is only which model was asked.
+
+CALIBRATION_FILE = "market_calibration.json"
+
+# Keys as the calibration script writes them, mapped from the market names the
+# betting side uses.
+MARKET_KEYS = {
+    "total": "total",
+    "f5_moneyline": "first_five",
+    "f5_total": "first_five",
+    "strikeouts": "strikeout",
+    "hits": "hit",
+    "home_runs": "home_run",
+}
+
+
+def load_market_calibration(root) -> dict:
+    """Every market's record, or an empty mapping if it has not been measured.
+
+    Empty is a legitimate state and must not read as agreement: `market_sigma`
+    returns None for it, and the guide refuses to stake anything without a
+    measured figure.
+    """
+    from pathlib import Path as _Path
+    import json
+
+    target = _Path(root) / "models" / CALIBRATION_FILE
+    if not target.is_file():
+        return {}
+    try:
+        return json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def market_sigma(
+    calibration: dict, market: str, probability: float,
+) -> float | None:
+    """Systematic error for one market, at the region this prediction sits in.
+
+    Pooled across bins for the same reason the win model's is: a per-bin figure
+    is a noisy estimate floored at zero, and flooring one biases it upward, so
+    whichever bin happened to deviate would set the standard error. The bin's
+    own resolution is the floor, which in practice is what binds.
+    """
+    if not calibration:
+        return None
+    record = calibration.get(MARKET_KEYS.get(market, market))
+    if not record:
+        return None
+    bins = record.get("bins") or []
+    if not bins:
+        return None
+
+    chosen = None
+    for entry in bins:
+        if entry.get("p_low", 0.0) <= probability <= entry.get("p_high", 1.0):
+            chosen = entry
+            break
+    if chosen is None:
+        chosen = min(bins, key=lambda e: abs(e.get("p_mean", 0.5) - probability))
+
+    return max(pooled_systematic(bins), float(chosen.get("resolution", 0.0)),
+               MINIMUM_SIGMA)
