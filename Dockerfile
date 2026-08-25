@@ -29,9 +29,13 @@ COPY scripts/ ./scripts/
 
 # Where the mounted bucket appears, and where the app looks for its data. Both
 # are overridable at deploy time; these are the values the deploy script sets.
+# Built reports go to the mount, not to the container. Written locally they
+# survive exactly as long as the instance does, so a report built from a phone
+# would be gone before it could be read a second time and the listing would
+# always come back empty.
 ENV DATA_DIR=/gcs/data \
     RAW_ARCHIVE_DIR=/gcs/data/raw \
-    OUTPUT_DIR=/tmp/out
+    OUTPUT_DIR=/gcs/out
 
 # Cloud Run supplies PORT and expects every interface, which `serve` reads.
 # Nothing is exposed by declaring it, but it documents the contract.

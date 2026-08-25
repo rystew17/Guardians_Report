@@ -23,9 +23,32 @@ dependencies = [
     # what makes a published report unfurl on X at all. The report still builds
     # without it -- the card is skipped and the link degrades to a text card.
     "pillow>=10.0",
+
+    # Everything below was present in the development environment and absent
+    # from this list, which is a difference that never shows locally: the
+    # imports resolve because the packages are installed, whatever the manifest
+    # claims. Installed from this file alone -- which is what a container does
+    # -- the app served its own page and failed on anything touching a model.
+    "pandas>=2.2",
+    "numpy>=1.26",
+    # Read directly by the talent model (sparse) and the evaluators (stats).
+    "scipy>=1.11",
+    "scikit-learn>=1.5",
+    "statsmodels>=0.14",
+    # Not imported by name anywhere: pandas needs it to read a parquet file, so
+    # it is a hard requirement that no import scan will ever find.
+    "pyarrow>=16.0",
+    # A different distribution from google-cloud-bigquery despite the shared
+    # namespace, and the one that publishing and the data sync actually use.
+    "google-cloud-storage>=2.18",
+    "markupsafe>=2.1",
 ]
 
 [project.optional-dependencies]
+# The written-analysis path that calls a language model. Off by default and
+# reached only behind `--with-analysis`, so a deployment that computes its prose
+# -- which is every normal one -- does not need it installed.
+llm = ["claude-agent-sdk>=0.1"]
 dev = ["pytest>=8.0"]
 
 [project.scripts]

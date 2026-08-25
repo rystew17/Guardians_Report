@@ -26,7 +26,12 @@ from typing import Iterable
 # Corpora worth preserving. `models` is included because the fitted artifact is
 # small, reproducible only by a long refit, and the thing that makes two reports
 # of the same game agree.
-DATASETS = ("corpus", "pitchers", "pitches", "models")
+# `odds` belongs here for a reason that only appears once the app runs in two
+# places. Every quote captured and every play flagged is written under it, and
+# that record is the only scoreboard this project has -- left out of the sync,
+# a laptop and a deployment each keep their own half of it and neither is the
+# history. Nothing converges them later; the timestamps are what they are.
+DATASETS = ("corpus", "pitchers", "pitches", "models", "odds")
 
 
 @dataclass
