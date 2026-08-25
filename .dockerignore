@@ -1,0 +1,15 @@
+# The build context is uploaded to Cloud Build, so anything large or secret in
+# it costs upload time or leaks. The data lives in the mounted bucket and the
+# environment comes from deploy-time variables; neither belongs in the image.
+.git/
+.venv/
+venv/
+data/
+out/
+.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+tests/
+.claude/

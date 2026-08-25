@@ -677,7 +677,7 @@ def _f5_history(settings):
     try:
         import pandas as pd
 
-        path = settings.raw_archive_dir.parent / "models" / "f5_starter.parquet"
+        path = settings.data_dir / "models" / "f5_starter.parquet"
         return pd.read_parquet(path) if path.exists() else None
     except Exception:  # noqa: BLE001 -- an absent table degrades the block only
         return None
@@ -694,7 +694,7 @@ def _plate_appearances(settings, on):
     try:
         from guards_report.projections import pa as pa_module
 
-        directory = settings.raw_archive_dir.parent / "pitches"
+        directory = settings.data_dir / "pitches"
         if not directory.exists():
             return None
         return pa_module.load(directory, seasons={on.year})

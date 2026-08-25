@@ -106,6 +106,14 @@ class Settings:
     bq_max_bytes_billed: int
     raw_archive_dir: Path
     output_dir: Path
+    # Where the corpus, the fitted models and the odds record live. Local in
+    # development; a mounted bucket when this runs on Cloud Run, where the
+    # container filesystem does not survive the request that wrote to it.
+    data_dir: Path = Path("data")
+    # Required on every request when set. The service is reachable by anyone
+    # with the URL, and a report build spends odds-API credits, so an unguarded
+    # deployment is a quota anybody can drain.
+    access_token: str = ""
     # Cloud Storage bucket that published reports are copied to, so a report
     # can be handed to someone as a link instead of a file. Empty means
     # publishing is simply switched off.
@@ -133,6 +141,11 @@ def load_settings() -> Settings:
     if not raw_archive.is_absolute():
         raw_archive = REPO_ROOT / raw_archive
 
+    data_dir = Path(os.environ.get("DATA_DIR", "")) if os.environ.get(
+        "DATA_DIR") else raw_archive.parent
+    output_dir = Path(os.environ.get("OUTPUT_DIR", "")) if os.environ.get(
+        "OUTPUT_DIR") else REPO_ROOT / "out"
+
     return Settings(
         gcp_project=_require("GCP_PROJECT"),
         bq_dataset=os.environ.get("BQ_DATASET", "guards_report"),
@@ -145,7 +158,9 @@ def load_settings() -> Settings:
         ),
         gcs_bucket=os.environ.get("GCS_BUCKET", ""),
         raw_archive_dir=raw_archive,
-        output_dir=REPO_ROOT / "out",
+        output_dir=output_dir,
+        data_dir=data_dir,
+        access_token=os.environ.get("ACCESS_TOKEN", "").strip(),
     )
 
 

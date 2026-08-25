@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import secrets
 import sys
 import uuid
 from dataclasses import dataclass, field
@@ -174,6 +175,41 @@ async def _run_refit(job: Job, *, force_outcome: bool) -> None:
         await job.queue.put(f"__FAILED__ {job.error}")
 
 
+# ---------------------------------------------------------------------------
+# Access
+# ---------------------------------------------------------------------------
+# A deployed service is reachable by anyone who learns the URL, and a build
+# spends odds-API credits against a five-hundred-a-month allowance. This is not
+# authentication and does not pretend to be -- it is a shared secret that keeps
+# a public URL from being a public quota. Unset, the app is open, which is what
+# you want on a laptop.
+
+
+@app.middleware("http")
+async def _require_token(request: Request, call_next):
+    expected = _settings().access_token
+    if not expected:
+        return await call_next(request)
+
+    supplied = (
+        request.query_params.get("k")
+        or request.headers.get("x-access-token", "")
+        or request.cookies.get("guards_token", "")
+    )
+    if not secrets.compare_digest(supplied, expected):
+        return JSONResponse({"detail": "Not found"}, status_code=404)
+
+    response = await call_next(request)
+    # Set once from the query string so the token does not have to ride on
+    # every link inside the page -- a phone bookmark carries it in and the
+    # cookie carries it from there.
+    if request.query_params.get("k") == expected:
+        response.set_cookie(
+            "guards_token", expected, max_age=60 * 60 * 24 * 365,
+            httponly=True, samesite="lax")
+    return response
+
+
 @app.get("/api/model-status")
 async def model_status() -> JSONResponse:
     """How old each fitted model is, so the page can say whether a refit is due.
@@ -184,7 +220,7 @@ async def model_status() -> JSONResponse:
     """
     from guards_report.projections import freshness
 
-    models = _root() / "data" / "models"
+    models = _settings().data_dir / "models"
     try:
         ages = freshness.fitted_ages(models)
     except Exception:  # noqa: BLE001 -- a status panel must not break the page
@@ -352,7 +388,17 @@ async def index() -> HTMLResponse:
 
 
 def serve(host: str = "127.0.0.1", port: int = 8765) -> None:
+    """Run the app.
+
+    Cloud Run assigns the port and expects the container to listen on every
+    interface; a service bound to loopback there is a service that never
+    answers and looks like a failed deployment rather than a wrong address.
+    """
     import uvicorn
+
+    port = int(os.environ.get("PORT", port))
+    if os.environ.get("PORT"):
+        host = "0.0.0.0"           # noqa: S104 -- required by the runtime
 
     print(f"Guardians Report running at http://{host}:{port}")
     uvicorn.run(app, host=host, port=port, log_level="warning")

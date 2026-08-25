@@ -63,7 +63,7 @@ def attach_computed_analysis(bundle, settings, *, on) -> dict:
 
     try:
         analysis = insight_card.analyse(
-            bundle, pitch_dir=settings.raw_archive_dir.parent / "pitches", on=on
+            bundle, pitch_dir=settings.data_dir / "pitches", on=on
         )
     except Exception as exc:  # noqa: BLE001 -- computed prose is additive
         print(f"  warning: computed analysis skipped ({exc})", file=sys.stderr)
@@ -138,7 +138,7 @@ def attach_analysis(bundle, settings, *, model: str) -> dict:
     from guards_report.analysis.store import AnalysisStore, summarize
 
     digests = select_subjects(bundle)
-    store = AnalysisStore(settings.raw_archive_dir.parent / "analysis")
+    store = AnalysisStore(settings.data_dir / "analysis")
     cache = store.load(bundle.game_pk)
 
     print(f"  analysing {len(digests)} subjects ...", file=sys.stderr)
@@ -229,9 +229,8 @@ def cmd_build(args: argparse.Namespace) -> int:
         odds_text = args.odds or ""
         if args.odds_file:
             odds_text = Path(args.odds_file).read_text(encoding="utf-8")
-        # `data/`, the same root the model artifacts and corpus live under.
         betting_attach.attach(
-            bundle, root=settings.raw_archive_dir.parent, odds_text=odds_text)
+            bundle, root=settings.data_dir, odds_text=odds_text)
     except Exception as exc:  # noqa: BLE001 -- never cost the report
         print(f"warning: odds section skipped ({exc})", file=sys.stderr)
 
