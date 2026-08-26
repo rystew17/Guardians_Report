@@ -531,3 +531,69 @@ def test_a_one_way_market_is_not_reported_as_having_no_margin():
         {(types.HOME_RUNS, "mike trout over", 0.5): belief},
         tau=0.03, z_threshold=2.5)
     assert not any("no margin" in w for w in night.warnings), night.warnings
+
+
+# ---------------------------------------------------------------------------
+# Two lines on the same player, offered at once
+# ---------------------------------------------------------------------------
+
+def test_only_the_calibrated_home_run_line_is_priced():
+    """Books post "to hit a home run" at 0.5 and "two or more" at 1.5 side by
+    side. Jose Ramirez was quoted +525 to homer and +7000 to homer twice, and
+    the page showed +7000 -- the newest-quote rule keys on market and selection
+    and not on the number, which is right for a line that moved and wrong for
+    two lines offered at once.
+
+    There is a second reason beyond picking the wrong bet: the calibration was
+    measured at 0.5 and covers predictions down to 0.005. A two-homer bet sits
+    at or below that, so its standard error would be borrowed from the nearest
+    measured bin rather than measured -- which is exactly what the staking rule
+    refuses to act on everywhere else.
+    """
+    from guards_report.betting import attach
+
+    assert attach.CALIBRATED_LINE[types.HOME_RUNS] == 0.5
+    assert attach.CALIBRATED_LINE[types.HITS] == 0.5
+
+
+def test_the_calibrated_line_matches_what_was_measured():
+    """A constant that drifts from the record it refers to reintroduces the
+    borrowed standard error silently."""
+    import json
+    from pathlib import Path
+
+    from guards_report.betting import attach
+
+    record = (Path(__file__).resolve().parents[1]
+              / "data" / "models" / "market_calibration.json")
+    if not record.is_file():
+        pytest.skip("markets not calibrated here")
+    stored = json.loads(record.read_text(encoding="utf-8"))
+    assert stored["home_run"]["line"] == attach.CALIBRATED_LINE[types.HOME_RUNS]
+    assert stored["hit"]["line"] == attach.CALIBRATED_LINE[types.HITS]
+
+
+def test_a_lineup_column_carries_the_number_it_is_about():
+    """"HR over" with no line reads as one bet whichever line produced it."""
+    from guards_report.betting import section as sec
+
+    block = sec.Section(teams=("CLE",), rows=[
+        _lineup_row(types.HITS, "jose ramirez over", 0.5),
+        _lineup_row(types.HOME_RUNS, "jose ramirez over", 0.5),
+    ])
+    side = block.lineups[0]
+    assert side["hit_line"] == 0.5
+    assert side["hr_line"] == 0.5
+
+
+def _lineup_row(market, selection, line):
+    from guards_report.betting import section as sec, verdict as vd
+
+    return sec.Row(
+        market=market, market_label=market.title(), selection=selection,
+        line=line, american="+525", p_model=0.12, p_market=0.14,
+        break_even=0.16, disagreement=-0.02, edge=-0.04, sigma=0.007, z=-1.0,
+        confidence=0.2, stake=0.0, basis="t",
+        verdict=vd.Verdict(action=vd.PASS_PRICED_IN, label="No",
+                           reason="r", detail="d"),
+        subject=selection.rsplit(" ", 1)[0], team="CLE", slot=3)

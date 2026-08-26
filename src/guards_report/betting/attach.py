@@ -22,6 +22,14 @@ from guards_report.odds import client, store, types
 # Chosen deliberately and shown on the page rather than hidden. Tau says how
 # wrong the closing line typically is, which cannot be measured without a record
 # of closing lines -- so it is an assumption until the CLV record can replace it.
+# The line each player market was calibrated at, and so the only one it can be
+# priced at honestly. Anything else is a different question wearing the same
+# name.
+CALIBRATED_LINE = {
+    types.HITS: 0.5,
+    types.HOME_RUNS: 0.5,
+}
+
 TAU = 0.03
 Z_THRESHOLD = 2.5
 DEVIG = "shin"
@@ -211,12 +219,31 @@ def _beliefs(bundle, markets, root: Path, calibration: dict | None = None) -> di
 
     # Batter props, resolved the same way: each hitter against his own posted
     # number, never the cartesian product of every hitter and every line.
+    skipped_lines: set[str] = set()
     batters = _batter_props(projection)
     # The card is often not out yet; the board always is.
     batters = batters + _fill_missing_hitters(bundle, markets, root)
     batter_ambiguous = _shared_surnames(batters)
     for market in markets:
         if market.name not in (types.HITS, types.HOME_RUNS) or market.line is None:
+            continue
+        # Only the line the market was calibrated at.
+        #
+        # Books post "to hit a home run" at 0.5 and "two or more" at 1.5 side by
+        # side, and the second is a different bet with a different question
+        # behind it. Jose Ramirez was quoted +525 to homer and +7000 to homer
+        # twice; the page showed +7000, because the newest-quote rule keys on
+        # market and selection and not on the number -- right for a line that
+        # moved, wrong for two lines offered at once.
+        #
+        # There is a second reason beyond picking the wrong bet. The calibration
+        # was measured at 0.5 and covers predictions from 0.005 to 0.383. A
+        # two-homer bet sits near 0.005 or below, so its standard error would be
+        # borrowed from the nearest measured bin rather than measured -- and a
+        # borrowed standard error is exactly what the whole staking rule refuses
+        # to act on everywhere else.
+        if market.line != CALIBRATED_LINE.get(market.name, market.line):
+            skipped_lines.add(f"{market.name} {market.line:g}")
             continue
         posted = {q.selection.strip().lower() for q in market.quotes}
         for prop in batters:

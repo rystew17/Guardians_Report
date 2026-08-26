@@ -2222,10 +2222,15 @@ details.more>summary:hover{color:var(--ink)}
           <thead>
             <tr class="grp">
               <th scope="col" colspan="2" class="l">&nbsp;</th>
-              <th scope="col" colspan="3" class="mgrp">Hits over</th>
-              <th scope="col" colspan="3" class="mgrp">Hits under</th>
-              <th scope="col" colspan="3" class="mgrp">HR over</th>
-              {% if side.hr_under %}<th scope="col" colspan="3" class="mgrp">HR under</th>{% endif %}
+              {#- The number is part of the market's name. "HR over" alone reads
+                  as one bet whichever line produced it, which is how a
+                  two-homer price at +7000 passed for a to-homer price. -#}
+              {%- set hl = ('%g'|format(side.hit_line)) if side.hit_line is not none else '' %}
+              {%- set rl = ('%g'|format(side.hr_line)) if side.hr_line is not none else '' %}
+              <th scope="col" colspan="3" class="mgrp">Hits over {{ hl }}</th>
+              <th scope="col" colspan="3" class="mgrp">Hits under {{ hl }}</th>
+              <th scope="col" colspan="3" class="mgrp">HR over {{ rl }}</th>
+              {% if side.hr_under %}<th scope="col" colspan="3" class="mgrp">HR under {{ rl }}</th>{% endif %}
             </tr>
             <tr class="sub">
               <th scope="col" class="l">#</th><th scope="col" class="l">Batter</th>

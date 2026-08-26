@@ -180,6 +180,7 @@ class Section:
                 "subject": row.subject,
                 "name": row.selection.rsplit(" ", 1)[0],
                 "team": row.team, "slot": row.slot,
+                "hit_line": None, "hr_line": None,
                 "hits_over": None, "hits_under": None,
                 "hr_over": None, "hr_under": None,
             })
@@ -191,6 +192,12 @@ class Section:
             }.get((row.market, row.side))
             if field_name:
                 entry[field_name] = row
+                # Carried so the column can name its own number. "HR over" with
+                # no line reads as one bet whichever line produced it, which is
+                # how a two-homer price passed for a to-homer price.
+                key = "hit_line" if row.market == types.HITS else "hr_line"
+                if row.line is not None:
+                    entry[key] = row.line
 
         order = [t for t in self.teams if t] or sorted(
             {p["team"] for p in players.values() if p["team"]})
@@ -206,6 +213,10 @@ class Section:
                 "team": team,
                 "players": found,
                 "carded": any(p["slot"] for p in found),
+                "hit_line": next(
+                    (p["hit_line"] for p in found if p["hit_line"] is not None), None),
+                "hr_line": next(
+                    (p["hr_line"] for p in found if p["hr_line"] is not None), None),
                 # Books post home runs to happen and not to not happen, so the
                 # under column is usually empty. An always-blank column is
                 # noise, so it appears only when something is in it.
@@ -221,6 +232,12 @@ class Section:
         if loose:
             loose.sort(key=lambda p: p["name"])
             out.append({"team": "", "players": loose, "carded": False,
+                        "hit_line": next(
+                            (p["hit_line"] for p in loose
+                             if p["hit_line"] is not None), None),
+                        "hr_line": next(
+                            (p["hr_line"] for p in loose
+                             if p["hr_line"] is not None), None),
                         "hr_under": any(p["hr_under"] for p in loose),
                         "bets": sum(
                             1 for p in loose
