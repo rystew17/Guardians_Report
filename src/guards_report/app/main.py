@@ -106,14 +106,49 @@ async def _run_build(job: Job, *, statcast: bool, analysis: bool) -> None:
         await job.queue.put(f"__DONE__ {Path(job.output_path).name}")
     else:
         job.status = "failed"
-        job.error = f"build exited with code {process.returncode}"
+        job.error = _why_it_died(process.returncode, job.output_path)
         await job.queue.put(f"__FAILED__ {job.error}")
+
+
+def _why_it_died(returncode: int | None, output_path: str | None) -> str:
+    """Say what a failure was, when the exit code alone knows.
+
+    -9 is SIGKILL, and on Cloud Run that is almost always the out-of-memory
+    killer rather than anything the build did wrong. Reported as a bare exit
+    code it is unreadable from a phone: the log ends mid-run with no error in
+    it, because the process was shot rather than allowed to complain. Naming it
+    is the difference between a mystery and a memory limit.
+    """
+    if returncode == -9:
+        return ("build was killed (signal 9) -- almost certainly out of memory. "
+                "Raise the service's memory limit.")
+    if returncode == 2:
+        return "no game found for that date"
+    if returncode == 0 and not output_path:
+        return "build finished without writing a report"
+    return f"build exited with code {returncode}"
 
 
 @app.post("/api/generate")
 async def generate(request: Request) -> JSONResponse:
     body = await request.json()
     game_date = (body.get("date") or date.today().isoformat()).strip()
+
+    running = [j for j in JOBS.values()
+               if j.status == "running" and j.game_date != "refit"]
+    if running:
+        # A refit has always refused to start twice; a build never did, and a
+        # build is the far heavier of the two. On Cloud Run the container is
+        # capped, `--concurrency` lets one instance take several requests at
+        # once, and a build holds its event stream open for its whole run --
+        # so pressing generate again while one is going puts two full builds
+        # in one container. Both then die on the memory limit, which reads on
+        # the phone as a bare "failed" with no reason: the kill takes down the
+        # stream that would have carried the explanation.
+        return JSONResponse(
+            {"ok": False, "error": "a report is already building",
+             "job_id": running[0].id},
+            status_code=409)
 
     job = Job(id=uuid.uuid4().hex[:12], game_date=game_date)
     JOBS[job.id] = job

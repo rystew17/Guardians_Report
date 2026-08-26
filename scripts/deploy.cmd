@@ -21,7 +21,15 @@ REM   --add-volume/--mount the data bucket appears at /gcs, which is what makes
 REM                        the corpus readable and the odds record durable --
 REM                        Cloud Run's own filesystem does not survive the
 REM                        request that wrote to it
-REM   --memory 2Gi         a build reads ~90MB of parquet plus the models
+REM   --memory 4Gi          measured, not guessed. The build process itself peaks
+REM                         near 440MB, but files read through the GCS mount are
+REM                         cached by the kernel, and that cache counts against the
+REM                         container's limit -- so memory climbs for the whole run
+REM                         rather than settling. At 2Gi it crossed the limit about
+REM                         fifteen minutes in and the container was killed, twice.
+REM                         That reaches the phone only as "lost connection": the
+REM                         kill takes down the event stream that would have
+REM                         carried the reason.
 REM   --timeout 900        a cold report build takes a few minutes
 REM   --min-instances 0    scale to nothing when idle; a cold start costs a
 REM                        slower first request and no money in between
@@ -82,7 +90,7 @@ call gcloud run deploy "%SERVICE%" ^
   --platform managed ^
   --allow-unauthenticated ^
   --no-cpu-throttling ^
-  --memory 2Gi ^
+  --memory 4Gi ^
   --cpu 2 ^
   --timeout 900 ^
   --min-instances 0 ^

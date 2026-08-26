@@ -15,7 +15,15 @@
 #                         the corpus readable and the odds record durable --
 #                         Cloud Run's own filesystem does not survive the
 #                         request that wrote to it
-#   --memory 2Gi          a build reads ~90MB of parquet and the models on top
+#   --memory 4Gi          measured, not guessed. The build process itself peaks
+#                         near 440MB, but files read through the GCS mount are
+#                         cached by the kernel, and that cache counts against the
+#                         container's limit -- so memory climbs for the whole run
+#                         rather than settling. At 2Gi it crossed the limit about
+#                         fifteen minutes in and the container was killed, twice.
+#                         That reaches the phone only as "lost connection": the
+#                         kill takes down the event stream that would have
+#                         carried the reason.
 #   --timeout 900         a cold report build takes a few minutes
 #   --min-instances 0     scale to nothing when unused; a cold start costs a
 #                         slower first request and no money in between
@@ -71,7 +79,7 @@ gcloud run deploy "${SERVICE}" \
   --platform managed \
   --allow-unauthenticated \
   --no-cpu-throttling \
-  --memory 2Gi \
+  --memory 4Gi \
   --cpu 2 \
   --timeout 900 \
   --min-instances 0 \

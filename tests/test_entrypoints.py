@@ -263,3 +263,47 @@ def test_a_required_field_is_one_the_source_always_sends():
 
     required = [f.name for f in schemas.RAW_API_CALL if f.mode == "REQUIRED"]
     assert "fetched_at" in required and "url" in required
+
+
+# ---------------------------------------------------------------------------
+# What a failed build says it was
+# ---------------------------------------------------------------------------
+
+def test_a_killed_build_says_it_ran_out_of_memory():
+    """The failure that cost two evenings to name.
+
+    On Cloud Run the container's memory limit counts the kernel page cache for
+    files read through the GCS mount, so a build climbs for its whole run
+    rather than settling, and gets shot partway through. The subprocess dies on
+    signal 9 while the app survives to report it -- so the page showed "build
+    exited with code -9" above a log that simply stopped, which explains
+    nothing to somebody holding a phone. The exit code knew what happened; it
+    only had to say so.
+    """
+    from guards_report.app import main
+
+    said = main._why_it_died(-9, None)
+    assert "memory" in said.lower(), said
+
+
+def test_a_missing_game_is_not_reported_as_a_crash():
+    """Exit 2 is the build declining a date it has no game for, which is a
+    different thing from the build breaking."""
+    from guards_report.app import main
+
+    assert "no game" in main._why_it_died(2, None).lower()
+
+
+def test_a_clean_exit_with_nothing_written_is_still_a_failure():
+    from guards_report.app import main
+
+    assert "without writing" in main._why_it_died(0, None)
+
+
+def test_an_unrecognised_code_still_reports_the_number():
+    """Guessing beyond the codes we actually know would be worse than the bare
+    number it replaced."""
+    from guards_report.app import main
+
+    assert "7" in main._why_it_died(7, None)
+
