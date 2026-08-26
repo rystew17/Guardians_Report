@@ -69,6 +69,7 @@ def _walk_forward_scores(data: pd.DataFrame, columns: list[str], seasons: list[i
             "mu_home": both["mu_home"].to_numpy(),
             "mu_away": both["mu_away"].to_numpy(),
             "total": (both["runs_home"] + both["runs_away"]).to_numpy(),
+            "margin": (both["runs_home"] - both["runs_away"]).to_numpy(),
         }
     return out
 
@@ -162,6 +163,27 @@ def main() -> int:
         "n": sum(v["n"] for v in total_lines.values()), "seasons": seasons,
     }
 
+    # -- run lines, one record per posted number ---------------------------
+    # These used to read the totals record on the reasoning that both come out
+    # of one score model. They do -- but the model can have the sum of runs
+    # right and the split between the two sides wrong, and the run line is a
+    # bet on the split.
+    _say("Calibrating run lines, per line ...")
+    runline_lines: dict[str, dict] = {}
+    for line in calibrate.RUNLINE_LINES:
+        one = calibrate.runline(blocks, alpha=model.NB_ALPHA, line=line)
+        if not one.bins:
+            _say(f"  {line:>5}: not measurable -- {one.note}")
+            continue
+        runline_lines[f"{line:g}"] = one.as_dict()
+        gaps = [b["frequency"] - b["p_mean"] for b in one.bins]
+        _say(f"  {line:>5}: n={one.n:,}  gap {np.mean(gaps):+.4f}")
+    records["runline"] = {
+        "market": "runline", "lines": list(runline_lines),
+        "by_line": runline_lines,
+        "n": sum(v["n"] for v in runline_lines.values()), "seasons": seasons,
+    }
+
     # -- first five --------------------------------------------------------
     _say("Calibrating first five ...")
     f5 = pd.read_parquet(root / "models" / "first5.parquet")
@@ -189,6 +211,33 @@ def main() -> int:
         f5_blocks, alpha=train_props.FIRST5_ALPHA)
     records["first_five"] = result.as_dict()
     _say(f"  n={result.n:,}  seasons {result.seasons}")
+
+    # -- first-five totals, one record per posted line ---------------------
+    # Its own measurement. The first-five *total* was being priced off the
+    # record above, which measures who was *leading* after five -- a different
+    # question entirely, and the same mistake as applying a 4.5 strikeout
+    # record to an 8.5 bet.
+    #
+    # `extra_innings=False`: a five-inning score can end level and often does.
+    # Playing the tie out would add runs the game never scored, to the very
+    # number being bet on.
+    _say("Calibrating first-five totals, per line ...")
+    f5_total_lines: dict[str, dict] = {}
+    for line in calibrate.FIRST5_TOTAL_LINES:
+        one = calibrate.totals(
+            f5_blocks, alpha=train_props.FIRST5_ALPHA, line=line,
+            extra_innings=False, market="first_five_total")
+        if not one.bins:
+            _say(f"  {line:>4}: not measurable -- {one.note}")
+            continue
+        f5_total_lines[f"{line:g}"] = one.as_dict()
+        gaps = [b["frequency"] - b["p_mean"] for b in one.bins]
+        _say(f"  {line:>4}: n={one.n:,}  gap {np.mean(gaps):+.4f}")
+    records["first_five_total"] = {
+        "market": "first_five_total", "lines": list(f5_total_lines),
+        "by_line": f5_total_lines,
+        "n": sum(v["n"] for v in f5_total_lines.values()), "seasons": seasons,
+    }
 
     # -- persist -----------------------------------------------------------
     target = root / "models" / "market_calibration.json"

@@ -270,10 +270,15 @@ def _line_key(line: float) -> str:
     return f"{float(line):g}"
 
 
+# Each market reads the record measured on the question it asks. Two markets
+# sharing one record is how a first-five *total* came to be priced off a
+# measurement of who was *leading* after five -- the same error as pricing an
+# 8.5 strikeout bet off a 4.5 record, one market across.
 MARKET_KEYS = {
     "total": "total",
+    "runline": "runline",
     "f5_moneyline": "first_five",
-    "f5_total": "first_five",
+    "f5_total": "first_five_total",
     "strikeouts": "strikeout",
     "hits": "hit",
     "home_runs": "home_run",

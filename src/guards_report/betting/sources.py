@@ -184,9 +184,10 @@ def runline(
     simulation as the win probability, so the two cannot disagree with each
     other.
 
-    Calibrated against the totals record. Both are the same score model read a
-    different way, and the run line has no separate measurement of its own --
-    which is worth stating rather than implying a record that does not exist.
+    Calibrated on the margin, at the number posted. It used to read the totals
+    record at the nearest whole run, on the reasoning that both come out of one
+    score model -- but the model can be wrong about how runs split between two
+    sides while getting their sum right, and a run line is a bet on the split.
     """
     margins = _weights(simulation.get("margin_distribution"), key="margin")
     if not margins:
@@ -205,12 +206,10 @@ def runline(
     if live <= 0:
         return {}
     p_home = covers / live
-    # Read against the total's record at the nearest whole number of runs.
-    # The run line is the same score model seen from a different angle and
-    # has no measurement of its own, which is worth saying rather than
-    # implying a record that does not exist.
+    # Signed, not `abs(line)`: -1.5 and +1.5 are measured separately because
+    # they ask different questions of the same model.
     sigma = uncertainty.market_sigma(
-        calibration or {}, types.TOTAL, p_home, abs(line))
+        calibration or {}, types.RUNLINE, p_home, line)
 
     # Each side is keyed with the number posted to *it*. A home favorite is
     # quoted -1.5 and the away side +1.5, so keying both on the home figure left

@@ -47,6 +47,14 @@ from guards_report.projections import backtest, props
 # Correlation would only matter if they were pooled, and they are not.
 STRIKEOUT_LINES = (3.5, 4.5, 5.5, 6.5, 7.5, 8.5)
 TOTAL_LINES = (6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5)
+FIRST5_TOTAL_LINES = (3.5, 4.0, 4.5, 5.0, 5.5)
+
+# Signed from the home side, the way a book posts one: a home favorite is -1.5
+# and has to win by two. Both signs are measured because they are not one bet
+# seen twice. Covering -1.5 asks whether a good team wins comfortably; covering
+# +1.5 asks whether a bad one stays close. Different questions, and nothing
+# says the model is wrong by the same amount on each.
+RUNLINE_LINES = (-2.5, -1.5, 1.5, 2.5)
 
 # Books post hits and home runs at one number that matters, so these stay
 # single. Two or more of either is a different bet, and is not priced.
@@ -410,6 +418,7 @@ def first_five(
 def totals(
     frames: dict[int, dict[str, Any]], *, alpha: float,
     line: float = TOTAL_LINE, seed: int = 20260825,
+    extra_innings: bool = True, market: str = "total",
 ) -> Calibrated:
     """How often a stated total-runs probability comes true.
 
@@ -435,6 +444,64 @@ def totals(
                 n, n / (n + mu[:, None]), size=(len(mu), DRAWS))
 
         home, away = draw(mu_home), draw(mu_away)
+        # Only a full game plays on. Five innings end level all the time, so
+        # resolving the tie there would add runs to the total that the game
+        # never produced -- and a first-five total is a bet on exactly that
+        # number.
+        if extra_innings:
+            for _ in range(20):
+                tied = home == away
+                if not tied.any():
+                    break
+                home = home + tied * draw(mu_home / 9.0)
+                away = away + tied * draw(mu_away / 9.0)
+
+        predicted.extend(((home + away) > line).mean(axis=1).tolist())
+        realized.extend((actual > line).astype(float).tolist())
+        used.append(int(season))
+
+    if not predicted:
+        return Calibrated(market=market, line=line,
+                          note="no held-out games to measure")
+    return Calibrated(
+        market=market, line=line, n=len(predicted),
+        bins=backtest.calibration_bins(np.array(realized), np.array(predicted)),
+        seasons=used,
+    )
+
+
+def runline(
+    frames: dict[int, dict[str, Any]], *, alpha: float,
+    line: float = -1.5, seed: int = 20260826,
+) -> Calibrated:
+    """How often a stated run-line probability comes true.
+
+    Measured on the margin rather than borrowed from the total. Both fall out
+    of the same score model, but a different read of one model is not the same
+    question, and that assumption is exactly what went wrong on strikeouts,
+    where the error ran from -5.4 points at one line to +4.0 at another.
+
+    `line` is signed from the home side, as posted: -1.5 means the home team
+    must win by two, so the cover condition is `margin > -line`.
+    """
+    rng = np.random.default_rng(seed)
+    n = 1.0 / max(alpha, 1e-9)
+    predicted: list[float] = []
+    realized: list[float] = []
+    used: list[int] = []
+
+    for season, block in sorted(frames.items()):
+        mu_home = np.asarray(block["mu_home"], dtype=float)
+        mu_away = np.asarray(block["mu_away"], dtype=float)
+        margin = np.asarray(block["margin"], dtype=float)
+        if not len(mu_home):
+            continue
+
+        def draw(mu: np.ndarray) -> np.ndarray:
+            return rng.negative_binomial(
+                n, n / (n + mu[:, None]), size=(len(mu), DRAWS))
+
+        home, away = draw(mu_home), draw(mu_away)
         for _ in range(20):
             tied = home == away
             if not tied.any():
@@ -442,15 +509,19 @@ def totals(
             home = home + tied * draw(mu_home / 9.0)
             away = away + tied * draw(mu_away / 9.0)
 
-        predicted.extend(((home + away) > line).mean(axis=1).tolist())
-        realized.extend((actual > line).astype(float).tolist())
+        # A whole-number line pushes on an exact margin, and a push is neither
+        # a win nor a loss. Books post halves so this is rare, but scoring one
+        # as a loss would understate the side that pushed by all of it.
+        live = margin != -line
+        predicted.extend(((home - away) > -line).mean(axis=1)[live].tolist())
+        realized.extend((margin[live] > -line).astype(float).tolist())
         used.append(int(season))
 
     if not predicted:
-        return Calibrated(market="total", line=line,
+        return Calibrated(market="runline", line=line,
                           note="no held-out games to measure")
     return Calibrated(
-        market="total", line=line, n=len(predicted),
+        market="runline", line=line, n=len(predicted),
         bins=backtest.calibration_bins(np.array(realized), np.array(predicted)),
         seasons=used,
     )

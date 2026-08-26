@@ -13,7 +13,9 @@ predicting and reports excellent calibration for it.
 
 from __future__ import annotations
 
+import functools
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -60,12 +62,33 @@ def test_a_measured_market_returns_a_standard_error():
 
 
 def test_the_betting_names_map_to_the_recorded_ones():
-    """`hits` on the page is `hit` in the record, and both first-five markets
-    read the same measurement. A missing entry here silently un-stakes a whole
-    market."""
-    for market in ("total", "f5_moneyline", "f5_total",
+    """`hits` on the page is `hit` in the record. A missing entry here silently
+    un-stakes a whole market."""
+    for market in ("total", "runline", "f5_moneyline", "f5_total",
                    "strikeouts", "hits", "home_runs"):
         assert market in uncertainty.MARKET_KEYS, market
+
+
+def test_no_two_markets_share_one_measurement():
+    """The rule the first-five pair used to break.
+
+    `f5_total` pointed at `first_five`, which measures who was *leading* after
+    five innings -- so a bet on how many runs the two sides combined for was
+    priced off a record of who was ahead. The run line borrowed from totals the
+    same way. Both are the strikeout mistake (a 4.5 record answering an 8.5
+    bet) moved one market across, and neither announces itself: the wrong
+    record still returns a perfectly tidy number.
+    """
+    keys = list(uncertainty.MARKET_KEYS.values())
+    assert len(keys) == len(set(keys)), sorted(keys)
+
+
+def test_a_run_line_and_a_total_are_measured_apart():
+    """Both fall out of one score model, which is what made the borrow look
+    safe. It is not: the model can have the sum of runs right and the split
+    between the two sides wrong, and a run line is a bet on the split."""
+    assert (uncertainty.MARKET_KEYS["runline"]
+            != uncertainty.MARKET_KEYS["total"])
 
 
 def test_one_deviant_bin_does_not_set_the_standard_error():
@@ -147,6 +170,103 @@ def test_a_perfectly_calibrated_market_leaves_no_systematic_error():
     assert uncertainty.pooled_systematic(bins) < 0.01
 
 
+
+# ---------------------------------------------------------------------------
+# The two markets that used to read someone else's record
+# ---------------------------------------------------------------------------
+
+@functools.lru_cache(maxsize=None)
+def _score_frames(n: int = 1500, seed: int = 7) -> dict:
+    """Games whose outcomes really were drawn from the model predicting them.
+
+    A calibrator handed self-consistent data has to report agreement. If it
+    cannot manage that, nothing it says about real data means anything.
+
+    Cached because each of these calibrations is a Monte Carlo over every game
+    and the same corpus serves all of them. Built fresh per test it cost the
+    suite four minutes, which is the kind of tax that gets a test deleted
+    rather than fixed.
+    """
+    rng = np.random.default_rng(seed)
+    mu_home = rng.uniform(3.5, 5.5, n)
+    mu_away = rng.uniform(3.5, 5.5, n)
+    alpha = 0.20
+    k = 1.0 / alpha
+    home = rng.negative_binomial(k, k / (k + mu_home))
+    away = rng.negative_binomial(k, k / (k + mu_away))
+    return {2025: {
+        "mu_home": mu_home, "mu_away": mu_away,
+        "margin": (home - away).astype(float),
+        "total": (home + away).astype(float),
+    }}
+
+
+# The shipped figure draws 2,000 per game for a Monte Carlo error under the
+# resolution the calibration can report. These tests are checking that the
+# arithmetic points the right way, not reading a number off it, so a fifth of
+# that is plenty -- and it is the difference between a two-minute test and a
+# twenty-second one.
+_TEST_DRAWS = 400
+
+
+def _mean_prediction(result) -> float:
+    return float(np.average([b["p_mean"] for b in result.bins],
+                            weights=[b["n"] for b in result.bins]))
+
+
+def test_a_run_line_calibrator_agrees_with_data_drawn_from_its_own_model(
+        monkeypatch):
+    monkeypatch.setattr(calibrate, "DRAWS", _TEST_DRAWS)
+    result = calibrate.runline(_score_frames(), alpha=0.20, line=-1.5)
+    assert result.n > 1000
+
+    # Judged against each bin's own binomial standard error rather than a flat
+    # number of points. A fixed tolerance tests sample size as much as
+    # calibration: it fails a thin bin that is merely noisy and waves through a
+    # fat one that is genuinely off. Four SEs across a handful of bins is loose
+    # enough not to flap and nowhere near loose enough to miss a sign flip,
+    # which lands tens of SEs out.
+    for row in result.bins:
+        se = math.sqrt(row["p_mean"] * (1 - row["p_mean"]) / row["n"])
+        assert abs(row["frequency"] - row["p_mean"]) < 4 * se, row
+
+
+def test_giving_away_a_run_and_a_half_is_not_the_same_bet_as_getting_one(
+        monkeypatch):
+    """The sign is load-bearing, and has been wrong here before.
+
+    `margin > -line` is the cover condition: a home side posted -1.5 has to win
+    by two. Written as `margin > line` it read as "wins by more than minus one
+    and a half", which is every win plus half the losses -- and put Cleveland at
+    73.5% to cover -1.5 while the same model had them winning 57.9% of the time,
+    a team covering a spread more often than it won at all.
+
+    Across evenly matched games, laying the run and a half has to come out well
+    under a coin flip and taking it well over.
+    """
+    monkeypatch.setattr(calibrate, "DRAWS", _TEST_DRAWS)
+    frames = _score_frames()
+    laying = _mean_prediction(calibrate.runline(frames, alpha=0.20, line=-1.5))
+    taking = _mean_prediction(calibrate.runline(frames, alpha=0.20, line=1.5))
+    assert laying < 0.40, laying
+    assert taking > 0.60, taking
+
+
+def test_five_innings_do_not_go_to_extras(monkeypatch):
+    """`extra_innings=False` is what makes the first-five total its own
+    measurement rather than a nine-inning one wearing a smaller line.
+
+    Playing out the tie only ever adds runs, so leaving it on inflates every
+    over -- and the first-five total is a bet on precisely that number.
+    """
+    monkeypatch.setattr(calibrate, "DRAWS", _TEST_DRAWS)
+    frames = _score_frames()
+    played_out = calibrate.totals(frames, alpha=0.20, line=8.5)
+    stopped = calibrate.totals(frames, alpha=0.20, line=8.5,
+                               extra_innings=False, market="first_five_total")
+    assert _mean_prediction(stopped) < _mean_prediction(played_out)
+    assert stopped.market == "first_five_total"
+
 # ---------------------------------------------------------------------------
 # The shipped record
 # ---------------------------------------------------------------------------
@@ -156,7 +276,8 @@ def test_every_market_the_page_prices_has_been_measured():
     """Some markets carry one record and some carry one per line. Both count
     as measured; neither being present does not."""
     stored = json.loads(RECORD.read_text(encoding="utf-8"))
-    for key in ("hit", "home_run", "strikeout", "total", "first_five"):
+    for key in ("hit", "home_run", "strikeout", "total", "first_five",
+                "first_five_total", "runline"):
         assert key in stored, key
         block = stored[key]
         if block.get("by_line"):
