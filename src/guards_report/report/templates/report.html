@@ -700,8 +700,21 @@ table.lineup td.pc.near.first{box-shadow:inset 3px 0 0 #c98a12}
 .swatch.bet{background:#e8f5ec;box-shadow:inset 3px 0 0 var(--good)}
 .swatch.near{background:#fdf5e3;box-shadow:inset 3px 0 0 #c98a12}
 @media (max-width:640px){
-  table.lineup td.pc{font-size:.75rem;padding:.28rem .3rem}
-  table.lineup th.bat{font-size:.78rem}
+  /* Fixed layout distributes the percentages across whatever width it is
+     given, so on a phone eleven columns were squeezed to about thirty pixels
+     each and the content spilled over its own cell -- a price and a
+     probability rendering on top of each other as one unreadable number.
+     A minimum width keeps the columns at a size the figures fit in and lets
+     the container scroll, which is what it is already set up to do. */
+  table.lineup{min-width:34rem}
+  table.lineup td.pc{font-size:.76rem;padding:.28rem .32rem}
+  table.lineup th.bat{font-size:.8rem}
+  /* The stake sits under the edge rather than beside it. On one line the badge
+     ran 23 pixels past its own cell and printed on top of the next column's
+     price -- a green block over an unrelated number, which is worse than
+     either figure being missing. Stacking costs a line only in the cells that
+     have a stake, and no width at all. */
+  table.lineup .pstake{display:block;margin-left:0;margin-top:.12rem}
 }
 .settings{font-size:.76rem;color:var(--muted)}
 .fam{margin-bottom:1.5rem}
@@ -781,7 +794,7 @@ details.more>summary:hover{color:var(--ink)}
   {% if bundle.betting and bundle.betting.has_prices %}
   <button role="tab" id="tab-pbet" aria-controls="pbet" data-page="pbet"
           tabindex="-1" aria-selected="false"
-          data-short="Not Advice"><span class="full">Not Gambling Advice</span></button>
+          ><span class="full">Not Gambling Advice</span></button>
   {% endif %}
 </nav>
 </div>
