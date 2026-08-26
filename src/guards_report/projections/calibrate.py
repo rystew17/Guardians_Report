@@ -34,10 +34,27 @@ import pandas as pd
 
 from guards_report.projections import backtest, props
 
-# The line each market is calibrated at, chosen as the one books post most.
-STRIKEOUT_LINE = 4.5
+# The lines each market is measured at.
+#
+# Measured per line rather than once, because the error is not the same at each
+# of them. On strikeouts the model overstates by 1.8 points at 4.5 and
+# understates by 3.5 at 6.5 and 8.5 -- the opposite direction and twice the
+# size -- while the standard error doubles. A record taken at one line and
+# applied to another therefore carries a bias pointing the wrong way, which is
+# not extrapolation so much as the wrong answer.
+#
+# Each line's record stays independent: one observation per start per line.
+# Correlation would only matter if they were pooled, and they are not.
+STRIKEOUT_LINES = (3.5, 4.5, 5.5, 6.5, 7.5, 8.5)
+TOTAL_LINES = (6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5)
+
+# Books post hits and home runs at one number that matters, so these stay
+# single. Two or more of either is a different bet, and is not priced.
 HIT_LINE = 0.5
 HOME_RUN_LINE = 0.5
+
+# Kept as the default argument for the single-line callers.
+STRIKEOUT_LINE = 4.5
 TOTAL_LINE = 8.5
 
 # Draws where a distribution is easier to sample than to solve. Monte Carlo

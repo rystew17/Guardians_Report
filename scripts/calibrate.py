@@ -104,13 +104,27 @@ def main() -> int:
         records[outcome] = result.as_dict()
         _say(f"  n={result.n:,}  seasons {result.seasons}")
 
-    # -- starter strikeouts ------------------------------------------------
-    _say("Calibrating strikeouts ...")
-    result = calibrate.strikeouts(
-        plate, starts, seasons=seasons,
-        starter_bf=props_artifact.starter_bf_mean if props_artifact else 21.9)
-    records["strikeout"] = result.as_dict()
-    _say(f"  n={result.n:,}  seasons {result.seasons}")
+    # -- starter strikeouts, one record per posted line ---------------------
+    # Measured per line because the error is not the same at each: the model
+    # overstates by 1.8 points at 4.5 and understates by 3.5 at 6.5 and 8.5,
+    # the opposite direction and twice the size. One record applied to every
+    # line therefore carries a bias pointing the wrong way.
+    _say("Calibrating strikeouts, per line ...")
+    by_line: dict[str, dict] = {}
+    for line in calibrate.STRIKEOUT_LINES:
+        one = calibrate.strikeouts(
+            plate, starts, seasons=seasons, line=line,
+            starter_bf=props_artifact.starter_bf_mean if props_artifact else 21.9)
+        if not one.bins:
+            _say(f"  {line:>4}: not measurable -- {one.note}")
+            continue
+        by_line[f"{line:g}"] = one.as_dict()
+        gaps = [b["frequency"] - b["p_mean"] for b in one.bins]
+        _say(f"  {line:>4}: n={one.n:,}  gap {np.mean(gaps):+.4f}")
+    records["strikeout"] = {
+        "market": "strikeout", "lines": list(by_line), "by_line": by_line,
+        "n": sum(v["n"] for v in by_line.values()), "seasons": seasons,
+    }
 
     # -- the game features, built once -------------------------------------
     _say("Building game features (the slow part) ...")
@@ -131,12 +145,22 @@ def main() -> int:
     columns = list(score.SCORE_COLUMNS) + list(score.STRENGTH_COLUMNS) + ["sp_known"]
     _say(f"  {len(data):,} team-games")
 
-    # -- game totals -------------------------------------------------------
-    _say("Calibrating totals ...")
+    # -- game totals, one record per posted line ---------------------------
+    _say("Calibrating totals, per line ...")
     blocks = _walk_forward_scores(data, columns, seasons)
-    result = calibrate.totals(blocks, alpha=model.NB_ALPHA)
-    records["total"] = result.as_dict()
-    _say(f"  n={result.n:,}  seasons {result.seasons}")
+    total_lines: dict[str, dict] = {}
+    for line in calibrate.TOTAL_LINES:
+        one = calibrate.totals(blocks, alpha=model.NB_ALPHA, line=line)
+        if not one.bins:
+            _say(f"  {line:>4}: not measurable -- {one.note}")
+            continue
+        total_lines[f"{line:g}"] = one.as_dict()
+        gaps = [b["frequency"] - b["p_mean"] for b in one.bins]
+        _say(f"  {line:>4}: n={one.n:,}  gap {np.mean(gaps):+.4f}")
+    records["total"] = {
+        "market": "total", "lines": list(total_lines), "by_line": total_lines,
+        "n": sum(v["n"] for v in total_lines.values()), "seasons": seasons,
+    }
 
     # -- first five --------------------------------------------------------
     _say("Calibrating first five ...")
@@ -172,6 +196,10 @@ def main() -> int:
     _say("")
     _say(f"Wrote {target} in {time.time() - started:.0f}s")
     for name, block in records.items():
+        if block.get("by_line"):
+            _say(f"  {name:12} n={block['n']:>7,}  across "
+                 f"{len(block['by_line'])} lines: {', '.join(block['lines'])}")
+            continue
         bins = block.get("bins") or []
         if not bins:
             _say(f"  {name:12} not measured -- {block.get('note')}")

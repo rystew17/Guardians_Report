@@ -61,14 +61,33 @@ def test_pricing_uses_the_newest_quote_not_the_first(tmp_path):
     assert market.american() == [-155, 130]
 
 
-def test_a_line_that_moves_replaces_its_market_rather_than_adding_one(tmp_path):
-    """Keying the newest-quote lookup on the line kept both, so every prop
-    rendered twice with whichever number was written last."""
+def test_every_posted_line_survives_as_its_own_market(tmp_path):
+    """This assertion has been both ways round, and the second is right.
+
+    Dropping the line from the key collapsed a re-quote into one row, which was
+    the intent -- but books also post alternate lines at the same moment, and
+    against those the rule just kept whichever arrived last. Jose Ramirez was
+    quoted +525 to homer and +7000 to homer twice; the second won, and once the
+    calibrated-line filter refused it he had no home run market at all.
+
+    A book offering 4.5 and 5.5 is offering two bets. Which of them can be
+    priced is a question for the calibration record, answered downstream where
+    the answer is known.
+    """
     store.record(tmp_path, "k Bibee o5.5 -120 u5.5 +100", game_date=TODAY)
     store.record(tmp_path, "k Bibee o4.5 -130 u4.5 +110", game_date=TODAY)
     markets = store.latest_markets(tmp_path, TODAY)
+    assert {m.line for m in markets} == {4.5, 5.5}
+
+
+def test_a_re_quote_at_the_same_line_keeps_only_the_newer_price(tmp_path):
+    """The half of the old rule that was right: a price that moved is one
+    market, not two."""
+    store.record(tmp_path, "k Bibee o5.5 -120 u5.5 +100", game_date=TODAY)
+    store.record(tmp_path, "k Bibee o5.5 -145 u5.5 +120", game_date=TODAY)
+    markets = store.latest_markets(tmp_path, TODAY)
     assert len(markets) == 1
-    assert markets[0].line == 4.5
+    assert sorted(markets[0].american()) == [-145, 120]
 
 
 def test_a_different_date_is_a_different_night(tmp_path):

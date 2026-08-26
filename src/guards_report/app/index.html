@@ -69,6 +69,17 @@
                 align-items:center; gap:.35rem; }
   button.secondary { background:#fff; color:#0c2340; border:1px solid #c2cbd4; }
   button.secondary:hover:not(:disabled) { border-color:#0c2340; }
+
+/* A report list is wider than a phone. It scrolls inside its own box so the
+   page does not go sideways with it -- an overflowing table drags the whole
+   document and reads as a broken layout rather than as a wide table. */
+#reports .tablewrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+#reports table { min-width: 34rem; }
+#reports td.rname { white-space: nowrap; }
+#reports .acts { display: flex; gap: .6rem; white-space: nowrap; }
+@media (max-width: 640px) {
+  #reports table { font-size: .82rem; }
+}
 </style>
 
 <div class="wrap">
@@ -153,19 +164,53 @@ async function loadReports() {
     box.innerHTML = '<div class="empty">No reports yet.</div>';
     return;
   }
+  // Wrapped so a table too wide for a phone scrolls inside its own box. Left
+  // to itself it widened the page and took the whole site sideways with it,
+  // which reads as a broken layout rather than as a wide table.
   box.innerHTML =
-    "<table><thead><tr><th>Report</th><th>Built</th><th>Size</th><th></th></tr></thead><tbody>"
+    "<div class=\"tablewrap\"><table><thead><tr><th>Report</th><th>Built</th>"
+    + "<th>Size</th><th></th></tr></thead><tbody>"
     + rows.map(r => `<tr>
-        <td>${r.name}</td>
+        <td class="rname">${r.name}</td>
         <td class="n">${r.modified}</td>
         <td class="n">${r.size_kb} KB</td>
         <td><div class="acts">
           <a href="/report/${encodeURIComponent(r.name)}" target="_blank" rel="noopener">Open</a>
           <a href="/download/${encodeURIComponent(r.name)}" download>Download</a>
           <a href="#" data-publish="${r.name}">Publish</a>
+          <a href="#" data-copy="${r.name}">Copy link</a>
         </div></td>
       </tr>`).join("")
-    + "</tbody></table>";
+    + "</tbody></table></div>";
+}
+
+// The published address of a report, which is where `publish` puts it.
+function publishedUrl(name) {
+  if (!publishBucket) return "";
+  return `https://storage.googleapis.com/${publishBucket}/reports/${encodeURIComponent(name)}`;
+}
+
+// Copying needs a secure context, and the app is served over plain http on a
+// laptop. The textarea fallback is what makes the button work there rather
+// than failing silently on the one machine it is most used from.
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (err) { /* fall through */ }
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  area.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (err) { ok = false; }
+  document.body.removeChild(area);
+  return ok;
 }
 
 $("go").onclick = async () => {
@@ -225,10 +270,12 @@ $("go").onclick = async () => {
 
 // ---------------------------------------------------------------- publish
 let publishEnabled = false;
+let publishBucket = "";
 
 async function loadPublishConfig() {
   const cfg = await (await fetch("/api/publish-config")).json();
   publishEnabled = cfg.enabled;
+  publishBucket = cfg.bucket || "";
   if (!publishEnabled) {
     $("pubnote").textContent =
       "Publishing is off — set GCS_BUCKET in .env to enable shareable links.";
@@ -282,9 +329,39 @@ async function publishReport(name, trigger) {
 // rather than bound to rows that get replaced.
 document.addEventListener("click", (event) => {
   const link = event.target.closest("[data-publish]");
-  if (!link) return;
+  if (link) {
+    event.preventDefault();
+    publishReport(link.dataset.publish, link);
+    return;
+  }
+
+  const copy = event.target.closest("[data-copy]");
+  if (!copy) return;
   event.preventDefault();
-  publishReport(link.dataset.publish, link);
+  const url = publishedUrl(copy.dataset.copy);
+  if (!url) {
+    copy.textContent = "No bucket";
+    setTimeout(() => { copy.textContent = "Copy link"; }, 1600);
+    return;
+  }
+  // The address is the one `publish` uploads to, so it is right whether or not
+  // this report has been published yet -- and saying "Copied" for a report
+  // that is not up there would be a link to a 404.
+  copyText(url).then(ok => {
+    if (!ok) {
+      // A browser can refuse clipboard access and there is nothing to be done
+      // about it, but "Copy failed" on its own leaves you with no way to get
+      // the link. Putting it in the field and selecting it means Ctrl+C still
+      // works, which is the difference between a degraded button and a
+      // useless one.
+      const field = $("puburl");
+      if (field) { field.value = url; field.select(); }
+      copy.textContent = "Selected — Ctrl+C";
+    } else {
+      copy.textContent = "Copied";
+    }
+    setTimeout(() => { copy.textContent = "Copy link"; }, 2200);
+  });
 });
 
 $("pubcopy").onclick = async () => {

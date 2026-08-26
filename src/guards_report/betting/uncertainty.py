@@ -265,6 +265,11 @@ CALIBRATION_FILE = "market_calibration.json"
 
 # Keys as the calibration script writes them, mapped from the market names the
 # betting side uses.
+def _line_key(line: float) -> str:
+    """How a line is spelled in the stored record. 4.5 and 4.50 are one line."""
+    return f"{float(line):g}"
+
+
 MARKET_KEYS = {
     "total": "total",
     "f5_moneyline": "first_five",
@@ -296,20 +301,38 @@ def load_market_calibration(root) -> dict:
 
 def market_sigma(
     calibration: dict, market: str, probability: float,
+    line: float | None = None,
 ) -> float | None:
-    """Systematic error for one market, at the region this prediction sits in.
+    """Systematic error for one market, at the line and region of this bet.
 
     Pooled across bins for the same reason the win model's is: a per-bin figure
     is a noisy estimate floored at zero, and flooring one biases it upward, so
     whichever bin happened to deviate would set the standard error. The bin's
     own resolution is the floor, which in practice is what binds.
+
+    Read per line, because the error is not the same at each of them. Measured
+    on strikeouts, the model overstates by 1.8 points at 4.5 and understates by
+    3.5 at 6.5 and 8.5 -- the opposite direction and twice the size -- while the
+    standard error doubles. Returns None when the posted line has no record of
+    its own, which the guide treats as unstakeable rather than reaching for a
+    neighbour's figure.
     """
     if not calibration:
         return None
     record = calibration.get(MARKET_KEYS.get(market, market))
     if not record:
         return None
-    bins = record.get("bins") or []
+
+    by_line = record.get("by_line")
+    if by_line:
+        if line is None:
+            return None
+        chosen_line = by_line.get(_line_key(line))
+        if not chosen_line:
+            return None
+        bins = chosen_line.get("bins") or []
+    else:
+        bins = record.get("bins") or []
     if not bins:
         return None
 

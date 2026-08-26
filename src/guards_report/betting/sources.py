@@ -84,7 +84,7 @@ def first_five_total(projection, line: float,
     p_over = over / live
 
     sigma = uncertainty.market_sigma(
-        calibration or {}, types.F5_TOTAL, p_over)
+        calibration or {}, types.F5_TOTAL, p_over, line)
     return {
         (types.F5_TOTAL, "over", line): Belief(
             probability=p_over, sigma=sigma or uncertainty.MINIMUM_SIGMA,
@@ -159,7 +159,8 @@ def total(simulation: dict[str, Any], line: float,
         return {}
     p_over = over / live
 
-    sigma = uncertainty.market_sigma(calibration or {}, types.TOTAL, p_over)
+    sigma = uncertainty.market_sigma(
+        calibration or {}, types.TOTAL, p_over, line)
     return {
         (types.TOTAL, "over", line): Belief(
             probability=p_over, sigma=sigma or uncertainty.MINIMUM_SIGMA,
@@ -204,7 +205,12 @@ def runline(
     if live <= 0:
         return {}
     p_home = covers / live
-    sigma = uncertainty.market_sigma(calibration or {}, types.TOTAL, p_home)
+    # Read against the total's record at the nearest whole number of runs.
+    # The run line is the same score model seen from a different angle and
+    # has no measurement of its own, which is worth saying rather than
+    # implying a record that does not exist.
+    sigma = uncertainty.market_sigma(
+        calibration or {}, types.TOTAL, p_home, abs(line))
 
     # Each side is keyed with the number posted to *it*. A home favorite is
     # quoted -1.5 and the away side +1.5, so keying both on the home figure left
@@ -308,7 +314,8 @@ def strikeouts(prop, line: float,
     if not name:
         return {}
 
-    sigma = uncertainty.market_sigma(calibration or {}, types.STRIKEOUTS, p_over)
+    sigma = uncertainty.market_sigma(
+        calibration or {}, types.STRIKEOUTS, p_over, line)
     out: dict[tuple[str, str], Belief] = {}
     for alias in name_aliases(name):
         out[(types.STRIKEOUTS, f"{alias} over", line)] = Belief(
@@ -392,7 +399,7 @@ def batter_prop(prop, market: str, line: float,
     if not name:
         return {}
 
-    sigma = uncertainty.market_sigma(calibration or {}, market, p_over)
+    sigma = uncertainty.market_sigma(calibration or {}, market, p_over, line)
     out: dict[tuple[str, str], Belief] = {}
     for alias in name_aliases(name):
         out[(market, f"{alias} over", line)] = Belief(

@@ -93,17 +93,23 @@ def latest_markets(root: Path, game_date: date) -> list[types.Market]:
     stale row would compare our number to a price nobody can take any more, so
     the newest quote per selection wins.
 
-    The key deliberately excludes the line. A total re-entered at 9 after being
-    entered at 8.5 is the same market having moved, not a second market -- and
-    keying on the line kept both, so the page showed each strikeout prop twice,
-    both rows labelled with whichever line happened to be written last. Books do
-    post alternate lines, but a report covering one game a night takes them one
-    at a time, and the newest entry is the live one.
+    The key includes the line, and that is the second time this has changed.
+    Excluding it collapsed a moved total into one row, which was the intent --
+    but books also post alternate lines *at the same moment*, and against those
+    the rule just kept whichever arrived last. Jose Ramirez was quoted +525 to
+    homer and +7000 to homer twice; the second won, and once the calibrated-line
+    filter downstream refused it he had no home run market at all. A fix that
+    turned the wrong number into no number.
+
+    Keeping every line is the honest reading: a book offering 6.5, 7 and 7.5 on
+    the same total is offering three bets, not changing its mind three times.
+    Which of them can be priced is a question for the calibration record, and it
+    is answered downstream where the answer is known.
     """
     quotes = for_game(root, game_date)
     newest: dict[tuple, types.Quote] = {}
     for quote in quotes:                    # already oldest first
-        newest[(quote.market, quote.selection, quote.book)] = quote
+        newest[(quote.market, quote.selection, quote.line, quote.book)] = quote
 
     # The record keeps every book, which is what makes a price history. Pricing
     # wants one of them per market -- otherwise the page shows the same bet once

@@ -153,11 +153,19 @@ def test_a_perfectly_calibrated_market_leaves_no_systematic_error():
 
 @pytest.mark.skipif(not RECORD.is_file(), reason="markets not calibrated here")
 def test_every_market_the_page_prices_has_been_measured():
+    """Some markets carry one record and some carry one per line. Both count
+    as measured; neither being present does not."""
     stored = json.loads(RECORD.read_text(encoding="utf-8"))
     for key in ("hit", "home_run", "strikeout", "total", "first_five"):
         assert key in stored, key
-        assert stored[key]["bins"], f"{key} has no bins"
-        assert stored[key]["n"] > 1000, f"{key} measured on too little"
+        block = stored[key]
+        if block.get("by_line"):
+            assert block["by_line"], f"{key} has no lines"
+            for line, record in block["by_line"].items():
+                assert record["bins"], f"{key} at {line} has no bins"
+        else:
+            assert block["bins"], f"{key} has no bins"
+        assert block["n"] > 1000, f"{key} measured on too little"
 
 
 @pytest.mark.skipif(not RECORD.is_file(), reason="markets not calibrated here")
@@ -171,12 +179,25 @@ def test_the_record_is_held_out_rather_than_fitted():
 
 @pytest.mark.skipif(not RECORD.is_file(), reason="markets not calibrated here")
 def test_every_market_produces_a_usable_standard_error():
+    """Each at a line books actually post, since a per-line market has no
+    figure to give without one -- deliberately, because reaching for a
+    neighbour's is the failure this replaced."""
     stored = json.loads(RECORD.read_text(encoding="utf-8"))
-    for market in ("total", "f5_moneyline", "strikeouts", "hits", "home_runs"):
-        sigma = uncertainty.market_sigma(stored, market, 0.55)
+    for market, line in (("total", 8.5), ("f5_moneyline", None),
+                         ("strikeouts", 5.5), ("hits", 0.5),
+                         ("home_runs", 0.5)):
+        sigma = uncertainty.market_sigma(stored, market, 0.55, line)
         assert sigma is not None, market
         # Wide enough to be honest, narrow enough that a real edge can clear it.
         assert 0.001 < sigma < 0.15, f"{market}: {sigma}"
+
+
+@pytest.mark.skipif(not RECORD.is_file(), reason="markets not calibrated here")
+def test_a_strikeout_line_nobody_measured_gives_nothing():
+    """The guard rather than the happy path: an unmeasured line has to come
+    back empty so the guide refuses to stake it."""
+    stored = json.loads(RECORD.read_text(encoding="utf-8"))
+    assert uncertainty.market_sigma(stored, "strikeouts", 0.55, 12.5) is None
 
 
 # ---------------------------------------------------------------------------
@@ -289,3 +310,98 @@ def test_game_bets_are_kept_apart_from_player_bets():
         _row(ot.HITS, "steven kwan over"),
     ])
     assert [r.market for r in block.game_rows] == [ot.MONEYLINE]
+
+
+# ---------------------------------------------------------------------------
+# One record per line
+# ---------------------------------------------------------------------------
+# The error is not the same at every line. Measured on strikeouts, the model
+# overstates by 1.8 points at 4.5 and understates by 3.5 at 6.5 and 8.5 -- the
+# opposite direction and twice the size -- while the standard error doubles. A
+# record taken at one line and applied to another carries a bias pointing the
+# wrong way, which is not extrapolation so much as the wrong answer.
+
+def _per_line(**lines) -> dict:
+    return {"strikeout": {
+        "market": "strikeout",
+        "lines": list(lines),
+        "by_line": {
+            key: {"market": "strikeout", "line": float(key), "n": 4000,
+                  "bins": rows, "seasons": [2025], "note": ""}
+            for key, rows in lines.items()
+        },
+    }}
+
+
+def _bins(systematic: float) -> list[dict]:
+    return [
+        {"n": 2000, "p_low": 0.10, "p_high": 0.50, "p_mean": 0.30,
+         "frequency": 0.30 + systematic, "sigma_systematic": abs(systematic),
+         "resolution": 0.010},
+        {"n": 2000, "p_low": 0.50, "p_high": 0.95, "p_mean": 0.70,
+         "frequency": 0.70 + systematic, "sigma_systematic": abs(systematic),
+         "resolution": 0.010},
+    ]
+
+
+def test_each_line_is_read_against_its_own_record():
+    record = _per_line(**{"4.5": _bins(-0.018), "8.5": _bins(+0.035)})
+    near = uncertainty.market_sigma(record, "strikeouts", 0.55, 4.5)
+    far = uncertainty.market_sigma(record, "strikeouts", 0.55, 8.5)
+    assert near is not None and far is not None
+    assert far > near, "the line with the larger measured error must price wider"
+
+
+def test_a_line_with_no_record_is_refused_rather_than_borrowing_a_neighbour():
+    """The whole failure this replaces. Reaching for the nearest measured line
+    is what applied a 4.5 record, and its bias, to an 8.5 bet."""
+    record = _per_line(**{"4.5": _bins(-0.018)})
+    assert uncertainty.market_sigma(record, "strikeouts", 0.55, 8.5) is None
+    assert uncertainty.market_sigma(record, "strikeouts", 0.55, 4.5) is not None
+
+
+def test_a_per_line_record_needs_the_line_to_be_named():
+    """Called without one there is no way to choose, and guessing is the bug."""
+    record = _per_line(**{"4.5": _bins(-0.018)})
+    assert uncertainty.market_sigma(record, "strikeouts", 0.55, None) is None
+
+
+def test_the_line_is_matched_however_it_is_spelled():
+    record = _per_line(**{"4.5": _bins(-0.018)})
+    assert uncertainty.market_sigma(record, "strikeouts", 0.55, 4.50) is not None
+    assert uncertainty._line_key(4.50) == uncertainty._line_key(4.5)
+
+
+def test_a_single_record_market_still_works_without_lines():
+    """Hits and home runs are posted at one number that matters, so they keep a
+    single record and must not be broken by the per-line path."""
+    single = {"hit": {"market": "hit", "line": 0.5, "n": 1000,
+                      "bins": _bins(-0.02), "seasons": [2025], "note": ""}}
+    assert uncertainty.market_sigma(single, "hits", 0.55, 0.5) is not None
+    assert uncertainty.market_sigma(single, "hits", 0.55, None) is not None
+
+
+@pytest.mark.skipif(not RECORD.is_file(), reason="markets not calibrated here")
+def test_the_shipped_strikeout_record_covers_the_lines_books_post():
+    stored = json.loads(RECORD.read_text(encoding="utf-8"))
+    by_line = stored["strikeout"].get("by_line") or {}
+    assert by_line, "strikeouts must be measured per line"
+    for line in ("4.5", "5.5", "6.5", "7.5", "8.5"):
+        assert line in by_line, f"no record at {line}"
+        assert by_line[line]["bins"], f"{line} has no bins"
+
+
+@pytest.mark.skipif(not RECORD.is_file(), reason="markets not calibrated here")
+def test_the_measured_error_really_does_differ_by_line():
+    """The finding this whole change rests on. If it ever stops being true, one
+    record would do and this complexity is not paying for itself."""
+    stored = json.loads(RECORD.read_text(encoding="utf-8"))
+    by_line = stored["strikeout"]["by_line"]
+
+    def gap(line: str) -> float:
+        rows = by_line[line]["bins"]
+        return sum(b["frequency"] - b["p_mean"] for b in rows) / len(rows)
+
+    assert gap("4.5") < 0 < gap("8.5"), (
+        f"expected the bias to flip sign: 4.5 {gap('4.5'):+.4f}, "
+        f"8.5 {gap('8.5'):+.4f}")
