@@ -120,8 +120,10 @@ def _why_it_died(returncode: int | None, output_path: str | None) -> str:
     is the difference between a mystery and a memory limit.
     """
     if returncode == -9:
-        return ("build was killed (signal 9) -- almost certainly out of memory. "
-                "Raise the service's memory limit.")
+        return ("build was killed (signal 9). Either the container hit its "
+                "memory limit, or nothing was connected and the instance was "
+                "reclaimed with the build still inside it. The logs tell them "
+                "apart: an out-of-memory event is recorded, a reclaim is not.")
     if returncode == 2:
         return "no game found for that date"
     if returncode == 0 and not output_path:

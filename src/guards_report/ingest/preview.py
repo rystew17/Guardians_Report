@@ -19,6 +19,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -29,6 +30,7 @@ from guards_report.config import (
     HITTER_SPLIT_CODES,
     PITCHER_SPLIT_CODES,
     REPO_ROOT,
+    STATCAST_WORKERS,
     Settings,
 )
 from guards_report.metrics import highlights as hl
@@ -1127,20 +1129,43 @@ def build_preview(
             lineup_source=lineup_source, lineup_note=lineup_note,
         )
 
-    # Pitch-level Statcast, per player. This is the slow part of a run -- one
-    # request each -- so it happens last, after everything cheap has succeeded.
+    # Pitch-level Statcast, per player, and the slow part of a run: about fifty
+    # requests, each a season of pitch-level rows. Fetched one after another
+    # they were most of the build's wall time, and almost all of that was spent
+    # waiting rather than working -- which on Cloud Run was long enough for the
+    # phone that asked for the report to give up and take the container with it.
+    #
+    # Each player is independent, so they overlap. The rate limiter is
+    # process-wide and still spaces every request start, so this reads more of
+    # somebody else's server at once but no faster per second than before.
+    #
+    # Assignment stays on this thread. The workers only fetch and parse; the
+    # boxes they belong to are written here, as results arrive, so nothing is
+    # mutated from two threads at once.
     if include_statcast:
-        for section in sections.values():
-            for box in section.batters:
-                box.statcast_zones, box.spray = _statcast_for(
-                    archiver, player_id=box.player_id, season=season,
-                    perspective="batter", bats=box.hand, as_of=on,
-                )
-            for box in section.pitchers:
-                box.statcast_zones, _ = _statcast_for(
-                    archiver, player_id=box.player_id, season=season,
-                    perspective="pitcher", bats=None, as_of=on,
-                )
+        wanted = [
+            (box, "batter", box.hand)
+            for section in sections.values() for box in section.batters
+        ] + [
+            (box, "pitcher", None)
+            for section in sections.values() for box in section.pitchers
+        ]
+        with ThreadPoolExecutor(max_workers=STATCAST_WORKERS) as pool:
+            pending = {
+                pool.submit(
+                    _statcast_for, archiver, player_id=box.player_id,
+                    season=season, perspective=perspective, bats=bats, as_of=on,
+                ): (box, perspective)
+                for box, perspective, bats in wanted
+            }
+            for done in as_completed(pending):
+                box, perspective = pending[done]
+                # _statcast_for swallows its own failures and returns empties,
+                # so one unreadable player cannot cost the other fifty-one.
+                zones, spray = done.result()
+                box.statcast_zones = zones
+                if perspective == "batter":
+                    box.spray = spray
 
     # -- current series ------------------------------------------------------
     # Box scores for the games already played in this set, plus each player's

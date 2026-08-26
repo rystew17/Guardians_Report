@@ -17,6 +17,7 @@ import hashlib
 import json
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -131,7 +132,14 @@ class Archiver:
             path.parent.mkdir(parents=True, exist_ok=True)
             # Write to a temp name then rename, so an interrupted run can never
             # leave a truncated file sitting at a valid content hash.
-            tmp = path.with_suffix(".gz.partial")
+            #
+            # The temp name carries a unique suffix because fetches now run in
+            # parallel. Derived from the digest alone, two threads storing the
+            # same bytes shared one partial file, and one could rename it out
+            # from under the other mid-write -- publishing a truncated body at
+            # a hash that certifies it complete, which is the one failure this
+            # whole scheme exists to prevent.
+            tmp = path.with_suffix(f".gz.{uuid.uuid4().hex}.partial")
             with gzip.open(tmp, "wb") as handle:
                 handle.write(content)
             tmp.replace(path)

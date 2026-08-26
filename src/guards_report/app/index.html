@@ -273,36 +273,34 @@ $("go").onclick = async () => {
     log.appendChild(div);
     log.scrollTop = log.scrollHeight;
   };
+  // Holding this connection is not just how progress is watched -- it is what
+  // keeps the build alive. Cloud Run reclaims an instance once nothing is in
+  // flight, and reclaiming it kills the build inside. An earlier version of
+  // this comment claimed CPU-always-allocated meant the server kept building
+  // after the client went away; it does not. It grants CPU while the instance
+  // lives and has no say in whether it lives.
+  //
+  // So do not close on error. EventSource reconnects by itself, and a
+  // reconnect puts a request back in flight within a second or two, which is
+  // what a screen lock or a wifi handover needs. Only give up once the gap has
+  // gone on long enough that the instance is gone regardless.
+  let dropped = 0;
+  stream.onopen = () => {
+    if (dropped) setStatus("Reconnected — still building.", "warn");
+    dropped = 0;
+  };
   stream.onerror = () => {
+    dropped += 1;
+    if (dropped <= 6) {
+      setStatus("Connection dropped — reconnecting to keep the build "
+                + "alive…", "warn");
+      return;                       // let EventSource retry on its own
+    }
     stream.close();
     btn.disabled = false;
-    // A dropped stream is not a failed build, and calling it one was
-    // misleading. The server keeps building after the connection goes, which
-    // is the whole reason this service runs with CPU always allocated. On a
-    // phone it fires routinely -- screen lock, wifi handing over to cellular --
-    // and it fires identically when the container is killed, so nothing here
-    // can tell those apart. Say only what is known, then go look for the
-    // report rather than guessing at it.
-    setStatus("Connection to the build dropped. It may still be running — "
-              + "the report will appear below when it lands.", "warn");
-    const seen = new Set([...document.querySelectorAll("#reports td.rname")]
-                         .map(cell => cell.textContent));
-    let tries = 0;
-    const watch = setInterval(async () => {
-      tries += 1;
-      await loadReports();
-      const fresh = [...document.querySelectorAll("#reports td.rname")]
-        .map(cell => cell.textContent).find(name => !seen.has(name));
-      if (fresh) {
-        clearInterval(watch);
-        setStatus("Report ready.", "done");
-        window.open(`/report/${encodeURIComponent(fresh)}`, "_blank", "noopener");
-      } else if (tries >= 40) {
-        clearInterval(watch);
-        setStatus("No report appeared. Check the server logs — "
-                  + "scripts/cloud_logs.py reads them.", "err");
-      }
-    }, 15000);
+    setStatus("Lost the build. The server drops it when nothing is "
+              + "connected — try again and keep this page open.", "err");
+    loadReports();
   };
 };
 

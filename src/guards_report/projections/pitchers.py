@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -25,6 +26,14 @@ from guards_report.metrics import formulas as f
 
 BATCH = 25          # pitcher ids per request; the endpoint takes a list
 TIMEOUT = 120
+
+# Game-log batches in flight at once. Each is a large response and takes
+# several seconds, and fetched one after another they were about four minutes
+# of a refresh -- nearly all of it spent waiting. The batches are independent,
+# so overlapping the waiting costs the source no more work, just less idle time
+# on our side. Kept well below the Statcast pool because these responses are
+# much bigger.
+FETCH_WORKERS = 6
 
 # Counting stats summed over a window. Rates are computed from these sums, never
 # averaged from per-game rates -- averaging rates weights a 1-inning relief
@@ -60,15 +69,27 @@ def _url(ids: Iterable[int], season: int) -> str:
     )
 
 
+def _fetch_batch(chunk: list[int], season: int) -> dict[str, Any]:
+    with urllib.request.urlopen(_url(chunk, season), timeout=TIMEOUT) as response:
+        return json.load(response)
+
+
 def fetch_season(pitcher_ids: list[int], season: int) -> list[dict[str, Any]]:
     """Per-start rows for the given pitchers in one season."""
     rows: list[dict[str, Any]] = []
 
-    for start in range(0, len(pitcher_ids), BATCH):
-        chunk = pitcher_ids[start:start + BATCH]
-        with urllib.request.urlopen(_url(chunk, season), timeout=TIMEOUT) as response:
-            payload = json.load(response)
+    chunks = [pitcher_ids[start:start + BATCH]
+              for start in range(0, len(pitcher_ids), BATCH)]
 
+    # `map` hands the payloads back in the order the chunks went out, so the
+    # rows come out in the same order they always did. Parallelism here must
+    # not reach the model as a reshuffle: the corpus is grouped and fitted
+    # downstream, and a run that returned rows in arrival order would be
+    # reproducible only by luck.
+    with ThreadPoolExecutor(max_workers=FETCH_WORKERS) as pool:
+        payloads = list(pool.map(lambda c: _fetch_batch(c, season), chunks))
+
+    for payload in payloads:
         for person in payload.get("people", []):
             pid = person.get("id")
             for block in person.get("stats", []):

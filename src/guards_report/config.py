@@ -91,6 +91,17 @@ SPLIT_LABELS = {
 # servers and the whole project depends on continued access.
 
 REQUESTS_PER_SECOND = 4.0
+
+# Statcast is fetched one player at a time, ~50 of them, and each is a season
+# of pitch-level rows. Serially that is the whole runtime of a build: every
+# request sits idle waiting for the one before it to come back.
+#
+# These fetches are independent -- different players, no shared state -- so
+# they overlap safely. This is not a way around the rate limit above: the
+# limiter spaces request *starts* process-wide and still does, so eight in
+# flight at a typical latency stays comfortably under four a second. What
+# overlaps is the waiting, which is all the time was ever spent on.
+STATCAST_WORKERS = 8
 REQUEST_TIMEOUT_SECONDS = 45
 MAX_RETRIES = 4
 USER_AGENT = (
