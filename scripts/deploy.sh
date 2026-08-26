@@ -19,6 +19,13 @@
 #   --timeout 900         a cold report build takes a few minutes
 #   --min-instances 0     scale to nothing when unused; a cold start costs a
 #                         slower first request and no money in between
+#   --no-cpu-throttling   the one that is not optional. Cloud Run allocates
+#                         CPU only while a request is in flight, and a report
+#                         build runs after the response that started it --
+#                         throttled, it logged one line and then sat for ten
+#                         minutes. It bills CPU for an instance's whole life
+#                         rather than per request, which scaling to zero is
+#                         what bounds.
 #
 # ACCESS_TOKEN is required on every request once set. It is not authentication
 # and does not pretend to be: it stops a URL that leaks from becoming a
@@ -31,7 +38,10 @@ REGION="${REGION:-us-central1}"
 PROJECT="${PROJECT:-$(gcloud config get-value project 2>/dev/null)}"
 BUCKET="${BUCKET:-$(grep -E '^GCS_BUCKET=' .env | cut -d= -f2- | tr -d '\r')}"
 ODDS_KEY="${ODDS_KEY:-$(grep -E '^ODDS_API_KEY=' .env | cut -d= -f2- | tr -d '\r')}"
-TOKEN="${ACCESS_TOKEN:-}"
+# Read from .env before generating one. A fresh token on every deploy is a
+# redeploy that silently invalidates the bookmark on your phone, which reads
+# as the service having broken rather than as the token having changed.
+TOKEN="${ACCESS_TOKEN:-$(grep -E '^ACCESS_TOKEN=' .env 2>/dev/null | cut -d= -f2- | tr -d '\r')}"
 
 if [[ -z "${PROJECT}" || "${PROJECT}" == "(unset)" ]]; then
   echo "No project set. Run: gcloud config set project <id>" >&2
@@ -60,6 +70,7 @@ gcloud run deploy "${SERVICE}" \
   --region "${REGION}" \
   --platform managed \
   --allow-unauthenticated \
+  --no-cpu-throttling \
   --memory 2Gi \
   --cpu 2 \
   --timeout 900 \
@@ -68,7 +79,7 @@ gcloud run deploy "${SERVICE}" \
   --concurrency 4 \
   --add-volume "name=data,type=cloud-storage,bucket=${BUCKET}" \
   --add-volume-mount "volume=data,mount-path=/gcs" \
-  --set-env-vars "GCP_PROJECT=${PROJECT},GCS_BUCKET=${BUCKET},DATA_DIR=/gcs/data,RAW_ARCHIVE_DIR=/gcs/data/raw,OUTPUT_DIR=/tmp/out,ODDS_API_KEY=${ODDS_KEY},ACCESS_TOKEN=${TOKEN}"
+  --set-env-vars "GCP_PROJECT=${PROJECT},GCS_BUCKET=${BUCKET},DATA_DIR=/gcs/data,RAW_ARCHIVE_DIR=/gcs/data/raw,OUTPUT_DIR=/gcs/out,ODDS_API_KEY=${ODDS_KEY},ACCESS_TOKEN=${TOKEN}"
 
 URL="$(gcloud run services describe "${SERVICE}" \
   --project "${PROJECT}" --region "${REGION}" --format='value(status.url)')"
