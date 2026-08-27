@@ -353,11 +353,18 @@ def running_rates_decayed(
     # and an alpha this small the series is seeded on the player's first plate
     # appearance and needs hundreds of chances to escape it, which made every
     # early-season rate approximately "whatever happened his first time up".
-    def weighted(series: pd.Series) -> pd.Series:
-        return series.ewm(alpha=1 - lam, adjust=True).mean()
-
+    #
+    # Taken through `groupby(...).ewm(...)` rather than `transform` with a
+    # function. A transform calls back into Python once per player; the grouped
+    # ewm is one pass in pandas' own implementation. The numbers are the same
+    # and this was eleven seconds of a build.
     grouped = work.groupby(side, sort=False)["hit"]
-    work["ewm_rate"] = grouped.transform(weighted)
+    work["ewm_rate"] = (
+        grouped.ewm(alpha=1 - lam, adjust=True).mean()
+        .reset_index(level=0, drop=True)
+        .sort_index()
+        .to_numpy()
+    )
     work["pa"] = work.groupby(side, sort=False).cumcount() + 1
 
     # Effective sample size is the sum of the geometric weights actually

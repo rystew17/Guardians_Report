@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 import requests
 
@@ -73,10 +73,18 @@ class FetchResult:
 
 
 class _RateLimiter:
-    """Process-wide minimum spacing between requests.
+    """Minimum spacing between requests to one host.
 
     Deliberately conservative. These are free, unauthenticated endpoints run by
     someone else, and the project stops working if we get blocked.
+
+    Per host, not per process. The spacing is a courtesy to whoever is serving
+    the request, and one shared budget made every host pay for traffic to the
+    others: a build fetches about fifty pitch-level seasons from Savant and
+    forty-odd payloads from the stats API, and queueing them through a single
+    four-a-second gate spent nineteen seconds asleep. Neither host was being
+    spared anything by that -- each was already under its own limit -- so the
+    waiting bought nothing but a longer build.
     """
 
     def __init__(self, per_second: float) -> None:
@@ -92,7 +100,18 @@ class _RateLimiter:
             self._last_call = time.monotonic()
 
 
-_limiter = _RateLimiter(REQUESTS_PER_SECOND)
+_limiters: dict[str, _RateLimiter] = {}
+_limiters_lock = threading.Lock()
+
+
+def _limiter_for(url: str) -> _RateLimiter:
+    """The limiter guarding one host, created on first use."""
+    host = urlsplit(url).netloc.lower() or "unknown"
+    with _limiters_lock:
+        limiter = _limiters.get(host)
+        if limiter is None:
+            limiter = _limiters[host] = _RateLimiter(REQUESTS_PER_SECOND)
+        return limiter
 _session: requests.Session | None = None
 _session_lock = threading.Lock()
 
@@ -179,7 +198,7 @@ def get_json(
     for attempt in range(retries):
         if attempt:
             time.sleep(2.0 ** (attempt - 1))
-        _limiter.wait()
+        _limiter_for(full).wait()
         try:
             # A connect timeout and a read timeout, separately. A single number
             # covers neither case well: a host that accepts the connection and
@@ -223,7 +242,7 @@ def fetch(
             # 1s, 2s, 4s, ... plus the rate limiter's own spacing.
             time.sleep(2.0 ** (attempt - 1))
 
-        _limiter.wait()
+        _limiter_for(full_url).wait()
         started = time.monotonic()
         try:
             # Connect and read timed separately. One number covers neither
