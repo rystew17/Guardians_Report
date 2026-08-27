@@ -1157,15 +1157,20 @@ def build_batter_reference(pitch, *, minimum_pa: int = 25):
     pitch = _prepare(pitch)
     ends = pitch[pitch["events"].notna() & (pitch["events"] != "")]
 
+    # Aggregated column-wise rather than with `groupby.apply`. An apply runs the
+    # lambda once per group in Python -- eight million pitches across roughly
+    # twelve thousand batter-seasons -- where a column aggregation runs once in
+    # C. Same arithmetic, and the reference tables come out identical.
+    pitch = pitch.assign(_out_zone=~pitch["in_zone"].astype(bool))
     grouped = pitch.groupby(["batter", "season"])
+    # `clip(lower=1)` is the vectorised form of the `max(..., 1)` these used to
+    # carry: a batter who never swung must give nought rather than divide by it.
     frame = pd.DataFrame({
         "swing_rate": grouped["is_swing"].mean(),
-        "whiff_per_swing": grouped.apply(
-            lambda d: d["is_whiff"].sum() / max(d["is_swing"].sum(), 1),
-            include_groups=False),
-        "chase_rate": grouped.apply(
-            lambda d: d["chased"].sum() / max((~d["in_zone"]).sum(), 1),
-            include_groups=False),
+        "whiff_per_swing": (
+            grouped["is_whiff"].sum() / grouped["is_swing"].sum().clip(lower=1)),
+        "chase_rate": (
+            grouped["chased"].sum() / grouped["_out_zone"].sum().clip(lower=1)),
     })
 
     # Run value from the change in run expectancy on every pitch, which is the
@@ -1176,11 +1181,16 @@ def build_batter_reference(pitch, *, minimum_pa: int = 25):
     # precisely the ones the board leaves out, which is the point.
     frame["bat_rv"] = pitch.groupby(["batter", "season"])["delta_run_exp"].sum()
 
+    ends = ends.assign(
+        _k=ends["events"].isin(STRIKEOUTS),
+        _bb=ends["events"].isin(WALKS),
+        _hr=ends["events"] == "home_run",
+    )
     ended = ends.groupby(["batter", "season"])
     frame["pa"] = ended.size()
-    frame["k_rate"] = ended["events"].apply(lambda s: s.isin(STRIKEOUTS).mean())
-    frame["bb_rate"] = ended["events"].apply(lambda s: s.isin(WALKS).mean())
-    frame["hr_rate"] = ended["events"].apply(lambda s: (s == "home_run").mean())
+    frame["k_rate"] = ended["_k"].mean()
+    frame["bb_rate"] = ended["_bb"].mean()
+    frame["hr_rate"] = ended["_hr"].mean()
 
     expected = ends["estimated_woba_using_speedangle"].astype(float)
     expected = expected.where(
@@ -1199,6 +1209,11 @@ def build_batter_reference(pitch, *, minimum_pa: int = 25):
         & ~ends["events"].astype(str).str.contains("bunt", case=False, na=False)
         & ~ends["description"].astype(str).str.contains("bunt", case=False, na=False)
     ]
+    in_play = in_play.assign(
+        _gb=in_play["bb_type"] == "ground_ball",
+        _ld=in_play["bb_type"] == "line_drive",
+        _fb=in_play["bb_type"] == "fly_ball",
+    )
     balls = in_play.groupby(["batter", "season"])
     frame["barrel_rate"] = balls["barrel"].mean()
     frame["ev"] = balls["launch_speed"].mean()
@@ -1207,9 +1222,9 @@ def build_batter_reference(pitch, *, minimum_pa: int = 25):
     # rate are what a reader looks for and neither is a tool on its own.
     frame["max_ev"] = balls["launch_speed"].max()
     frame["hard_rate"] = balls["hard"].mean()
-    for name, kind in (("gb_rate", "ground_ball"), ("ld_rate", "line_drive"),
-                       ("fb_rate", "fly_ball")):
-        frame[name] = balls["bb_type"].apply(lambda s, k=kind: (s == k).mean())
+    for name, column in (("gb_rate", "_gb"), ("ld_rate", "_ld"),
+                         ("fb_rate", "_fb")):
+        frame[name] = balls[column].mean()
 
     out = frame[frame["pa"] >= minimum_pa].reset_index()
     # The last game the corpus behind this reached. A grade is a
@@ -1228,18 +1243,30 @@ def build_pitcher_reference(pitch, *, minimum_bf: int = 120):
     pitch = _prepare(pitch)
     ends = pitch[pitch["events"].notna() & (pitch["events"] != "")]
 
+    # Column-wise, for the same reason as the batter table: an apply runs its
+    # lambda once per group in Python, and there are thousands of groups over
+    # eight million pitches.
+    pitch = pitch.assign(_breaking=pitch["pitch_name"].isin(BREAKING))
     grouped = pitch.groupby(["pitcher", "season"])
+
+    # `primary_share` is how much of a pitcher's mix his most-used offering is.
+    # `value_counts(normalize=True).max()` per group becomes one count over
+    # three keys, then the largest share of each pitcher-season's total. Both
+    # drop unnamed pitches, so both normalise over the same denominator.
+    thrown = pitch.groupby(["pitcher", "season", "pitch_name"]).size()
+    by_arm = thrown.groupby(level=[0, 1])
+    primary = by_arm.max() / by_arm.sum()
+
     frame = pd.DataFrame({
-        "whiff_per_swing": grouped.apply(
-            lambda d: d["is_whiff"].sum() / max(d["is_swing"].sum(), 1),
-            include_groups=False),
+        "whiff_per_swing": (
+            grouped["is_whiff"].sum() / grouped["is_swing"].sum().clip(lower=1)),
         "zone_rate": grouped["in_zone"].mean(),
         "velo": grouped["release_speed"].mean(),
         "mix": grouped["pitch_name"].nunique(),
-        "primary_share": grouped["pitch_name"].apply(
-            lambda s: s.value_counts(normalize=True).max() if len(s) else np.nan),
-        "breaking_share": grouped["pitch_name"].apply(
-            lambda s: s.isin(BREAKING).mean() * 100.0 if len(s) else np.nan),
+        # Reindexed because a pitcher-season with no named pitch at all has no
+        # row in `thrown`, and must come back NaN rather than vanish.
+        "primary_share": primary.reindex(grouped.size().index),
+        "breaking_share": grouped["_breaking"].mean() * 100.0,
     })
 
     # Negated: a pitch that raises the batting team's run expectancy is a bad
@@ -1268,18 +1295,26 @@ def build_pitcher_reference(pitch, *, minimum_bf: int = 120):
             frame[column] = np.nan
             frame[f"{column}_n"] = np.nan
 
+    ends = ends.assign(
+        _k=ends["events"].isin(STRIKEOUTS),
+        _bb=ends["events"].isin(WALKS),
+    )
     ended = ends.groupby(["pitcher", "season"])
     frame["bf"] = ended.size()
-    frame["k_rate"] = ended["events"].apply(lambda s: s.isin(STRIKEOUTS).mean())
-    frame["bb_rate"] = ended["events"].apply(lambda s: s.isin(WALKS).mean())
+    frame["k_rate"] = ended["_k"].mean()
+    frame["bb_rate"] = ended["_bb"].mean()
     frame["bf_per_game"] = frame["bf"] / ended["game_pk"].nunique()
 
     in_play = ends[ends["bb_type"].notna() & (ends["bb_type"] != "")]
+    in_play = in_play.assign(
+        _gb=in_play["bb_type"] == "ground_ball",
+        _fb=in_play["bb_type"] == "fly_ball",
+    )
     balls = in_play.groupby(["pitcher", "season"])
     frame["barrel_allowed"] = balls["barrel"].mean()
     frame["ev_allowed"] = balls["launch_speed"].mean()
-    for name, kind in (("gb_rate", "ground_ball"), ("fb_rate", "fly_ball")):
-        frame[name] = balls["bb_type"].apply(lambda s, k=kind: (s == k).mean())
+    for name, column in (("gb_rate", "_gb"), ("fb_rate", "_fb")):
+        frame[name] = balls[column].mean()
 
     out = frame[frame["bf"] >= minimum_bf].reset_index()
     # The last game the corpus behind this reached. A grade is a
