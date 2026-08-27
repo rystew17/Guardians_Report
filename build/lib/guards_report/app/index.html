@@ -1,0 +1,519 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Guardians Scouting Report</title>
+<style>
+  :root{
+    --ink:#14181c; --ink-2:#4a545e; --ink-3:#7b8794;
+    --bg:#f6f7f8; --card:#fff; --line:#dde2e7;
+    --navy:#0c2340; --red:#e31937; --ok:#1a7f4b; --warn:#b45309;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:820px;margin:0 auto;padding:24px 16px 64px}
+  header{border-bottom:3px solid var(--navy);padding-bottom:14px;margin-bottom:22px}
+  h1{margin:0;font-size:21px;letter-spacing:-.01em}
+  h1 span{color:var(--red)}
+  .tag{color:var(--ink-3);font-size:13px;margin-top:3px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:8px;
+    padding:16px;margin-bottom:18px}
+  h2{margin:0 0 12px;font-size:12px;text-transform:uppercase;letter-spacing:.07em;
+    color:var(--ink-2)}
+  .row{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
+  label{display:block;font-size:12px;color:var(--ink-2);margin-bottom:4px}
+  input[type=date],select{font:inherit;padding:7px 9px;border:1px solid var(--line);
+    border-radius:6px;background:#fff;color:var(--ink)}
+  button{font:inherit;font-weight:600;padding:8px 18px;border:0;border-radius:6px;
+    background:var(--navy);color:#fff;cursor:pointer}
+  button:disabled{background:var(--ink-3);cursor:not-allowed}
+  .opts{display:flex;gap:16px;margin-top:12px;font-size:13px;color:var(--ink-2);flex-wrap:wrap}
+  .opts label{display:flex;gap:6px;align-items:center;margin:0;font-size:13px}
+  .note{font-size:12px;color:var(--ink-3);margin-top:10px;line-height:1.45}
+  #log{display:none;background:#0e1216;color:#c7d1db;border-radius:6px;padding:12px;
+    font:12px/1.6 var(--mono);max-height:320px;overflow:auto;white-space:pre-wrap;
+    overflow-wrap:anywhere}
+  #log.on{display:block}
+  .warnline{color:#f0b429}
+  .okline{color:#5fd39b}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line)}
+  th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3);
+    font-weight:600}
+  td.n{font-family:var(--mono);font-size:12px;color:var(--ink-3);white-space:nowrap}
+  a{color:var(--navy)}
+  .acts{display:flex;gap:10px;white-space:nowrap}
+  .empty{color:var(--ink-3);font-size:14px;padding:6px 0}
+  .status{margin-top:12px;font-size:13px;display:none}
+  .status.on{display:block}
+  .status.err{color:var(--red)}
+  .status.done{color:var(--ok)}
+  .status.warn{color:var(--warn)}
+  .pub{margin-top:14px;padding:12px;border:1px solid var(--line);border-radius:8px;
+    background:#f9fafb;display:none}
+  .pub.on{display:block}
+  .pub .plabel{font-size:11px;text-transform:uppercase;letter-spacing:.05em;
+    color:var(--ink-3);font-weight:600;margin-bottom:6px}
+  .pub .prow{display:flex;gap:8px;align-items:center}
+  .pub input{flex:1;font:12px/1.4 var(--mono);padding:8px 9px;border:1px solid var(--line);
+    border-radius:6px;background:#fff;color:var(--ink);min-width:0}
+  .pub button{padding:8px 14px;white-space:nowrap}
+  .pub .pnote{font-size:12px;color:var(--ink-3);margin-top:7px}
+  .pub .pnote.err{color:var(--red)}
+  button.ghost{background:#fff;color:var(--navy);border:1px solid var(--line);font-weight:600}
+  .modelrow { display:flex; align-items:center; gap:.75rem; flex-wrap:wrap;
+              margin-bottom:.5rem; }
+  .modelage { font-size:.85rem; color:#57626e; }
+  .modelage.due { color:#c02233; font-weight:600; }
+  .modelforce { font-size:.8rem; color:#57626e; display:flex;
+                align-items:center; gap:.35rem; }
+  button.secondary { background:#fff; color:#0c2340; border:1px solid #c2cbd4; }
+  button.secondary:hover:not(:disabled) { border-color:#0c2340; }
+
+/* A report list is wider than a phone. It scrolls inside its own box so the
+   page does not go sideways with it -- an overflowing table drags the whole
+   document and reads as a broken layout rather than as a wide table. */
+#reports .tablewrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+#reports table { min-width: 34rem; }
+#reports td.rname { white-space: nowrap; }
+#reports .acts { display: flex; gap: .6rem; white-space: nowrap; }
+@media (max-width: 640px) {
+  #reports table { font-size: .82rem; }
+}
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Cleveland <span>Guardians</span> — Scouting Report</h1>
+    <div class="tag">Every figure is fetched or computed in code. Times are US Eastern.</div>
+  </header>
+
+  <div class="card">
+    <h2>Generate</h2>
+    <div class="row">
+      <div>
+        <label for="date">Game date</label>
+        <input type="date" id="date">
+      </div>
+      <button id="go">Build report</button>
+    </div>
+    <div class="opts">
+      <label><input type="checkbox" id="statcast" checked> Pitch-level Statcast</label>
+      <label><input type="checkbox" id="analysis" checked> Written analysis</label>
+      <label><input type="checkbox" id="autopublish" checked> Publish when done</label>
+    </div>
+    <div class="note">
+      Statcast adds the handedness-split zone maps and spray charts; it turns a
+      seconds-long run into a few minutes. Written analysis gives every player a
+      profile, a form read and a matchup, plus the game note — computed from the
+      pitch corpus and the fitted models, not generated. No language model is
+      called, nothing is billed, and the same game yields the same words every
+      time.
+    </div>
+    <div class="status" id="status"></div>
+    <div id="log"></div>
+  </div>
+
+  <div class="card" id="modelcard">
+    <h2>MODELS</h2>
+    <div class="modelrow">
+      <span id="modelage" class="modelage">Checking…</span>
+      <button id="refit" class="secondary">Refit now</button>
+      <label class="modelforce"><input type="checkbox" id="forceoutcome">
+        Include the game-outcome model</label>
+    </div>
+    <div class="note">
+      The props and first-five models fit on the season in progress and go stale
+      in days; a refit takes about half a minute. The game-outcome coefficients
+      are fitted on completed seasons and do not move mid-season, so they are
+      left alone unless asked for &mdash; that run takes three or four minutes and
+      mostly refreshes the talent estimates. A refit that measures worse than the
+      model it would replace is rejected and the old one kept.
+    </div>
+
+    <div class="pub" id="pub">
+      <div class="plabel">Shareable link</div>
+      <div class="prow">
+        <input id="puburl" readonly value="">
+        <button id="pubcopy" class="ghost">Copy</button>
+      </div>
+      <div class="pnote" id="pubnote"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Reports</h2>
+    <div id="reports"><div class="empty">Loading…</div></div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+$("date").value = new Date().toLocaleDateString("en-CA", {timeZone: "America/New_York"});
+
+function setStatus(text, kind) {
+  const el = $("status");
+  el.textContent = text;
+  el.className = "status on" + (kind ? " " + kind : "");
+}
+
+async function loadReports() {
+  const rows = await (await fetch("/api/reports")).json();
+  const box = $("reports");
+  if (!rows.length) {
+    box.innerHTML = '<div class="empty">No reports yet.</div>';
+    return;
+  }
+  // Wrapped so a table too wide for a phone scrolls inside its own box. Left
+  // to itself it widened the page and took the whole site sideways with it,
+  // which reads as a broken layout rather than as a wide table.
+  box.innerHTML =
+    "<div class=\"tablewrap\"><table><thead><tr><th>Report</th><th>Built</th>"
+    + "<th>Size</th><th></th></tr></thead><tbody>"
+    + rows.map(r => `<tr>
+        <td class="rname">${r.name}</td>
+        <td class="n">${r.modified}</td>
+        <td class="n">${r.size_kb} KB</td>
+        <td><div class="acts">
+          <a href="/report/${encodeURIComponent(r.name)}" target="_blank" rel="noopener">Open</a>
+          <a href="/download/${encodeURIComponent(r.name)}" download>Download</a>
+          <a href="#" data-publish="${r.name}">Publish</a>
+          <a href="#" data-copy="${r.name}">Copy link</a>
+        </div></td>
+      </tr>`).join("")
+    + "</tbody></table></div>";
+}
+
+// The published address of a report, which is where `publish` puts it.
+function publishedUrl(name) {
+  if (!publishBucket) return "";
+  return `https://storage.googleapis.com/${publishBucket}/reports/${encodeURIComponent(name)}`;
+}
+
+// Copying needs a secure context, and the app is served over plain http on a
+// laptop. The textarea fallback is what makes the button work there rather
+// than failing silently on the one machine it is most used from.
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (err) { /* fall through */ }
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  area.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (err) { ok = false; }
+  document.body.removeChild(area);
+  return ok;
+}
+
+$("go").onclick = async () => {
+  const btn = $("go"), log = $("log");
+  btn.disabled = true;
+  log.textContent = "";
+  log.className = "on";
+  setStatus("Building… this can take a few minutes with Statcast enabled.");
+
+  const res = await fetch("/api/generate", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      date: $("date").value,
+      statcast: $("statcast").checked,
+      analysis: $("analysis").checked,
+    }),
+  });
+  const {job_id, error} = await res.json();
+  if (!job_id) {
+    btn.disabled = false;
+    setStatus(error || "Could not start a build.", "err");
+    return;
+  }
+  // 409 hands back the id of the build already running, and attaching to it is
+  // what pressing the button was for. Starting a second would put two builds in
+  // one container and take both down on the memory limit.
+  if (res.status === 409) {
+    setStatus("Already building — following the run in progress.", "warn");
+  }
+
+  const stream = new EventSource(`/api/events/${job_id}`);
+  stream.onmessage = (event) => {
+    const line = event.data;
+    if (line.startsWith("__DONE__")) {
+      stream.close();
+      btn.disabled = false;
+      const name = line.slice(9).trim();
+      setStatus("Report ready.", "done");
+      loadReports();
+      // Opening it is the point of pressing the button.
+      window.open(`/report/${encodeURIComponent(name)}`, "_blank", "noopener");
+      // Publish straight away when it is configured, so the shareable link is
+      // waiting rather than needing a second deliberate step.
+      if (publishEnabled && $("autopublish").checked) publishReport(name, null);
+      return;
+    }
+    if (line.startsWith("__FAILED__")) {
+      stream.close();
+      btn.disabled = false;
+      setStatus("Build failed — see the log above.", "err");
+      return;
+    }
+    const div = document.createElement("div");
+    if (/warning|error|skipped|stopped|INCOMPLETE/i.test(line)) div.className = "warnline";
+    else if (/\.html$/.test(line)) div.className = "okline";
+    else if (/^\s*analysis:|^\s*analysing/i.test(line)) div.className = "okline";
+    div.textContent = line;
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+  };
+  // Holding this connection is not just how progress is watched -- it is what
+  // keeps the build alive. Cloud Run reclaims an instance once nothing is in
+  // flight, and reclaiming it kills the build inside. An earlier version of
+  // this comment claimed CPU-always-allocated meant the server kept building
+  // after the client went away; it does not. It grants CPU while the instance
+  // lives and has no say in whether it lives.
+  //
+  // So do not close on error. EventSource reconnects by itself, and a
+  // reconnect puts a request back in flight within a second or two, which is
+  // what a screen lock or a wifi handover needs. Only give up once the gap has
+  // gone on long enough that the instance is gone regardless.
+  let dropped = 0;
+  stream.onopen = () => {
+    if (dropped) setStatus("Reconnected — still building.", "warn");
+    dropped = 0;
+  };
+  stream.onerror = () => {
+    dropped += 1;
+    if (dropped <= 6) {
+      setStatus("Connection dropped — reconnecting to keep the build "
+                + "alive…", "warn");
+      return;                       // let EventSource retry on its own
+    }
+    stream.close();
+    btn.disabled = false;
+    setStatus("Lost the build. The server drops it when nothing is "
+              + "connected — try again and keep this page open.", "err");
+    loadReports();
+  };
+};
+
+// ---------------------------------------------------------------- publish
+let publishEnabled = false;
+let publishBucket = "";
+
+async function loadPublishConfig() {
+  const cfg = await (await fetch("/api/publish-config")).json();
+  publishEnabled = cfg.enabled;
+  publishBucket = cfg.bucket || "";
+  if (!publishEnabled) {
+    $("pubnote").textContent =
+      "Publishing is off — set GCS_BUCKET in .env to enable shareable links.";
+    $("pubnote").className = "pnote";
+    $("pub").classList.add("on");
+    $("puburl").value = "";
+    $("pubcopy").disabled = true;
+  }
+}
+
+function showLink(url, note) {
+  $("pub").classList.add("on");
+  $("puburl").value = url;
+  $("pubcopy").disabled = false;
+  $("pubnote").textContent = note || "";
+  $("pubnote").className = "pnote";
+  $("puburl").focus();
+  $("puburl").select();
+}
+
+async function publishReport(name, trigger) {
+  const label = trigger ? trigger.textContent : null;
+  if (trigger) { trigger.textContent = "Publishing…"; }
+  $("pub").classList.add("on");
+  $("pubnote").className = "pnote";
+  $("pubnote").textContent = `Uploading ${name}…`;
+
+  try {
+    const res = await fetch("/api/publish", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({name}),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      showLink(data.url, `${name} · ${data.kb} KB · published ${data.published}`);
+    } else {
+      $("puburl").value = "";
+      $("pubnote").textContent = data.error;
+      $("pubnote").className = "pnote err";
+    }
+  } catch (err) {
+    $("pubnote").textContent = "Publish failed: " + err;
+    $("pubnote").className = "pnote err";
+  } finally {
+    if (trigger && label) { trigger.textContent = label; }
+  }
+}
+
+// The report list is rebuilt after every run, so the handler is delegated
+// rather than bound to rows that get replaced.
+document.addEventListener("click", (event) => {
+  const link = event.target.closest("[data-publish]");
+  if (link) {
+    event.preventDefault();
+    publishReport(link.dataset.publish, link);
+    return;
+  }
+
+  const copy = event.target.closest("[data-copy]");
+  if (!copy) return;
+  event.preventDefault();
+  const url = publishedUrl(copy.dataset.copy);
+  if (!url) {
+    copy.textContent = "No bucket";
+    setTimeout(() => { copy.textContent = "Copy link"; }, 1600);
+    return;
+  }
+  // The address is the one `publish` uploads to, so it is right whether or not
+  // this report has been published yet -- and saying "Copied" for a report
+  // that is not up there would be a link to a 404.
+  copyText(url).then(ok => {
+    if (!ok) {
+      // A browser can refuse clipboard access and there is nothing to be done
+      // about it, but "Copy failed" on its own leaves you with no way to get
+      // the link. Putting it in the field and selecting it means Ctrl+C still
+      // works, which is the difference between a degraded button and a
+      // useless one.
+      const field = $("puburl");
+      if (field) { field.value = url; field.select(); }
+      copy.textContent = "Selected — Ctrl+C";
+    } else {
+      copy.textContent = "Copied";
+    }
+    setTimeout(() => { copy.textContent = "Copy link"; }, 2200);
+  });
+});
+
+$("pubcopy").onclick = async () => {
+  const field = $("puburl");
+  if (!field.value) return;
+  field.select();
+  try {
+    await navigator.clipboard.writeText(field.value);
+  } catch {
+    // Clipboard access can be refused; the text is selected either way, so
+    // Ctrl+C still works and the button should say so rather than fail
+    // silently.
+    document.execCommand("copy");
+  }
+  const btn = $("pubcopy");
+  btn.textContent = "Copied";
+  setTimeout(() => { btn.textContent = "Copy"; }, 1400);
+};
+
+
+async function loadModelStatus() {
+  const label = $("modelage");
+  try {
+    const res = await fetch("/api/model-status");
+    // A 404 body is still valid JSON, so parsing it succeeds and every field
+    // reads as undefined. Without this check the panel reports "no fitted
+    // models" -- a claim about your data -- when the truth is that the server
+    // is older than the endpoint and never answered the question.
+    if (!res.ok) {
+      label.textContent = res.status === 404
+        ? "This endpoint is missing — the running server is older than the app. Restart it."
+        : `Could not read model status (HTTP ${res.status}).`;
+      label.className = "modelage due";
+      return;
+    }
+    const data = await res.json();
+    if (data.oldest === null || data.oldest === undefined) {
+      label.textContent = "No fitted models yet.";
+      label.className = "modelage due";
+      return;
+    }
+    const days = Math.round(data.oldest);
+    const plural = days === 1 ? "day" : "days";
+    label.textContent = data.due
+      ? `Oldest fit is ${days} ${plural} old — a refit is due.`
+      : `Oldest fit is ${days} ${plural} old.`;
+    label.className = data.due ? "modelage due" : "modelage";
+  } catch {
+    // A status panel that cannot reach the server should say so rather than
+    // sit on a stale reassurance.
+    label.textContent = "Could not read model status.";
+    label.className = "modelage due";
+  }
+}
+
+$("refit").onclick = async () => {
+  const btn = $("refit"), log = $("log");
+  btn.disabled = true;
+  log.textContent = "";
+  log.className = "on";
+  setStatus("Refitting…");
+
+  let res;
+  try {
+    res = await fetch("/api/refit", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({force_outcome: $("forceoutcome").checked}),
+    });
+  } catch {
+    // Unhandled, this left the button disabled and the status on "Refitting…"
+    // forever, which reads as a refit that is still going.
+    setStatus("Could not reach the server. Is it still running?", "failed");
+    btn.disabled = false;
+    return;
+  }
+  if (!res.ok) {
+    // FastAPI names its errors `detail`; ours are `error`. Reading only one of
+    // them turned a 404 into the generic fallback and hid which was which.
+    let body = {};
+    try { body = await res.json(); } catch { /* not every error has a body */ }
+    const said = body.error || body.detail;
+    setStatus(
+      res.status === 404
+        ? "The refit endpoint is missing — the running server is older than the app. Restart it."
+        : (said ? `Could not start a refit: ${said}` : `Could not start a refit (HTTP ${res.status}).`),
+      "failed");
+    btn.disabled = false;
+    return;
+  }
+  const {job_id} = await res.json();
+
+  const stream = new EventSource(`/api/events/${job_id}`);
+  stream.onmessage = (event) => {
+    const line = event.data;
+    if (line.startsWith("__DONE__")) {
+      stream.close();
+      btn.disabled = false;
+      // A rejected refit is the guard working, not an error, so it reports as
+      // done with what happened rather than as a failure.
+      setStatus(line.slice(9).trim() || "Refit complete.", "done");
+      loadModelStatus();
+      return;
+    }
+    if (line.startsWith("__FAILED__")) {
+      stream.close();
+      btn.disabled = false;
+      setStatus(line.slice(11).trim(), "failed");
+      return;
+    }
+    log.textContent += line + "\n";
+    log.scrollTop = log.scrollHeight;
+  };
+};
+
+loadReports();
+loadPublishConfig();
+loadModelStatus();
+</script>

@@ -336,3 +336,66 @@ def test_an_unknown_pitch_outcome_still_rebuilds(tmp_path, monkeypatch):
 def _empty_corpus():
     import pandas as pd
     return pd.DataFrame({"game_type": [], "season": []})
+
+
+def test_the_history_cache_returns_the_same_rows_as_reading_every_file(tmp_path):
+    """The cache is a read optimisation and nothing else. If it ever returns
+    different rows than the files it stands in for, every derived table built
+    from it is quietly wrong."""
+    import pandas as pd
+    from guards_report.projections import freshness
+
+    pitches = tmp_path / "pitches"
+    pitches.mkdir(parents=True)
+    for season in (2024, 2025, 2026):
+        for team in ("CLE", "DET"):
+            pd.DataFrame({
+                "season": [season] * 2, "pitcher": [1, 2],
+                "game_pk": [season * 10, season * 10 + 1],
+            }).to_parquet(pitches / f"{season}_{team}.parquet", index=False)
+
+    columns = ["season", "pitcher", "game_pk"]
+    direct = pd.concat(
+        [pd.read_parquet(p, columns=columns)
+         for p in sorted(pitches.glob("*.parquet"))],
+        ignore_index=True)
+    cached = freshness._pitch_frame(tmp_path, columns, "cache.parquet")
+
+    assert len(cached) == len(direct)
+    assert sorted(cached["game_pk"]) == sorted(direct["game_pk"])
+    assert (tmp_path / "models" / "cache.parquet").exists()
+
+
+def test_a_revised_prior_season_invalidates_the_cache(tmp_path):
+    """What makes the cache safe rather than merely fast.
+
+    Finished seasons are treated as immutable, which is why they can be
+    collapsed into one file. But a corpus chunk can be refetched and revised,
+    and serving a cache built before that revision would hide the correction
+    behind a file that looks perfectly valid.
+    """
+    import os
+    import time
+    import pandas as pd
+    from guards_report.projections import freshness
+
+    pitches = tmp_path / "pitches"
+    pitches.mkdir(parents=True)
+    old = pd.DataFrame({"season": [2025], "pitcher": [1], "game_pk": [1]})
+    old.to_parquet(pitches / "2025_CLE.parquet", index=False)
+    pd.DataFrame({"season": [2026], "pitcher": [9], "game_pk": [99]}).to_parquet(
+        pitches / "2026_CLE.parquet", index=False)
+
+    columns = ["season", "pitcher", "game_pk"]
+    first = freshness._pitch_frame(tmp_path, columns, "cache.parquet")
+    assert sorted(first["game_pk"]) == [1, 99]
+
+    # The prior season is revised, and its file is now newer than the cache.
+    revised = pd.DataFrame({"season": [2025, 2025], "pitcher": [1, 2],
+                            "game_pk": [1, 2]})
+    revised.to_parquet(pitches / "2025_CLE.parquet", index=False)
+    later = time.time() + 10
+    os.utime(pitches / "2025_CLE.parquet", (later, later))
+
+    again = freshness._pitch_frame(tmp_path, columns, "cache.parquet")
+    assert sorted(again["game_pk"]) == [1, 2, 99], "served a stale cache"

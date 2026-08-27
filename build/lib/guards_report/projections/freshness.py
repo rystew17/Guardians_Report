@@ -163,54 +163,6 @@ def _note_stale_fits(result: "Freshness") -> None:
             )
 
 
-def _pitch_frame(root: Path, columns: list[str], cache_name: str):
-    """The pitch corpus, projected to `columns`, read from as few files as it
-    can be.
-
-    Both rebuilds below need most of the corpus, and both used to read all 360
-    club-season files to get it. Locally that costs about four seconds. On
-    Cloud Run the corpus is on a GCS mount and it cost six minutes -- per
-    rebuild -- because the price there is per file opened, not per byte.
-
-    Only the current season's thirty files ever change. Every earlier season is
-    finished and its rows are fixed forever, so they are concatenated once into
-    a single cached file and read as one thereafter: 360 opens become 31.
-
-    The cache is keyed by the columns asked for, since the two rebuilds want
-    different ones, and it is rebuilt whenever any source file is newer than
-    it. That last part is what makes this safe rather than merely fast -- a
-    corpus file that gets refetched and revised must not be served from a cache
-    built before the revision.
-    """
-    directory = Path(root) / "pitches"
-    files = sorted(directory.glob("*.parquet"))
-    if not files:
-        return None
-
-    current = max(int(path.name[:4]) for path in files)
-    prior = [path for path in files if int(path.name[:4]) < current]
-    live = [path for path in files if int(path.name[:4]) == current]
-
-    frames = []
-    if prior:
-        cache = Path(root) / "models" / cache_name
-        newest = max(path.stat().st_mtime for path in prior)
-        stale = (not cache.exists()) or cache.stat().st_mtime < newest
-        if stale:
-            history = pd.concat(
-                [pd.read_parquet(path, columns=columns) for path in prior],
-                ignore_index=True,
-            )
-            cache.parent.mkdir(parents=True, exist_ok=True)
-            history.to_parquet(cache, index=False, compression="zstd")
-        else:
-            history = pd.read_parquet(cache)
-        frames.append(history)
-
-    frames.extend(pd.read_parquet(path, columns=columns) for path in live)
-    return pd.concat(frames, ignore_index=True)
-
-
 def rebuild_derived(root: Path) -> int | None:
     """Recompute the first-five starter table from the pitch corpus.
 
@@ -225,13 +177,19 @@ def rebuild_derived(root: Path) -> int | None:
     """
     from guards_report.projections import first5 as first5_module
 
+    directory = Path(root) / "pitches"
+    files = sorted(directory.glob("*.parquet"))
+    if not files:
+        return None
+
     columns = [
         "game_pk", "game_date", "season", "inning", "pitcher", "batting_team",
         "events", "post_bat_score", "bat_score",
     ]
-    pitch = _pitch_frame(root, columns, "f5_history_cache.parquet")
-    if pitch is None:
-        return None
+    pitch = pd.concat(
+        [pd.read_parquet(path, columns=columns) for path in files],
+        ignore_index=True,
+    )
     pitch["game_date"] = pd.to_datetime(pitch["game_date"])
 
     history = first5_module.starter_history(pitch)
@@ -252,11 +210,17 @@ def rebuild_profiles(root: Path) -> int | None:
     """
     from guards_report.insight import profile as profile_module
 
-    pitch = _pitch_frame(
-        root, list(profile_module.PITCH_COLUMNS_FOR_PROFILES),
-        "profiles_history_cache.parquet")
-    if pitch is None:
+    directory = Path(root) / "pitches"
+    files = sorted(directory.glob("*.parquet"))
+    if not files:
         return None
+
+    pitch = pd.concat(
+        [pd.read_parquet(path,
+                         columns=profile_module.PITCH_COLUMNS_FOR_PROFILES)
+         for path in files],
+        ignore_index=True,
+    )
     models = Path(root) / "models"
     models.mkdir(parents=True, exist_ok=True)
 
