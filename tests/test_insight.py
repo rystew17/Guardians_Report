@@ -255,3 +255,154 @@ def test_the_same_finding_reads_the_same_way_in_a_fresh_process():
         for _ in range(4)
     }
     assert len(runs) == 1, f"phrasing moved between processes: {runs}"
+
+
+# ---------------------------------------------------------------------------
+# Scope: the profile describes a season, and says so
+# ---------------------------------------------------------------------------
+
+class _Box:
+    def __init__(self, career=None, season=None):
+        self.career = career or {}
+        self.season = season or {}
+
+
+def _profiled(runs=25.0, sample=500, thin=False, kind="batter"):
+    from guards_report.insight import profile as prof
+    return prof.PlayerProfile(
+        player_id=1, kind=kind, runs_per_150=runs, bat_per_150=runs,
+        bat_grade="a serious bat", tier="a very good player",
+        sample=sample, thin=thin, position="CF")
+
+
+def test_the_profile_states_a_season_not_an_identity():
+    """The error a reader spotted before the code did.
+
+    Every grade here is computed from the current season, and the present tense
+    promoted four months of baseball into a claim about the man -- a hitter with
+    a first-ballot career reads as "an average bat" when the sentence says "is".
+    The measurement was right; the tense was the bug.
+    """
+    from guards_report.insight import dossier
+
+    said = dossier.write_profile(_profiled(), surname="Trout", box=_Box())
+    assert " is a " not in said and " is an " not in said, said
+
+    # The rule, not one phrasing of it: whichever frame was drawn, it has to
+    # date the claim. Asserting a literal "this season" would fail the moment
+    # the picker chose "On the year", which is equally scoped and equally fine.
+    from guards_report.insight import voice
+    assert any(marker in said.lower()
+               for marker in ("this season", "this year", "on the year")), said
+
+
+def test_every_season_frame_dates_its_claim():
+    """The frames vary so twenty-six profiles do not open identically. Each one
+    still has to say *when*, or the variation reintroduces the bug it is
+    decorating."""
+    from guards_report.insight import voice
+
+    for template in voice.SEASON_FRAMES:
+        said = template.format(name="X", tier="a very good player").lower()
+        assert any(m in said for m in ("this season", "this year", "on the year")), template
+        # Perfect tense, never "X is a very good player".
+        assert " is a " not in said and " is an " not in said, template
+
+
+def test_a_newcomer_is_named_as_one_rather_than_shrugged_at():
+    """A rookie in his second week and a veteran off the injured list used to
+    get the same line. They are opposite situations."""
+    from guards_report.insight import dossier
+
+    rookie = _Box(career={"atBats": 61}, season={"atBats": 61})
+    said = dossier.write_profile(
+        _profiled(sample=68, thin=True), surname="Delauter", box=rookie)
+    assert "new to the majors" in said
+    assert "should be read as a verdict" in said
+
+
+def test_a_veteran_in_limited_action_is_not_called_a_rookie():
+    """The failure that matters: 4,200 career at-bats is not a newcomer, and
+    saying so about a twelve-year veteran would discredit the whole page."""
+    from guards_report.insight import dossier
+
+    veteran = _Box(career={"atBats": 4260}, season={"atBats": 38})
+    said = dossier.write_profile(
+        _profiled(sample=41, thin=True), surname="Ramirez", box=veteran)
+    assert "new to the majors" not in said
+    assert "career at-bats" in said
+
+
+def test_career_totals_have_this_season_subtracted_back_out():
+    """Career includes the current year, so a rookie having a big season would
+    otherwise look like a player with a track record -- backwards."""
+    from guards_report.insight import dossier
+
+    box = _Box(career={"atBats": 400}, season={"atBats": 380})
+    assert dossier.service_before_this_season(box, "batter") == 20.0
+
+
+def test_a_missing_career_block_falls_back_rather_than_guessing():
+    from guards_report.insight import dossier
+
+    assert dossier.service_before_this_season(_Box(), "batter") is None
+    said = dossier.write_profile(
+        _profiled(sample=30, thin=True), surname="Nobody", box=_Box())
+    assert "too little to profile" in said
+
+
+def test_a_short_career_is_not_offered_as_evidence():
+    """The gap between the rookie line and a real track record.
+
+    163 career at-bats clears MLB's rookie threshold and still says almost
+    nothing. Telling a reader it "says more about him" than 39 this season
+    promises evidence that does not exist -- it is a second small sample, not
+    a bigger one.
+    """
+    from guards_report.insight import dossier
+
+    box = _Box(career={"atBats": 202}, season={"atBats": 39})
+    said = dossier.write_profile(
+        _profiled(sample=44, thin=True), surname="Moore", box=box)
+    assert "still establishing himself" in said
+    assert "say more about him" not in said
+    assert "new to the majors" not in said
+
+
+def test_a_thin_sample_is_caveated_not_withheld():
+    """A hitter who has hammered sixty-three plate appearances is worth reading
+    about; the reader simply has to be told it is sixty-three.
+
+    What stays withheld is the verdict -- the tier and the archetype -- because
+    a runs-per-150 figure extrapolated from sixteen games multiplies its own
+    noise by nine.
+    """
+    from guards_report.insight import dossier, profile as prof
+
+    tool = prof.Tool(name="hard", label="contact quality", grade=94.0, z=1.9)
+    player = prof.PlayerProfile(
+        player_id=7, kind="batter", runs_per_150=140.0, bat_per_150=140.0,
+        bat_grade="an elite bat", tier="an MVP-caliber player",
+        sample=63, thin=True, position="SS", tools={"hard": tool})
+
+    said = dossier.write_profile(
+        player, surname="Genao", box=_Box(career={"atBats": 4}, season={"atBats": 4}))
+
+    assert "new to the majors" in said            # the caveat leads
+    assert "contact quality" in said              # what he has done still lands
+    assert "94th percentile" in said
+    assert "MVP-caliber" not in said              # the verdict does not
+    assert "runs per 150" not in said             # nor the extrapolation
+
+
+def test_a_caveat_followed_by_evidence_does_not_double_its_full_stop():
+    """Pieces are joined with ". " and the closer adds one, so any piece that
+    punctuates itself lands a double. Visible on the card as "player.. Elite"."""
+    from guards_report.insight import dossier, profile as prof
+
+    tool = prof.Tool(name="glove", label="defense", grade=95.0, z=2.0)
+    player = prof.PlayerProfile(
+        player_id=9, kind="batter", sample=68, thin=True, tools={"glove": tool})
+    said = dossier.write_profile(
+        player, surname="Genao", box=_Box(career={"atBats": 4}, season={"atBats": 4}))
+    assert ".." not in said, said

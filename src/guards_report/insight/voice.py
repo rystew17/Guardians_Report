@@ -44,11 +44,11 @@ VALUE_BANDS: tuple[tuple[float, str, tuple[str, ...]], ...] = (
     (45.0, "mvp", (
         "an MVP-caliber player", "one of the two or three best in the league",
         "as good as this gets", "the best player on most fields he walks onto",
-        "a season people will remember", "carrying a franchise",
+        "in the MVP conversation", "carrying a franchise",
     )),
     (33.0, "superstar", (
         "a genuine superstar", "the kind of player a team is built around",
-        "a perennial All-Star", "a star by any measure",
+        "one of the game's best", "a star by any measure",
         "one of the best players in the league", "a headliner",
     )),
     (24.0, "allstar", (
@@ -146,6 +146,29 @@ def _index(*key: Any) -> int:
     return zlib.crc32(":".join(str(part) for part in key).encode())
 
 
+# How a season verdict is framed. Every one of these scopes the claim to this
+# year, which is the whole point of them -- but a card carries twenty-six
+# players and one fixed frame would open twenty-six paragraphs identically,
+# which reads as a template however varied the verdict inside it is.
+#
+# All are perfect tense or explicitly dated. None can be read as a claim about
+# the player rather than the season.
+SEASON_FRAMES = (
+    "{name} has been {tier} this season",
+    "This season {name} has been {tier}",
+    "{name} has played like {tier} this year",
+    "On the year {name} has been {tier}",
+    "{name} has given his team {tier} this season",
+)
+
+
+def season_frame(name: str, tier: str, *key: Any,
+                 avoid: Sequence[str] | None = None) -> str:
+    """One season-scoped opening for a profile."""
+    template = choose(SEASON_FRAMES, *key, avoid=avoid)
+    return template.format(name=name, tier=tier)
+
+
 def choose(
     options: Sequence[str], *key: Any, avoid: Sequence[str] | None = None
 ) -> str:
@@ -231,6 +254,11 @@ class Voice:
         phrase = choose(options, *key, avoid=self._recent.get("blurb", []))
         self._remember("blurb", phrase)
         return phrase
+
+    def frame(self, name: str, tier: str, *key: Any) -> str:
+        template = choose(SEASON_FRAMES, *key, avoid=self._recent.get("frame", []))
+        self._remember("frame", template)
+        return template.format(name=name, tier=tier)
 
     def team(self, code: str, *key: Any, **slots: Any) -> str:
         phrase = team_phrase(

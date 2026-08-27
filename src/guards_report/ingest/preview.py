@@ -86,6 +86,9 @@ class PlayerBox:
     # Career totals, for the context a single season cannot give: whether this
     # is a rookie's hot month or a ten-year veteran playing to his norm.
     career: dict[str, Any] = field(default_factory=dict)
+    # Career honours, as the feed returns them. Filtered downstream: most of
+    # what arrives here is Player of the Week and minor-league selections.
+    awards: list[dict[str, Any]] = field(default_factory=list)
 
     percentiles: dict[str, str] = field(default_factory=dict)
     expected: dict[str, str] = field(default_factory=dict)
@@ -449,7 +452,7 @@ def _arsenal_rows(rows, league_by_pitch) -> list[dict[str, Any]]:
 
 def _build_batter_box(person, entry, *, as_of, opposing_hand, league_hitting,
                       arsenal_by_player, league_by_pitch, savant,
-                      derived_percentiles=None) -> PlayerBox:
+                      derived_percentiles=None, awards=None) -> PlayerBox:
     pid = person["id"]
     rows = w.parse_game_logs({"stats": [{"splits": _stat_block(person, "gameLog")}]})
     prior = [r for r in rows if r.game_date < as_of]
@@ -476,7 +479,7 @@ def _build_batter_box(person, entry, *, as_of, opposing_hand, league_hitting,
         hand=(person.get("batSide") or {}).get("code"),
         position=(entry.get("position") or {}).get("abbreviation"),
         jersey=entry.get("jerseyNumber"),
-        season=season_stats, career=career,
+        season=season_stats, career=career, awards=list(awards or []),
         season_deltas=_deltas(season_stats, league_hitting, HITTER_DELTA_KEYS,
                               HITTER_LOWER_BETTER),
         windows=windows,
@@ -500,7 +503,7 @@ def _build_batter_box(person, entry, *, as_of, opposing_hand, league_hitting,
 
 def _build_pitcher_box(person, entry, *, as_of, fip_constant, league_pitching,
                        arsenal_by_player, league_by_pitch, savant,
-                       probable_starter_id) -> PlayerBox:
+                       probable_starter_id, awards=None) -> PlayerBox:
     pid = person["id"]
     rows = w.parse_game_logs({"stats": [{"splits": _stat_block(person, "gameLog")}]})
     prior = [r for r in rows if r.game_date < as_of]
@@ -531,7 +534,7 @@ def _build_pitcher_box(person, entry, *, as_of, fip_constant, league_pitching,
         hand=(person.get("pitchHand") or {}).get("code"),
         position="P", jersey=entry.get("jerseyNumber"),
         is_probable_starter=(pid == probable_starter_id),
-        season=season_stats, career=career,
+        season=season_stats, career=career, awards=list(awards or []),
         season_deltas=_deltas(season_stats, league_pitching, PITCHER_DELTA_KEYS,
                               PITCHER_LOWER_BETTER),
         windows=windows,
@@ -1019,6 +1022,21 @@ def build_preview(
         )
     )
 
+    # Career honours. Two requests for a whole card, because the awards hydrate
+    # batches on personIds exactly as the stat hydrates do -- and a failure here
+    # costs the career line and nothing else.
+    awards_by_player: dict[int, list[dict[str, Any]]] = {}
+    try:
+        for result in api.people(
+                archiver, person_ids=all_batter_ids + all_pitcher_ids,
+                hydrate="awards"):
+            for person in result.json().get("people", []):
+                pid = person.get("id")
+                if pid is not None:
+                    awards_by_player[int(pid)] = person.get("awards") or []
+    except Exception as exc:  # noqa: BLE001 -- never costs the report
+        print(f"  warning: career honours unavailable ({exc})", file=sys.stderr)
+
     hands: dict[str, str | None] = {}
     for side in ("home", "away"):
         pid = probable[side]
@@ -1039,7 +1057,8 @@ def build_preview(
                 opposing_hand=hands[opposite], league_hitting=league_hitting,
                 arsenal_by_player=batter_arsenal,
                 league_by_pitch=league_pitch_faced, savant=savant,
-        derived_percentiles=derived_percentiles,
+                derived_percentiles=derived_percentiles,
+                awards=awards_by_player.get(e["person"]["id"]),
             )
             for e in batter_entries if e["person"]["id"] in batter_people
         ]
@@ -1064,6 +1083,7 @@ def build_preview(
                 arsenal_by_player=pitcher_arsenal,
                 league_by_pitch=league_pitch_thrown, savant=savant,
                 probable_starter_id=probable[side],
+                awards=awards_by_player.get(e["person"]["id"]),
             )
             for e in pitcher_entries if e["person"]["id"] in pitcher_people
         ]

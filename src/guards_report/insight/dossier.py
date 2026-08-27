@@ -1,9 +1,18 @@
-"""The three-part player note: who he is, how he is going, how tonight sets up.
+"""The three-part player note: how he has played, how he is going, how tonight sets up.
+
+Everything here describes the **current season**, and says so. The grades, the
+tier and the archetype are all computed from this year alone, which is the right
+input for previewing tonight -- a career prior would carry a declining
+thirty-four-year-old at the level he held at twenty-seven. But stating a season
+measurement in the present tense turned it into a claim about the man: "X is
+good enough to build around" reads as an assessment of the player, when what was
+measured is four months of baseball. The tense carries that distinction and the
+section heading repeats it.
 
 The evaluators produce true isolated facts. This assembles them into the shape a
 reader actually uses, which is fixed and in this order:
 
-  1. **Profile** -- what kind of player he is, with the numbers behind it
+  1. **Season profile** -- how he has played this year, with the numbers behind it
   2. **Form** -- how he is going lately, and in this series
   3. **Matchup** -- how tonight sets up against this specific opponent
 
@@ -26,6 +35,7 @@ from typing import Any
 
 import numpy as np
 
+from guards_report.insight import accolades as acc
 from guards_report.insight import profile as prof
 from guards_report.insight import profile as profile_module
 from guards_report.insight import voice as voice_module
@@ -37,6 +47,7 @@ class Dossier:
 
     player_id: int
     kind: str
+    career: str = ""
     profile: str = ""
     form: str = ""
     matchup: str = ""
@@ -47,7 +58,8 @@ class Dossier:
     @property
     def parts(self) -> list[tuple[str, str]]:
         return [(name, text) for name, text in
-                (("Profile", self.profile), ("Form", self.form),
+                (("Career", self.career),
+                 ("Season profile", self.profile), ("Form", self.form),
                  ("Matchup", self.matchup)) if text]
 
     @property
@@ -137,20 +149,158 @@ def _say(voice, code: str, *key, **slots) -> str:
     return voice_module.matchup_phrase(code, *key, **slots)
 
 
-def write_profile(player: prof.PlayerProfile, *, surname: str, voice=None) -> str:
-    """Part one: what kind of player he is, and whether he is any good.
+def write_career(box: Any, *, surname: str) -> str:
+    """What he has already done, stated as fact rather than as a forecast.
+
+    Deliberately first, and deliberately separate. Every grade further down is
+    computed from this season, and a reader who meets "has been a serious bat
+    this season" cold can hear it as a verdict on the player. Meeting
+    "3x MVP, 12x All-Star" first makes the season line read as what it is --
+    an account of four months, not of a career.
+
+    It is not blended into the season estimate and must not be. A career prior
+    would carry a declining thirty-four-year-old at the level he held at
+    twenty-seven, which is exactly wrong for previewing tonight.
+
+    Empty is the normal answer. Most major leaguers have never won any of these,
+    and "no major awards" describes the large majority of them.
+    """
+    career = acc.build(box)
+    honours = acc.summarize(career)
+    if not honours:
+        return ""
+
+    line = f"{surname}: {honours}"
+    totals = career.totals or {}
+    games = int(totals.get("gamesPlayed") or 0)
+    if games >= 300:
+        bits = []
+        if totals.get("homeRuns") is not None:
+            bits.append(f"{int(totals['homeRuns']):,} home runs")
+        if totals.get("hits") is not None:
+            bits.append(f"{int(totals['hits']):,} hits")
+        if totals.get("avg"):
+            bits.append(f"{totals['avg']} career average")
+        if bits:
+            line += f". {games:,} games, " + ", ".join(bits)
+    return line + "."
+
+
+def _outs(innings: Any) -> int:
+    """MLB innings notation ("6.1" = six and one third) to whole outs."""
+    try:
+        whole, _, frac = str(innings).partition(".")
+        return int(whole) * 3 + (int(frac) if frac else 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+# MLB's own rookie thresholds, not invented ones: a batter stays a rookie below
+# 130 at-bats and a pitcher below 50 innings, counted before the current season.
+ROOKIE_AB = 130
+ROOKIE_IP = 50.0
+
+# Where a career becomes evidence worth pointing at.
+#
+# Separate from the rookie line and larger than it, because they answer
+# different questions. Clearing 130 at-bats makes a player no longer a rookie;
+# it does not give him a record that explains him better than the season in
+# front of you. Rate statistics settle somewhere near four hundred trips, so
+# below that a "career" is a second small sample rather than a bigger one --
+# and telling a reader that 163 at-bats "say more about him" than 39 promises
+# evidence that is not there.
+ESTABLISHED_AB = 400
+ESTABLISHED_IP = 150.0
+
+
+def service_before_this_season(box: Any, kind: str) -> float | None:
+    """How much big-league work a player had banked before this year.
+
+    Returns at-bats for a batter and innings for a pitcher, or None when the
+    career block is missing. The career totals include the current season, so
+    this season is subtracted back out -- otherwise a rookie having a big year
+    looks like a player with a track record, which is precisely backwards.
+    """
+    career = getattr(box, "career", None) or {}
+    season = getattr(box, "season", None) or {}
+    if not career:
+        return None
+    if kind == "batter":
+        return max(0.0, float(career.get("atBats") or 0)
+                   - float(season.get("atBats") or 0))
+    outs = _outs(career.get("inningsPitched")) - _outs(season.get("inningsPitched"))
+    return max(0.0, outs / 3.0)
+
+
+def _too_thin_to_profile(box: Any, player: prof.PlayerProfile, surname: str) -> str:
+    """What to say about a player there is not yet enough of.
+
+    The old line -- "40 plate appearances is too little to profile him on" --
+    was true and read as a shrug, and it said the same thing about a rookie in
+    his second week as about a twelve-year veteran back from the injured list.
+    Those are opposite situations: one has no track record yet, the other has a
+    long one this season is not describing.
+    """
+    unit = "plate appearances" if player.kind == "batter" else "batters faced"
+    served = "at-bats" if player.kind == "batter" else "innings"
+    batter = player.kind == "batter"
+    rookie_line = ROOKIE_AB if batter else ROOKIE_IP
+    established_line = ESTABLISHED_AB if batter else ESTABLISHED_IP
+
+    prior = service_before_this_season(box, player.kind)
+    if prior is None:
+        return f"{player.sample} {unit} is too little to profile {surname} on."
+
+    if prior < rookie_line:
+        banked = (f"{prior:,.0f} career {served} before this year"
+                  if prior else "no big-league time before this year")
+        return (
+            f"{surname} is new to the majors — {banked}, and {player.sample} "
+            f"{unit} since. There is not enough of a baseline yet to grade him, "
+            f"so nothing below should be read as a verdict on the player.")
+
+    if prior < established_line:
+        return (
+            f"{surname} is still establishing himself — {prior:,.0f} career "
+            f"{served} and {player.sample} {unit} this season. Neither is a "
+            f"large enough sample to profile him on, and the career is not much "
+            f"more of one than the season.")
+
+    return (
+        f"{player.sample} {unit} is too little to profile {surname} on this "
+        f"season. He has {prior:,.0f} career {served} behind him, which say "
+        f"more about him than this sample does.")
+
+
+def write_profile(player: prof.PlayerProfile, *, surname: str, voice=None,
+                  box: Any = None) -> str:
+    """Part one: how he has played this season, and how good that has been.
 
     Leads with the tier because it is the question the reader came with, then
     the archetype, then the evidence. A profile that opened with a barrel rate
     would be another correct isolated fact.
-    """
-    if player.thin:
-        return (f"{player.sample} plate appearances is too little to profile "
-                f"{surname} on." if player.kind == "batter" else
-                f"{player.sample} batters faced is too little to profile "
-                f"{surname} on.")
 
+    Written in the perfect tense throughout -- "has been", not "is". Every figure
+    behind it comes from the current season, and the present tense quietly
+    promoted four months of baseball into a statement about the player. A hitter
+    with five hundred plate appearances and a first-ballot career reads as
+    "an average bat" if you say "is", which is false about him and true about
+    his season.
+    """
     pieces: list[str] = []
+
+    # A thin sample is caveated, not withheld. `build_batter` already says why:
+    # the tools still describe what he has done, and a hitter who has hammered
+    # sixty-three plate appearances is worth reading about -- the reader simply
+    # has to be told it is sixty-three. What is withheld is the *verdict*: the
+    # tier and the archetype, because a runs-per-150 figure extrapolated from
+    # sixteen games multiplies its own noise by nine, and calling that man a
+    # Classic Slugger is a claim the evidence cannot carry.
+    if player.thin:
+        # Stripped of its full stop: every piece is joined with ". " and the
+        # closer adds one, so a piece that punctuates itself lands a double.
+        pieces.append(_too_thin_to_profile(box, player, surname).rstrip("."))
+        return _with_evidence(pieces, player, voice)
 
     tier = player.tier
     if player.runs_per_150 is not None and np.isfinite(player.runs_per_150):
@@ -163,13 +313,17 @@ def write_profile(player: prof.PlayerProfile, *, surname: str, voice=None) -> st
         joined = labels[0] if len(labels) == 1 else (
             f"{labels[0]} and {labels[1]}" if len(labels) == 2 else
             f"{labels[0]}, {labels[1]} and {labels[2]}")
-        pieces.append(f"{surname} is {tier} — {joined.lower()}")
+        opening = (voice.frame(surname, tier, player.player_id) if voice
+                   else voice_module.season_frame(surname, tier, player.player_id))
+        pieces.append(f"{opening} — {joined.lower()}")
     elif labels:
         pieces.append(f"{surname} profiles as {_as_a(labels[0])}")
     elif tier:
-        pieces.append(f"{surname} is {tier} without a clear archetype")
+        opening = (voice.frame(surname, tier, player.player_id) if voice
+                   else voice_module.season_frame(surname, tier, player.player_id))
+        pieces.append(f"{opening}, without a clear archetype")
     else:
-        pieces.append(f"{surname} sits mid-table across the board")
+        pieces.append(f"{surname} has sat mid-table across the board this season")
 
     if player.matches:
         match = player.matches[0]
@@ -178,8 +332,14 @@ def write_profile(player: prof.PlayerProfile, *, surname: str, voice=None) -> st
                  else voice_module.choose(options, player.player_id, match.code))
         pieces[-1] += f", {blurb}"
 
-    # The evidence. Two tools at most: the one carrying him and the one that
-    # costs him, because a list of five grades is a table, not a read.
+    return _with_evidence(pieces, player, voice, runs=True)
+
+
+def _with_evidence(pieces: list[str], player: prof.PlayerProfile, voice,
+                   *, runs: bool = False) -> str:
+    """Append the tool evidence, and the run line when it is worth stating."""
+    # Two tools at most: the one carrying him and the one that costs him,
+    # because a list of five grades is a table, not a read.
     best = player.carrying[:1]
     worst = [t for t in player.weaknesses if t.name not in {b.name for b in best}][:1]
     support = []
@@ -193,7 +353,7 @@ def write_profile(player: prof.PlayerProfile, *, surname: str, voice=None) -> st
     if support:
         pieces.append(" and ".join(support))
 
-    if player.runs_per_150 is not None and np.isfinite(player.runs_per_150):
+    if runs and player.runs_per_150 is not None and np.isfinite(player.runs_per_150):
         # Not varied, deliberately. This is the one figure a reader compares
         # across players, and a number that arrives in a different sentence
         # every time is harder to scan, not easier. What it needed was to be
@@ -219,7 +379,7 @@ def write_profile(player: prof.PlayerProfile, *, surname: str, voice=None) -> st
                         "for the glove as much as the bat" if bat_weight >= 0.5 else
                         "for the glove first")
                 line += (f". {player.position} is judged {asks}, and on that "
-                         f"standard he is {player.job_grade}")
+                         f"standard he has been {player.job_grade}")
             pieces.append(line)
         else:
             pieces.append(f"{player.runs_per_150:+.0f} runs per 150 games, all in")
@@ -471,7 +631,8 @@ def build(
     """
     return Dossier(
         player_id=player.player_id, kind=player.kind,
-        profile=write_profile(player, surname=surname, voice=voice),
+        career=write_career(box, surname=surname),
+        profile=write_profile(player, surname=surname, voice=voice, box=box),
         form=write_form(box, player, surname=surname, voice=voice),
         # A pitcher's opponent is a lineup, not a man, so the two take
         # different writers rather than one that pretends nine hitters are one.
