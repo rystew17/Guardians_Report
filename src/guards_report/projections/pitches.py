@@ -31,7 +31,9 @@ from __future__ import annotations
 import csv
 import gzip
 import io
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -105,7 +107,49 @@ NUMERIC = [
 
 # Savant refuses an unfiltered date range -- it returns an empty document rather
 # than an error -- so a season is pulled one club at a time.
+#
+# The pause is per *request*, not per club. Applied to every club it charged a
+# second and a half for clubs that had nothing to fetch, which on a quiet day
+# was most of them.
 REQUEST_PAUSE = 1.5
+
+# Clubs fetched at once during an in-season top-up. Savant answers these from a
+# database scan, so a handful in flight is worth several minutes of waiting in
+# series -- but they are somebody else's queries and thirty at once is how you
+# stop being answered at all. `_savant_gate` keeps the spacing between request
+# starts that the serial version got for free from the pause.
+PITCH_WORKERS = 4
+_savant_gate = threading.Semaphore(PITCH_WORKERS)
+_savant_last = [0.0]
+_savant_lock = threading.Lock()
+
+
+def _savant_wait() -> None:
+    """Minimum spacing between Savant requests, however many threads want one."""
+    with _savant_lock:
+        gap = time.monotonic() - _savant_last[0]
+        if gap < REQUEST_PAUSE:
+            time.sleep(REQUEST_PAUSE - gap)
+        _savant_last[0] = time.monotonic()
+
+
+def _last_stored_date(path: Path) -> date | None:
+    """The newest game already on disk, without reading the season to find it.
+
+    This used to load the whole club-season -- every column, a few megabytes --
+    to take one maximum. Parquet is columnar, so asking for the one column
+    reads a fraction of the file, and on Cloud Run that file lives on a network
+    mount where the difference is the whole cost of the operation.
+    """
+    if not path.exists():
+        return None
+    try:
+        stored = pd.read_parquet(path, columns=["game_date"])
+    except Exception:      # noqa: BLE001 -- an unreadable chunk is refetched
+        return None
+    if not len(stored):
+        return None
+    return pd.to_datetime(stored["game_date"]).dt.date.max()
 
 MIN_GAMES = 40
 
@@ -319,26 +363,47 @@ def refresh_current_season(
     through = through or date.today()
     added: dict[str, int] = {}
 
+    # Two phases, deliberately.
+    #
+    # Phase one is network: work out what each club is missing and go and get
+    # it, several at a time, because that wait was most of the refresh. Phase
+    # two is disk: merge and write one club at a time. Keeping them apart is
+    # what makes the concurrency safe -- only the small fetched frames are held
+    # at once, and the stored season is loaded for exactly one club at a time
+    # rather than thirty. Doing both in parallel would have every worker
+    # holding a season in memory and writing parquet through the same mount.
+    wanted: list[tuple[str, Path, date]] = []
     for team in teams:
         path = _chunk_path(cache_dir, team, season)
-        if path.exists():
-            existing = pd.read_parquet(path)
-            existing["game_date"] = pd.to_datetime(existing["game_date"]).dt.date
-            start = max(existing["game_date"]) if len(existing) else date(season, 1, 1)
-        else:
-            existing = None
-            start = date(season, 1, 1)
-
+        start = _last_stored_date(path) or date(season, 1, 1)
         if start > through:
             added[team] = 0
             continue
+        wanted.append((team, path, start))
 
-        fresh = fetch_range(team, season, start=start, end=through)
-        if fresh.empty and existing is None:
-            added[team] = 0
-            continue
+    def _grab(job: tuple[str, Path, date]):
+        team, _path, start = job
+        with _savant_gate:
+            _savant_wait()
+            return job, fetch_range(team, season, start=start, end=through)
+
+    with ThreadPoolExecutor(max_workers=PITCH_WORKERS) as pool:
+        fetched = list(pool.map(_grab, wanted))
+
+    for (team, path, start), fresh in fetched:
         if not fresh.empty:
             fresh["game_date"] = pd.to_datetime(fresh["game_date"]).dt.date
+
+        # Nothing new means nothing to write. Rewriting the club's whole season
+        # to store rows identical to the ones already there cost a read, a zstd
+        # recompression and a full upload per club, for no change at all.
+        if fresh.empty:
+            added[team] = 0
+            continue
+
+        existing = pd.read_parquet(path) if path.exists() else None
+        if existing is not None:
+            existing["game_date"] = pd.to_datetime(existing["game_date"]).dt.date
 
         if existing is None:
             combined = fresh
@@ -357,13 +422,27 @@ def refresh_current_season(
             ["game_pk", "at_bat_number", "pitch_number"], keep="last"
         ).sort_values(["game_date", "game_pk", "at_bat_number", "pitch_number"])
 
-        combined.to_parquet(path, index=False, compression="zstd")
         added[team] = len(combined) - before
-        if verbose and added[team]:
+
+        # Written whenever Savant returned rows, even if the count did not move.
+        #
+        # Two cheaper-looking rules were tried and both were wrong. Skipping on
+        # `added <= 0` discards revisions -- the overlap day exists precisely
+        # because Statcast reclassifies recent pitches, and a single becoming a
+        # double changes a row without adding one; a test caught that. Skipping
+        # on the merged frame comparing equal to the stored one cannot be made
+        # reliable either, because `_align_dtypes` recasts columns, so identical
+        # data compares unequal.
+        #
+        # The saving was small in any case: on a normal day almost every club
+        # played, so almost every club has new rows and must be written whatever
+        # rule guards it. The empty-fetch skip above is where the real saving is,
+        # and it is exact.
+        combined.to_parquet(path, index=False, compression="zstd")
+        if verbose:
             print(
                 f"  {season} {team:4} +{added[team]:>6,} pitches "
                 f"(from {start})", flush=True
             )
-        time.sleep(REQUEST_PAUSE)
 
     return added

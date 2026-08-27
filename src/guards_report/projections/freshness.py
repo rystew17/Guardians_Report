@@ -275,6 +275,12 @@ def refresh_all(
 
     result = Freshness()
 
+    # Assume the corpus moved until the top-up says otherwise. The derived
+    # tables below are skipped only on a positive statement that nothing was
+    # added; every other path -- pitches skipped, the top-up raising -- has to
+    # rebuild, because a stale derived table parses cleanly and reads as fact.
+    pitches_changed = True
+
     # -- game corpus: one schedule request ---------------------------------
     try:
         games = corpus.build(
@@ -315,6 +321,7 @@ def refresh_all(
                 season, teams, cache_dir=root / "pitches",
                 through=on, verbose=False,
             )
+            pitches_changed = sum(added.values()) > 0
             result.requests += len(teams)
             result.refreshed.append("pitches")
             if verbose:
@@ -328,23 +335,38 @@ def refresh_all(
     # a starter's first-five line from whenever the model was last trained. That
     # is the same failure as the frozen ratings, one layer down, and it is
     # invisible because the table is present and parses cleanly.
-    try:
-        rebuilt = rebuild_derived(root)
-        if rebuilt is not None:
-            result.refreshed.append("derived")
-            if verbose:
-                print(f"  derived  {rebuilt:,} starts", flush=True)
-    except Exception as exc:  # noqa: BLE001
-        result.warnings.append(f"derived: {type(exc).__name__}: {exc}")
+    # Both rebuilds read the entire pitch corpus -- 360 files and a gigabyte --
+    # and they are derived from it, so when not one pitch was added they can
+    # only reproduce the tables already on disk. Locally that waste is a few
+    # seconds. On Cloud Run the corpus is on a GCS mount, so it is a gigabyte
+    # pulled across the network to recompute a file byte for byte, and it ran
+    # on every single build.
+    derived_current = (
+        not pitches_changed
+        and (Path(root) / "models" / "f5_starter.parquet").exists()
+    )
+    if derived_current:
+        result.refreshed.append("derived already current")
+        if verbose:
+            print("  derived  no new pitches; tables already current", flush=True)
+    else:
+        try:
+            rebuilt = rebuild_derived(root)
+            if rebuilt is not None:
+                result.refreshed.append("derived")
+                if verbose:
+                    print(f"  derived  {rebuilt:,} starts", flush=True)
+        except Exception as exc:  # noqa: BLE001
+            result.warnings.append(f"derived: {type(exc).__name__}: {exc}")
 
-    try:
-        graded = rebuild_profiles(root)
-        if graded is not None:
-            result.refreshed.append("profiles")
-            if verbose:
-                print(f"  profiles {graded:,} player-seasons", flush=True)
-    except Exception as exc:  # noqa: BLE001
-        result.warnings.append(f"profiles: {type(exc).__name__}: {exc}")
+        try:
+            graded = rebuild_profiles(root)
+            if graded is not None:
+                result.refreshed.append("profiles")
+                if verbose:
+                    print(f"  profiles {graded:,} player-seasons", flush=True)
+        except Exception as exc:  # noqa: BLE001
+            result.warnings.append(f"profiles: {type(exc).__name__}: {exc}")
 
     survey_after = survey(root, season)
     result.corpus_through = survey_after.corpus_through

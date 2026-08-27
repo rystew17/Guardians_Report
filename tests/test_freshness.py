@@ -279,3 +279,60 @@ def test_the_line_names_every_corpus_it_tracks(tmp_path):
     line = freshness.survey(tmp_path, 2026).line()
     for name in ("corpus", "pitchers", "pitches", "derived"):
         assert name in line
+
+
+def test_the_derived_tables_are_not_rebuilt_when_no_pitch_arrived(tmp_path, monkeypatch):
+    """Both rebuilds read the whole pitch corpus -- 360 files, a gigabyte -- to
+    recompute tables derived from it. When not one pitch was added they can only
+    reproduce what is already on disk. Locally that is a few wasted seconds; on
+    Cloud Run the corpus is on a network mount, so it is a gigabyte pulled
+    across the wire to rewrite a file byte for byte, on every build."""
+    from guards_report.projections import freshness
+
+    (tmp_path / "models").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "models" / "f5_starter.parquet").write_bytes(b"x")
+
+    calls = []
+    monkeypatch.setattr(freshness, "rebuild_derived",
+                        lambda root: calls.append("derived"))
+    monkeypatch.setattr(freshness, "rebuild_profiles",
+                        lambda root: calls.append("profiles"))
+    monkeypatch.setattr(freshness.pitches, "season_teams", lambda *a, **k: ["CLE"])
+    monkeypatch.setattr(freshness.pitches, "refresh_current_season",
+                        lambda *a, **k: {"CLE": 0})
+    monkeypatch.setattr(freshness.corpus, "build",
+                        lambda *a, **k: _empty_corpus())
+    monkeypatch.setattr(freshness, "survey", lambda root, season: freshness.Freshness())
+
+    freshness.refresh_all(tmp_path, on=date(2026, 8, 26), verbose=False)
+    assert calls == [], f"rebuilt with nothing added: {calls}"
+
+
+def test_an_unknown_pitch_outcome_still_rebuilds(tmp_path, monkeypatch):
+    """The guard fires only on a positive statement that nothing was added.
+
+    If the top-up is skipped or raises, whether the corpus moved is unknown --
+    and a stale derived table is invisible, because it is present and parses
+    cleanly. Unknown has to mean rebuild.
+    """
+    from guards_report.projections import freshness
+
+    (tmp_path / "models").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "models" / "f5_starter.parquet").write_bytes(b"x")
+
+    calls = []
+    monkeypatch.setattr(freshness, "rebuild_derived",
+                        lambda root: calls.append("derived"))
+    monkeypatch.setattr(freshness, "rebuild_profiles",
+                        lambda root: calls.append("profiles"))
+    monkeypatch.setattr(freshness.corpus, "build", lambda *a, **k: _empty_corpus())
+    monkeypatch.setattr(freshness, "survey", lambda root, season: freshness.Freshness())
+
+    freshness.refresh_all(tmp_path, on=date(2026, 8, 26), verbose=False,
+                          skip_pitches=True)
+    assert "derived" in calls, "skipped the rebuild without knowing the corpus was current"
+
+
+def _empty_corpus():
+    import pandas as pd
+    return pd.DataFrame({"game_type": [], "season": []})

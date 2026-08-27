@@ -217,3 +217,57 @@ def test_slot_weights_are_measured_per_season():
     assert len(by_season[2016]) == 9
     # The season with a partial extra turn gives its top slots more turns.
     assert by_season[2024][0] > by_season[2016][0]
+
+
+def test_a_club_with_nothing_to_fetch_is_not_rewritten(tmp_path, monkeypatch):
+    """The refresh's expensive half, skipped when there is nothing to merge.
+
+    Topping up a club reads its whole season, recompresses it and writes it
+    back. On a network-backed mount that is the bulk of a refresh, and a club
+    that did not play returns no rows at all -- so the read, the recompression
+    and the upload achieve precisely nothing.
+
+    Guarded on mtime, because the point is that the file is not touched.
+    """
+    import pandas as pd
+    from guards_report.projections import pitches
+
+    stored = pd.DataFrame({
+        "game_pk": [1, 1], "at_bat_number": [1, 1], "pitch_number": [1, 2],
+        "game_date": [date(2026, 4, 1)] * 2, "events": ["single", None],
+        "batting_team": ["CLE"] * 2, "season": [2026] * 2,
+    })
+    path = pitches._chunk_path(tmp_path, "CLE", 2026)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    stored.to_parquet(path, index=False)
+    before = path.stat().st_mtime_ns
+
+    monkeypatch.setattr(pitches, "fetch_range",
+                        lambda *a, **k: pd.DataFrame(columns=pitches.COLUMNS))
+    monkeypatch.setattr(pitches, "REQUEST_PAUSE", 0)
+
+    added = pitches.refresh_current_season(
+        2026, ["CLE"], cache_dir=tmp_path, through=date(2026, 4, 2),
+        verbose=False)
+
+    assert added["CLE"] == 0
+    assert path.stat().st_mtime_ns == before, "rewrote a season with no new rows"
+
+
+def test_the_stored_date_is_read_without_loading_the_season(tmp_path):
+    """The lookup that used to read every column of a club-season to take one
+    maximum. On Cloud Run that file is on a network mount, which made it the
+    cost of the operation rather than a detail of it."""
+    import pandas as pd
+    from guards_report.projections import pitches
+
+    path = pitches._chunk_path(tmp_path, "CLE", 2026)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({
+        "game_pk": [1, 2], "at_bat_number": [1, 1], "pitch_number": [1, 1],
+        "game_date": [date(2026, 4, 1), date(2026, 4, 9)],
+        "batting_team": ["CLE"] * 2, "season": [2026] * 2,
+    }).to_parquet(path, index=False)
+
+    assert pitches._last_stored_date(path) == date(2026, 4, 9)
+    assert pitches._last_stored_date(tmp_path / "nope.parquet") is None
