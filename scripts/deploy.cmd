@@ -30,7 +30,12 @@ REM                         fifteen minutes in and the container was killed, twi
 REM                         That reaches the phone only as "lost connection": the
 REM                         kill takes down the event stream that would have
 REM                         carried the reason.
-REM   --timeout 900        a cold report build takes a few minutes
+REM   --timeout 3600       the platform cap, and not optional here. Cloud Run ends
+REM                        every request at this limit, the build's event stream
+REM                        included -- and when that stream ends with nothing else
+REM                        in flight the instance is reclaimed and the build inside
+REM                        it is killed. At the 900s default every build died at
+REM                        almost exactly fifteen minutes, whatever else was fixed.
 REM   --min-instances 0    scale to nothing when idle; a cold start costs a
 REM                        slower first request and no money in between
 REM   --no-cpu-throttling  the one that is not optional. Cloud Run allocates CPU
@@ -92,7 +97,7 @@ call gcloud run deploy "%SERVICE%" ^
   --no-cpu-throttling ^
   --memory 4Gi ^
   --cpu 2 ^
-  --timeout 900 ^
+  --timeout 3600 ^
   --min-instances 0 ^
   --max-instances 2 ^
   --concurrency 4 ^

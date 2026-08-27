@@ -24,7 +24,12 @@
 #                         That reaches the phone only as "lost connection": the
 #                         kill takes down the event stream that would have
 #                         carried the reason.
-#   --timeout 900         a cold report build takes a few minutes
+#   --timeout 3600       the platform cap, and not optional here. Cloud Run ends
+#                        every request at this limit, the build's event stream
+#                        included -- and when that stream ends with nothing else
+#                        in flight the instance is reclaimed and the build inside
+#                        it is killed. At the 900s default every build died at
+#                        almost exactly fifteen minutes, whatever else was fixed.
 #   --min-instances 0     scale to nothing when unused; a cold start costs a
 #                         slower first request and no money in between
 #   --no-cpu-throttling   the one that is not optional. Cloud Run allocates
@@ -81,7 +86,7 @@ gcloud run deploy "${SERVICE}" \
   --no-cpu-throttling \
   --memory 4Gi \
   --cpu 2 \
-  --timeout 900 \
+  --timeout 3600 \
   --min-instances 0 \
   --max-instances 2 \
   --concurrency 4 \
