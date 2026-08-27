@@ -87,3 +87,54 @@ def test_analysis_layer_does_not_compute_from_raw_sources():
         "the analysis layer must receive computed figures, not derive them:\n  "
         + "\n  ".join(offenders)
     )
+
+
+# ---------------------------------------------------------------------------
+# Every fetch is governed
+# ---------------------------------------------------------------------------
+
+def test_no_module_reaches_the_network_around_the_rate_limiter():
+    """The rule the pitcher game logs broke, now enforced.
+
+    `sources.http` owns the process-wide spacing and the retries. A module that
+    calls urllib or requests directly gets neither -- and the failure is silent
+    rather than loud: six such requests at once got this project stopped
+    mid-refresh with nothing raised, because a socket timeout does not fire on
+    a connection that is dribbling bytes. It looked exactly like a slow build,
+    for fifteen minutes, until the container was reclaimed underneath it.
+
+    Three modules are exempt, and each carries its own spacing and its own
+    retries -- the rule is that a call is governed, not that it goes through
+    one particular function:
+
+      sources/http.py       owns the limiter the rest of this rule points at
+      projections/pitches.py  Savant, not the stats API: a different host with
+                            different tolerances, gated by `_savant_wait` and
+                            retried inside `fetch_range`
+      odds/client.py        a metered key of our own, and a failure there is
+                            caught and costs the report only its prices
+
+    Anything else reaching the network is ungoverned by construction.
+    """
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "src" / "guards_report"
+    allowed = {"sources/http.py", "odds/client.py", "projections/pitches.py"}
+    pattern = re.compile(r"\b(urlopen|requests\.(get|post))\s*\(")
+
+    offenders = []
+    for path in root.rglob("*.py"):
+        rel = path.relative_to(root).as_posix()
+        if rel in allowed:
+            continue
+        for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1):
+            if line.lstrip().startswith("#"):
+                continue
+            if pattern.search(line):
+                offenders.append(f"{rel}:{number}: {line.strip()}")
+
+    assert not offenders, (
+        "these reach the network without the shared limiter or retries:\n  "
+        + "\n  ".join(offenders))

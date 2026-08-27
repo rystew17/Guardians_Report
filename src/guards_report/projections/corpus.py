@@ -133,11 +133,12 @@ def fetch_season(season: int, *, archiver: Any = None) -> tuple[list[dict], Seas
             _schedule_url(season), source="mlb-statsapi", archiver=archiver, params={}
         ).json()
     else:
-        import json
-        import urllib.request
+        # Governed even without an archiver: the same rate limiter and the same
+        # retries as every other request this project makes. Raw and
+        # unprotected, one blip here failed a whole refresh.
+        from guards_report.sources.http import get_json
 
-        with urllib.request.urlopen(_schedule_url(season), timeout=120) as response:
-            payload = json.load(response)
+        payload = get_json(_schedule_url(season), timeout=120)
 
     rows: list[dict[str, Any]] = []
     no_score = no_starter = 0

@@ -16,30 +16,26 @@ defense playing behind this pitcher.
 
 from __future__ import annotations
 
-import json
-import urllib.request
 from pathlib import Path
 from typing import Any, Iterable
 
 from guards_report.metrics import formulas as f
+from guards_report.sources import http
 
 BATCH = 25          # pitcher ids per request; the endpoint takes a list
 TIMEOUT = 120
 
-# These are fetched one at a time, on purpose, and an attempt to overlap them
-# was reverted.
+# Fetched one at a time, and measurement says leave it that way: a batch takes
+# about 0.3s, so all thirty-odd cost roughly eight seconds. An earlier attempt
+# to overlap them bought about six seconds and hung the build for fifteen
+# minutes, because these went straight out through urllib and so never passed
+# the process-wide rate limiter. Six unthrottled requests for a season of game
+# logs and the source stopped answering -- without raising, because urlopen's
+# timeout is a socket timeout and a connection dribbling bytes never trips it.
 #
-# Unlike every other fetch in this project these go straight out through
-# urllib, so they never pass the process-wide rate limiter. Six at once was
-# therefore six unthrottled requests for a season of game logs, and the source
-# simply stopped answering. Nothing failed: `urlopen`'s timeout is a socket
-# timeout, so a connection dribbling bytes never trips it. The build hung with
-# the CPU at zero, which from a phone is indistinguishable from a build that is
-# merely slow -- and it took an instance down with it.
-#
-# If this needs to be faster, the fix is to route it through
-# `sources.http.fetch` so the limiter governs it like everything else, not to
-# add threads underneath it.
+# They now go through `http.get_json`, so the limiter and the retries cover
+# them like everything else. That removes the hazard rather than the option:
+# threads here would be safe now. They are still not worth it.
 
 # Counting stats summed over a window. Rates are computed from these sums, never
 # averaged from per-game rates -- averaging rates weights a 1-inning relief
@@ -81,8 +77,7 @@ def fetch_season(pitcher_ids: list[int], season: int) -> list[dict[str, Any]]:
 
     for start in range(0, len(pitcher_ids), BATCH):
         chunk = pitcher_ids[start:start + BATCH]
-        with urllib.request.urlopen(_url(chunk, season), timeout=TIMEOUT) as response:
-            payload = json.load(response)
+        payload = http.get_json(_url(chunk, season), timeout=TIMEOUT)
 
         for person in payload.get("people", []):
             pid = person.get("id")
@@ -223,8 +218,7 @@ def season_pitcher_ids(season: int) -> list[int]:
     matter most on a given night are the ones who never start.
     """
     url = f"https://statsapi.mlb.com/api/v1/sports/1/players?season={season}"
-    with urllib.request.urlopen(url, timeout=TIMEOUT) as response:
-        payload = json.load(response)
+    payload = http.get_json(url, timeout=TIMEOUT)
 
     return sorted(
         int(person["id"])

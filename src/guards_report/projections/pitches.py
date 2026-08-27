@@ -41,6 +41,7 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
+import requests
 
 SAVANT_CSV = "https://baseballsavant.mlb.com/statcast_search/csv"
 
@@ -154,22 +155,35 @@ def _last_stored_date(path: Path) -> date | None:
 MIN_GAMES = 40
 
 
-def _get(params: dict, *, timeout: int = 900) -> str:
+# Time allowed between bytes, not for the whole download. A full club-season
+# is a large export and legitimately takes a while, but it arrives steadily --
+# so a gap this long means the connection has stalled, not that the file is big.
+#
+# It used to be one 900s socket timeout, retried three times: a stalled Savant
+# connection could therefore hang a build for forty-five minutes without ever
+# raising. That is the same shape of failure that hung this project on the
+# stats API, and it deserved the same fix rather than waiting its turn.
+READ_STALL_SECONDS = 120
+CONNECT_SECONDS = 10
+
+
+def _get(params: dict, *, timeout: int = READ_STALL_SECONDS) -> str:
     url = SAVANT_CSV + "?" + urllib.parse.urlencode(params, doseq=True)
-    request = urllib.request.Request(
+    response = requests.get(
         url,
         headers={
             "User-Agent": "guards-report/1.0 (+scouting report)",
             "Accept-Encoding": "gzip",
         },
+        timeout=(CONNECT_SECONDS, timeout),
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        payload = response.read()
-        if response.headers.get("Content-Encoding") == "gzip":
-            payload = gzip.decompress(payload)
+    response.raise_for_status()
+    # `requests` has already undone the transfer encoding, so unlike the raw
+    # urllib version there is no gzip to unwrap here.
+    #
     # utf-8-sig, not utf-8: the export carries a byte-order mark, which binds to
     # the first header and made `pitch_type` invisible to a plain column check.
-    return payload.decode("utf-8-sig", "replace")
+    return response.content.decode("utf-8-sig", "replace")
 
 
 def fetch_chunk(team: str, season: int, *, retries: int = 3) -> pd.DataFrame:
@@ -189,7 +203,12 @@ def fetch_chunk(team: str, season: int, *, retries: int = 3) -> pd.DataFrame:
         try:
             text = _get(params)
             break
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        # `requests.RequestException` subclasses OSError, so it was already
+        # caught -- but only by an inheritance the next reader would have to
+        # know about. Named, because a retry that silently stops retrying is
+        # the failure this whole loop exists to prevent.
+        except (requests.RequestException, urllib.error.URLError,
+                TimeoutError, OSError) as exc:
             last = exc
             time.sleep(4 * (attempt + 1))
     else:
@@ -309,7 +328,12 @@ def fetch_range(
         try:
             text = _get(params)
             break
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        # `requests.RequestException` subclasses OSError, so it was already
+        # caught -- but only by an inheritance the next reader would have to
+        # know about. Named, because a retry that silently stops retrying is
+        # the failure this whole loop exists to prevent.
+        except (requests.RequestException, urllib.error.URLError,
+                TimeoutError, OSError) as exc:
             last = exc
             time.sleep(4 * (attempt + 1))
     else:

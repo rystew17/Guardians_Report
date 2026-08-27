@@ -146,6 +146,57 @@ class Archiver:
         return digest, path
 
 
+def get_json(
+    url: str,
+    params: dict[str, Any] | None = None,
+    *,
+    timeout: int = REQUEST_TIMEOUT_SECONDS,
+    retries: int = MAX_RETRIES,
+) -> Any:
+    """A governed GET for callers that build corpora rather than reports.
+
+    `fetch` archives what it retrieves, which is right for anything a report
+    quotes -- every figure traces back to a stored payload. The corpus builders
+    are different: they write parquet that is itself the record, so archiving
+    the JSON twice buys nothing. What they still need is everything else
+    `fetch` provides, and they had none of it.
+
+    They called `urllib.request.urlopen` directly, which meant no shared rate
+    limiter and no retry. Both mattered. Bypassing the limiter is how six
+    parallel game-log requests got this project stopped mid-refresh, with no
+    error raised, because `urlopen`'s timeout is a socket timeout and a
+    connection dribbling bytes never trips it. And with no retry a single blip
+    on any one of thirty-odd requests failed the whole refresh.
+
+    Going through the same limiter as everything else is also what makes
+    concurrency safe anywhere above this line: the spacing is process-wide, so
+    threads cannot outvote it.
+    """
+    session = _get_session()
+    full = f"{url}?{urlencode(params)}" if params else url
+
+    last: Exception | None = None
+    for attempt in range(retries):
+        if attempt:
+            time.sleep(2.0 ** (attempt - 1))
+        _limiter.wait()
+        try:
+            # A connect timeout and a read timeout, separately. A single number
+            # covers neither case well: a host that accepts the connection and
+            # then goes quiet is the failure that hangs a build, and only a read
+            # timeout ends it.
+            response = session.get(full, timeout=(10, timeout))
+            if response.status_code == 429 or response.status_code >= 500:
+                last = RetryableStatus(f"HTTP {response.status_code} from {full}")
+                continue
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as exc:
+            last = exc
+
+    raise RuntimeError(f"giving up on {full} after {retries} attempts") from last
+
+
 class RetryableStatus(Exception):
     """Raised internally to trigger a retry on a transient HTTP status."""
 
@@ -175,7 +226,12 @@ def fetch(
         _limiter.wait()
         started = time.monotonic()
         try:
-            response = session.get(full_url, timeout=REQUEST_TIMEOUT_SECONDS)
+            # Connect and read timed separately. One number covers neither
+            # case: a host that accepts the connection then goes quiet is the
+            # failure that hangs a build rather than failing it, and only a
+            # read timeout ends that.
+            response = session.get(
+                full_url, timeout=(10, REQUEST_TIMEOUT_SECONDS))
             elapsed = time.monotonic() - started
 
             if response.status_code == 429 or response.status_code >= 500:
