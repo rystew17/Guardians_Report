@@ -479,3 +479,97 @@ def test_a_pitcher_still_shows_his_best_and_his_worst():
         sample=500, tools=_tools(stuff=93.0, command=9.0))
     said = dossier.write_profile(player, surname="Cantillo", box=_Box())
     assert "stuff" in said and "command" in said
+
+
+# ---------------------------------------------------------------------------
+# The floor answers for the card
+# ---------------------------------------------------------------------------
+
+def test_the_false_finding_budget_covers_the_page_not_one_paragraph():
+    """It was 0.5 per subject, and did exactly that -- but a card carries about
+    fifty players, so the page a reader holds expected twenty-six findings that
+    were noise. Every one reads plausibly, which is what makes them expensive:
+    nobody can tell which twenty-six."""
+    from scipy import stats
+    from guards_report.insight.types import significance_floor, CARD_FALSE_FINDINGS
+    from guards_report.insight.card import PITCHER_CRITERIA, BATTER_CRITERIA
+
+    subjects = 51
+    expected = 0.0
+    for criteria in (PITCHER_CRITERIA, BATTER_CRITERIA):
+        floor = significance_floor(criteria, subjects=subjects)
+        expected += criteria * 2 * (1 - stats.norm.cdf(floor)) * (subjects / 2)
+
+    assert expected <= CARD_FALSE_FINDINGS * 1.2, expected
+
+
+def test_more_subjects_raise_the_bar():
+    from guards_report.insight.types import significance_floor
+    assert significance_floor(12, subjects=51) > significance_floor(12, subjects=1)
+
+
+def test_the_reported_criteria_count_is_the_count_that_set_the_floor():
+    """The page quoted the number of findings that survived under the label
+    "criteria" -- overstating the search on a quiet player, understating it on a
+    busy one, and reasoning from a different number than it printed."""
+    import inspect
+    from guards_report.insight import card
+
+    for fn in (card.analyse_pitcher, card.analyse_batter):
+        source = inspect.getsource(fn)
+        assert "len(found)" not in source.split("return")[-1], fn.__name__
+        assert "CRITERIA" in source.split("return")[-1], fn.__name__
+
+
+# ---------------------------------------------------------------------------
+# Grammar: every fragment has to survive following a bare surname
+# ---------------------------------------------------------------------------
+
+def test_no_template_brings_its_own_subject():
+    """The bug this caught on a real card.
+
+    Fragments are joined as "<Surname> <fragment>", so each one must be a verb
+    phrase. Two arsenal templates were complete clauses instead, and rendered as
+    "Yoho the Sinker is where he gets hurt" and "Cantillo hitters have found the
+    Cutter" -- the second a sentence whose subject changes halfway through,
+    because the clause brought its own.
+    """
+    from guards_report.insight.render import TEMPLATES
+
+    openers = ("the ", "hitters ", "his team ", "he ", "it ", "they ")
+    offenders = []
+    for code, options in TEMPLATES.items():
+        # Game-level findings are rendered with no subject at all, so a clause
+        # is exactly right for them: "the model makes Cleveland a 57% favorite"
+        # stands alone. The rule is about fragments that follow a name.
+        if not code.startswith(("bat.", "pit.")):
+            continue
+        for i, template in enumerate(options):
+            head = template.lstrip().lower()
+            # "his X" is handled explicitly by the joiner; anything else that
+            # opens on a noun or pronoun cannot follow a name.
+            if head.startswith("his "):
+                continue
+            if head.startswith(openers):
+                offenders.append(f"{code}[{i}]: {template[:60]}")
+    assert not offenders, "templates that cannot follow a surname:\n  " + "\n  ".join(offenders)
+
+
+def test_two_findings_on_one_line_do_not_reuse_a_phrasing():
+    """Counting occurrences was not enough: for a pitcher's best pitch the
+    usage rule picks the phrasing rather than the count, so two rarely thrown
+    offerings both landed on "gets results from"."""
+    from guards_report.insight import render as render_module
+    from guards_report.insight.types import Finding, Reference
+
+    def arsenal(pitch, usage):
+        return Finding(
+            subject=1, subject_kind="pitcher", code="pit.arsenal.best",
+            family="arsenal", kind="skill", value=0.20,
+            reference=Reference(mean=0.30, sd=0.05, population="league"),
+            evidence=400, detail={"pitch": pitch, "usage": usage,
+                                  "whiff": 0.35, "xwoba": 0.20, "league": 0.30})
+
+    line = render_module.sentence(
+        [arsenal("Slider", 0.08), arsenal("Curveball", 0.07)], subject="Sabrowski")
+    assert line.count("gets results from") <= 1, line

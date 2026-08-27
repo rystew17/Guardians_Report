@@ -87,11 +87,17 @@ TEMPLATES: dict[str, tuple[str, ...]] = {
         "gets results from the {pitch} — {xwoba3} expected against, {league3} "
         "for the league",
     ),
+    # Both of these were complete clauses, and every fragment here has to be a
+    # verb phrase that can follow a bare surname. "the Sinker is where he gets
+    # hurt" rendered as "Yoho the Sinker is where he gets hurt", and "hitters
+    # have found the Cutter" became "Cantillo hitters have found the Cutter" --
+    # a sentence whose subject changes halfway through, because the clause
+    # brought its own.
     "pit.arsenal.worst": (
-        "the {pitch} is where he gets hurt: {xwoba3} expected against, "
-        "{league3} league, and he still throws it {usage:.0%} of the time",
-        "hitters have found the {pitch}, tagging it for {xwoba3} against a "
-        "{league3} league mark",
+        "gets hurt on the {pitch}: {xwoba3} expected against, {league3} league, "
+        "and still throws it {usage:.0%} of the time",
+        "is getting tagged on the {pitch} — {xwoba3} against a {league3} "
+        "league mark",
     ),
     "pit.arsenal.pitch": (
         "his {pitch} has held hitters to a {xwoba3} expected wOBA, league {league3} on the pitch",
@@ -193,11 +199,23 @@ def _rate(value: float) -> str:
     return text[1:] if text.startswith("0.") else text
 
 
-def render(finding: Finding, *, variant: int | None = None) -> str:
+# Which template the last render actually used, so the caller can keep two
+# findings on one line from spending the same phrasing twice.
+_LAST_INDEX = [0]
+
+
+def render(finding: Finding, *, variant: int | None = None,
+           avoid: frozenset[int] = frozenset()) -> str:
     """One sentence fragment for this finding, chosen deterministically.
 
     `variant` lets a caller vary the phrasing when two findings on one line
     would otherwise use the same template, which reads as a stutter.
+
+    `avoid` carries the template indices already spent on this line. Counting
+    occurrences was not enough: for a pitcher's best pitch the usage rule picks
+    the phrasing rather than the count, so two rarely thrown offerings both
+    landed on the same one and the line read "gets results from the Slider ...
+    and gets results from the Curveball".
     """
     options = TEMPLATES.get(finding.code)
     if not options:
@@ -209,7 +227,15 @@ def render(finding: Finding, *, variant: int | None = None) -> str:
         index = 0 if usage >= 0.20 else 1
     else:
         index = variant if variant is not None else _variant_index(finding)
-    chosen = options[index % len(options)]
+
+    index %= len(options)
+    if index in avoid and len(avoid) < len(options):
+        for step in range(1, len(options)):
+            if (index + step) % len(options) not in avoid:
+                index = (index + step) % len(options)
+                break
+    chosen = options[index]
+    _LAST_INDEX[0] = index
     variant_text = chosen
     slots = _slots(finding)
     for key in ("xwoba", "league", "value", "baseline", "mean", "rate",
@@ -231,11 +257,11 @@ def sentence(findings: list[Finding], *, subject: str = "") -> str:
     """
     # Vary the phrasing when two findings share a template, so a line does not
     # repeat its own construction.
-    parts, used = [], {}
+    parts, spent = [], {}
     for finding in findings:
-        seen = used.get(finding.code, 0)
-        text = render(finding, variant=seen if seen else None)
-        used[finding.code] = seen + 1
+        used = spent.setdefault(finding.code, set())
+        text = render(finding, avoid=frozenset(used))
+        used.add(_LAST_INDEX[0])
         if text:
             parts.append(text)
     if not parts:

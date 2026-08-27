@@ -8,11 +8,23 @@ result to look up.
 
 Two models are persisted together because they are checked against each other:
 
-* **Model A** — regularized logistic on the Core block. Held-out log loss
-  0.67668, accuracy 0.5730 (+4.30pt over the 0.5332 baseline), ECE 0.0074.
+* **Model A** — regularized logistic on the Core block.
 * **Model B** — negative binomial per side, alpha 0.275. Its simulated win
-  probability agrees with Model A to +0.00029 log loss, which is the coherence
-  condition the two were built to satisfy.
+  probability is checked against Model A's, which is the coherence condition
+  the two were built to satisfy: a run model whose implied win probability
+  disagreed with the win model would mean one of them is wrong about the same
+  game.
+
+Measured figures are deliberately absent. This docstring used to quote a
+held-out log loss and an accuracy lift, and both drifted from the artifact
+beside it -- prose advertising a better model than the one running, because a
+refit rewrites the artifact and cannot rewrite a comment. Nothing read the
+prose, so the drift stayed invisible until it was quoted.
+
+Every measurement lives in `metrics` on the artifact, written at fit time and
+read by the report, so a projection is always shown next to the accuracy it
+actually achieved. `test_fit_metrics_are_not_restated_in_prose` keeps them from
+creeping back.
 
 The artifact records the metrics measured at fit time, so a projection can
 always be shown next to the accuracy it actually achieved rather than asking a

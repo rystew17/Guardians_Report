@@ -125,12 +125,36 @@ class Finding:
 Evaluator = Callable[..., list[Finding]]
 
 
-def significance_floor(criteria: int, *, expected_false: float = 0.5) -> float:
+# Expected false findings across a whole card, not per player.
+#
+# The distinction is the entire point and it was previously the other way round.
+# `expected_false` was 0.5 per subject and it did exactly that -- but a card
+# carries about fifty players, so the page a reader actually holds expected
+# twenty-six findings that were noise. Every one of them reads plausibly, which
+# is what makes them expensive: nobody can tell which twenty-six.
+#
+# Anchoring to the card is the guarantee the rest of this module already
+# reasons about, applied to the unit the reader sees.
+# Left at the value the per-subject budget always used, so a single-subject
+# call behaves exactly as it did. What changed is the unit it is charged
+# against: the same half a false finding now covers the whole page instead of
+# each player on it.
+CARD_FALSE_FINDINGS = 0.5
+
+
+def significance_floor(
+    criteria: int, *, expected_false: float | None = None, subjects: int = 1
+) -> float:
     """How large |z| must be before a finding is worth printing.
 
-    Derived from how many criteria are scanned, so that fewer than
-    `expected_false` findings per subject are expected by chance. At forty
-    criteria this is about 2.5.
+    Derived from how many criteria are scanned and how many subjects share the
+    page, so that fewer than `CARD_FALSE_FINDINGS` findings across the whole
+    card are expected by chance.
+
+    The counts actually scanned are eight for a pitcher and twelve for a batter
+    -- `card.PITCHER_CRITERIA` and `card.BATTER_CRITERIA`. At those counts and
+    one subject the bar is 1.86 and 2.04; across a fifty-man card it is nearer
+    2.8 and 3.0.
 
     Recompute whenever the evaluator count changes. Adding evaluators without
     raising the bar silently increases the false-finding rate, which is exactly
@@ -140,5 +164,7 @@ def significance_floor(criteria: int, *, expected_false: float = 0.5) -> float:
     from scipy import stats
 
     criteria = max(int(criteria), 1)
-    alpha = min(expected_false / criteria, 0.5)
+    subjects = max(int(subjects), 1)
+    budget = CARD_FALSE_FINDINGS if expected_false is None else expected_false
+    alpha = min(budget / (criteria * subjects), 0.5)
     return float(stats.norm.ppf(1.0 - alpha / 2.0))

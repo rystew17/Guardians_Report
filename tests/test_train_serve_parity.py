@@ -153,3 +153,29 @@ def test_a_missing_feature_is_not_flagged_as_out_of_range():
     )
     assert not model.out_of_range({"sp_ip_per_start": None})
     assert not model.out_of_range({})
+
+
+def test_fit_metrics_are_not_restated_in_prose():
+    """A refit rewrites the artifact and cannot rewrite a comment.
+
+    `model.py` once advertised held-out log loss 0.67668 and +4.30pt while the
+    artifact beside it measured 0.67834 and +3.99pt -- prose describing a better
+    model than the one actually running. Nothing read those numbers, so the
+    drift was invisible until someone quoted them.
+
+    Any figure precise enough to go stale belongs in the artifact, which is
+    written at fit time and is what the report reads.
+    """
+    import re
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1]
+              / "src" / "guards_report" / "projections" / "model.py")
+    text = source.read_text(encoding="utf-8")
+    head = text.split('"""')[1] if '"""' in text else ""
+
+    # Four or more decimal places is a measurement, not a round design constant.
+    quoted = re.findall(r"\b0\.\d{4,}\b", head)
+    assert not quoted, (
+        "fit metrics restated in the module docstring, where a refit cannot "
+        f"update them: {quoted}")

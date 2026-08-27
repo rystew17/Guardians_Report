@@ -83,7 +83,8 @@ def load_references(models_dir: Path, season: int) -> dict:
     return out
 
 
-def analyse_pitcher(pitcher_id: int, surname: str, *, pitch_corpus, corpus) -> tuple[str, int]:
+def analyse_pitcher(pitcher_id: int, surname: str, *, pitch_corpus, corpus,
+                    subjects: int = 1) -> tuple[str, int]:
     found = evaluators.arsenal(
         pitcher_id=pitcher_id, pitches=pitch_corpus, league=pitch_corpus
     )
@@ -95,12 +96,19 @@ def analyse_pitcher(pitcher_id: int, surname: str, *, pitch_corpus, corpus) -> t
         if f.code == "pit.arsenal.pitch" else f
         for f in found
     ]
-    chosen = select.select(found, criteria=PITCHER_CRITERIA, limit=2)
-    return render.sentence(chosen, subject=surname), len(found)
+    chosen = select.select(found, criteria=PITCHER_CRITERIA, limit=2,
+                           subjects=subjects)
+    # The criteria count, not the number of findings that happened to survive.
+    # Reporting the survivors under the label "criteria" overstated the search
+    # on a quiet player and understated it on a busy one -- and it is the figure
+    # the significance floor is derived from, so the page was quoting one number
+    # and reasoning from another.
+    return render.sentence(chosen, subject=surname), PITCHER_CRITERIA
 
 
 def analyse_batter(
-    batter_id: int, surname: str, *, corpus, pitch_corpus, profile
+    batter_id: int, surname: str, *, corpus, pitch_corpus, profile,
+    subjects: int = 1
 ) -> tuple[str, int]:
     empty = pd.Series(dtype=float)
     found = []
@@ -118,8 +126,9 @@ def analyse_batter(
         league_gap=profile.get("platoon_gap", empty).dropna())
     found += batter_evaluators.results_versus_contact(
         batter_id=batter_id, plate=corpus, league_gap=profile["luck_gap"].dropna())
-    chosen = select.select(found, criteria=BATTER_CRITERIA, limit=2)
-    return render.sentence(chosen, subject=surname), len(found)
+    chosen = select.select(found, criteria=BATTER_CRITERIA, limit=2,
+                           subjects=subjects)
+    return render.sentence(chosen, subject=surname), BATTER_CRITERIA
 
 
 def _surname(name: str) -> str:
@@ -243,6 +252,14 @@ def analyse(bundle: Any, *, pitch_dir: Path, on: date | None = None) -> CardAnal
     except Exception as exc:  # noqa: BLE001
         result.warnings.append(f"matchup: {type(exc).__name__}: {exc}")
 
+    # How many players share this page. The significance floor is a
+    # multiple-comparisons correction and the comparisons are made across the
+    # whole card, not inside one paragraph of it.
+    on_the_card = sum(
+        len(getattr(section, "pitchers", []) or []) + len(getattr(section, "batters", []) or [])
+        for section in (bundle.home, bundle.away)
+    ) or 1
+
     # -- everyone in it ------------------------------------------------------
     for side, section in (("home", bundle.home), ("away", bundle.away)):
         opponent_box, opponent_profile = opposing.get(side, (None, None))
@@ -253,6 +270,7 @@ def analyse(bundle: Any, *, pitch_dir: Path, on: date | None = None) -> CardAnal
                 text, n = analyse_pitcher(
                     int(box.player_id), _surname(box.name),
                     pitch_corpus=pitch_corpus, corpus=corpus,
+                    subjects=on_the_card,
                 )
             except Exception as exc:  # noqa: BLE001
                 result.warnings.append(f"{box.name}: {type(exc).__name__}: {exc}")
@@ -288,6 +306,7 @@ def analyse(bundle: Any, *, pitch_dir: Path, on: date | None = None) -> CardAnal
                 text, n = analyse_batter(
                     int(box.player_id), _surname(box.name),
                     corpus=corpus, pitch_corpus=pitch_corpus, profile=profile,
+                    subjects=on_the_card,
                 )
             except Exception as exc:  # noqa: BLE001
                 result.warnings.append(f"{box.name}: {type(exc).__name__}: {exc}")

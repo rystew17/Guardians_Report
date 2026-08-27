@@ -23,6 +23,7 @@ def select(
     *,
     limit: int = 3,
     criteria: int | None = None,
+    subjects: int = 1,
     floor: float | None = None,
     per_kind: int = 2,
     min_reliability: float = 0.30,
@@ -37,8 +38,12 @@ def select(
     if not findings:
         return []
 
+    # `subjects` is how many players share this card. The multiple-comparisons
+    # cost is paid once per criterion per subject, and a reader judges the page
+    # rather than one paragraph of it.
     threshold = floor if floor is not None else significance_floor(
-        criteria if criteria is not None else len(findings)
+        criteria if criteria is not None else len(findings),
+        subjects=subjects,
     )
 
     # The floor is a guard against claiming an unusual departure that is really
