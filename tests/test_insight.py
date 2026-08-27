@@ -406,3 +406,76 @@ def test_a_caveat_followed_by_evidence_does_not_double_its_full_stop():
     said = dossier.write_profile(
         player, surname="Genao", box=_Box(career={"atBats": 4}, season={"atBats": 4}))
     assert ".." not in said, said
+
+
+# ---------------------------------------------------------------------------
+# Which tools get to speak
+# ---------------------------------------------------------------------------
+
+def _tools(**grades):
+    from guards_report.insight import profile as prof
+    return {name: prof.Tool(name=name, label=name.replace("_", " "),
+                            grade=g, z=(g - 50) / 20.0)
+            for name, g in grades.items()}
+
+
+def _batter(**grades):
+    from guards_report.insight import profile as prof
+    return prof.PlayerProfile(
+        player_id=3, kind="batter", runs_per_150=12.0, bat_per_150=12.0,
+        bat_grade="a plus bat", tier="a solid regular", position="SS",
+        sample=500, tools=_tools(**grades))
+
+
+def test_the_bat_is_always_described_for_a_hitter():
+    """A card that led with a shortstop's glove and never mentioned his bat
+    answered a question nobody asked. He is in the lineup to hit."""
+    from guards_report.insight import dossier
+
+    # A spectacular glove and an ordinary bat: the glove must not crowd it out.
+    player = _batter(defense=97.0, power=58.0, contact=61.0, loft=44.0)
+    said = dossier.write_profile(player, surname="Genao", box=_Box())
+    assert any(w in said for w in ("bat-to-ball", "power", "contact")), said
+
+
+def test_an_ordinary_glove_is_not_worth_a_sentence():
+    """Only the tails. A 60th-percentile glove says nothing a reader needs."""
+    from guards_report.insight import dossier
+
+    player = _batter(defense=60.0, power=92.0, contact=48.0)
+    said = dossier.write_profile(player, surname="X", box=_Box())
+    assert "defense" not in said
+
+
+def test_a_glove_speaks_at_either_tail():
+    from guards_report.insight import dossier
+
+    for grade in (96.0, 6.0):
+        player = _batter(defense=grade, power=70.0, contact=50.0)
+        said = dossier.write_profile(player, surname="X", box=_Box())
+        assert "defense" in said, (grade, said)
+
+
+def test_running_speaks_only_when_it_is_a_weapon():
+    """One-tailed, and not a new idea -- BASERUNNING_FLOOR already says nobody
+    describes a player's weakness as not attempting steals."""
+    from guards_report.insight import dossier
+
+    slow = _batter(speed=4.0, baserunning=8.0, power=88.0, contact=50.0)
+    said = dossier.write_profile(slow, surname="X", box=_Box())
+    assert "speed" not in said and "baserunning" not in said, said
+
+    burner = _batter(speed=97.0, power=88.0, contact=50.0)
+    said = dossier.write_profile(burner, surname="X", box=_Box())
+    assert "speed" in said
+
+
+def test_a_pitcher_still_shows_his_best_and_his_worst():
+    """The rule is about hitters. Every tool a pitcher has is his craft."""
+    from guards_report.insight import dossier, profile as prof
+
+    player = prof.PlayerProfile(
+        player_id=4, kind="pitcher", runs_per_150=10.0, tier="a solid regular",
+        sample=500, tools=_tools(stuff=93.0, command=9.0))
+    said = dossier.write_profile(player, surname="Cantillo", box=_Box())
+    assert "stuff" in said and "command" in said

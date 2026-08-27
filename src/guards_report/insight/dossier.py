@@ -335,15 +335,61 @@ def write_profile(player: prof.PlayerProfile, *, surname: str, voice=None,
     return _with_evidence(pieces, player, voice, runs=True)
 
 
+# What each kind of tool has to clear before it is worth a sentence.
+#
+# A batter is in the lineup to hit, so the bat is described whatever it says --
+# a card that led with a shortstop's glove and never mentioned his bat answered
+# a question nobody asked. The other two are only worth the words at the tails:
+# a glove that wins games or loses them, and legs that are a genuine weapon.
+#
+# Running is one-tailed on purpose, and that is not new here -- `BASERUNNING_FLOOR`
+# already says it: nobody describes a player's weakness as not attempting
+# steals. It can carry a player, it cannot condemn one.
+BAT_TOOLS = frozenset({"power", "contact", "discipline", "loft", "hard"})
+GLOVE_TOOLS = frozenset({"defense"})
+LEGS_TOOLS = frozenset({"speed", "baserunning"})
+
+
+def _worth_saying(tool: Any, kind: str) -> bool:
+    """Whether a tool clears the bar its kind has to clear."""
+    if kind != "batter":
+        return True                     # a pitcher's tools are all his craft
+    if tool.name in GLOVE_TOOLS:
+        return tool.grade >= prof.ELITE or tool.grade <= prof.POOR
+    if tool.name in LEGS_TOOLS:
+        return tool.grade >= prof.ELITE
+    return True                          # the bat always speaks
+
+
+def _evidence_tools(player: prof.PlayerProfile) -> list[Any]:
+    """The one or two tools worth printing, bat first for a hitter."""
+    if player.kind != "batter":
+        best = player.carrying[:1]
+        worst = [t for t in player.weaknesses
+                 if t.name not in {b.name for b in best}][:1]
+        return best + worst
+
+    bats = sorted((t for t in player.tools.values() if t.name in BAT_TOOLS),
+                  key=lambda t: -t.grade)
+    chosen = bats[:1]                    # what he does best with the bat, always
+
+    # Then whichever remaining note departs furthest from average, among the
+    # ones allowed to speak at all.
+    rest = [t for t in player.tools.values()
+            if t.name not in {c.name for c in chosen} and _worth_saying(t, "batter")]
+    rest = [t for t in rest
+            if t.grade >= prof.HIGH or t.grade <= prof.LOW]
+    rest.sort(key=lambda t: -abs(t.grade - 50.0))
+    return chosen + rest[:1]
+
+
 def _with_evidence(pieces: list[str], player: prof.PlayerProfile, voice,
                    *, runs: bool = False) -> str:
     """Append the tool evidence, and the run line when it is worth stating."""
-    # Two tools at most: the one carrying him and the one that costs him,
-    # because a list of five grades is a table, not a read.
-    best = player.carrying[:1]
-    worst = [t for t in player.weaknesses if t.name not in {b.name for b in best}][:1]
+    # Two tools at most, because a list of five grades is a table, not a read.
+    selected = _evidence_tools(player)
     support = []
-    for tool in best + worst:
+    for tool in selected:
         note = _evidence(tool)
         band = _grade_word(tool.grade, player.player_id, tool.name, voice=voice)
         support.append(
