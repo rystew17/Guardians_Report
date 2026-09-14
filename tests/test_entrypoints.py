@@ -307,3 +307,81 @@ def test_an_unrecognised_code_still_reports_the_number():
 
     assert "7" in main._why_it_died(7, None)
 
+
+
+# ---------------------------------------------------------------------------
+# Watching a job, and finding the scripts it runs
+# ---------------------------------------------------------------------------
+
+def test_two_listeners_both_see_the_whole_run():
+    """The bug that cost a build on a real card.
+
+    One queue per job is single-consumer: two browsers -- or one that
+    reconnected while the first stream was still draining -- competed for every
+    line, so each reached exactly one of them. The terminator is a line like any
+    other, so when it landed on the abandoned stream the live one never learned
+    the build had finished and sat on keepalives until Cloud Run cut it an hour
+    later. The logs showed both halves: one stream ending at 209s with the
+    result, another running the full 3600s without it.
+    """
+    import asyncio
+    from guards_report.app.main import Job
+
+    job = Job(id="x", game_date="2026-09-14")
+    first, second = asyncio.Queue(), asyncio.Queue()
+    job.subscribers += [first, second]
+
+    job.publish("building")
+    job.publish("__DONE__ report.html")
+
+    for queue in (first, second):
+        assert queue.get_nowait() == "building"
+        assert queue.get_nowait() == "__DONE__ report.html"
+
+
+def test_published_lines_are_replayable_for_a_late_listener():
+    import asyncio
+    from guards_report.app.main import Job
+
+    job = Job(id="x", game_date="2026-09-14")
+    job.publish("one")
+    late = asyncio.Queue()
+    job.subscribers.append(late)
+    job.publish("two")
+
+    assert job.lines == ["one", "two"]      # the backlog a reconnect replays
+    assert late.get_nowait() == "two"       # and only what it missed live
+
+
+def test_the_refit_script_is_found_outside_a_source_tree():
+    """`_root()` is `parents[3]`, which is the project root in a source tree and
+    `site-packages`' parent once the package is installed. The refit pointed
+    there and died on a missing file in every container run."""
+    from pathlib import Path
+    from guards_report.app import main
+
+    found = main._script("refit.py")
+    assert found is not None and found.is_file(), found
+    assert found.name == "refit.py"
+    assert main._script("no-such-script.py") is None
+
+
+def test_a_missing_refit_script_is_a_failure_not_a_rejection():
+    """Python exits 2 when it cannot open a file, and 2 is refit.py's own code
+    for "measured and turned down". A missing file therefore reported itself as
+    the guard working -- the most misleading answer available."""
+    import asyncio
+    from guards_report.app import main
+    from guards_report.app.main import Job
+
+    job = Job(id="r", game_date="refit")
+    original = main._script
+    main._script = lambda name: None
+    try:
+        asyncio.run(main._run_refit(job, force_outcome=False))
+    finally:
+        main._script = original
+
+    assert job.status == "failed"
+    assert "not found" in (job.error or "")
+    assert any(l.startswith("__FAILED__") for l in job.lines), job.lines

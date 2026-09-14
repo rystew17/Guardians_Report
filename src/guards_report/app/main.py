@@ -42,15 +42,56 @@ class Job:
     output_path: str | None = None
     error: str | None = None
     started_at: datetime = field(default_factory=datetime.now)
-    queue: asyncio.Queue = field(default_factory=asyncio.Queue)
+    # One queue per listener, not one per job.
+    #
+    # A single queue is single-consumer: two browsers watching the same build --
+    # or one browser that reconnected while the first stream was still draining
+    # -- competed for every line, so each line reached exactly one of them. The
+    # terminator is a line like any other, so when it landed on the abandoned
+    # stream the live one never learned the build had finished and sat on
+    # keepalives until Cloud Run cut it at the request limit. Seen on a real
+    # card: one stream ending at 209s carrying the result, another running the
+    # full 3600s without it.
+    subscribers: list[asyncio.Queue] = field(default_factory=list)
+
+    def publish(self, line: str) -> None:
+        """Record a line and hand it to everyone currently watching."""
+        self.lines.append(line)
+        for queue in list(self.subscribers):
+            queue.put_nowait(line)
 
 
 JOBS: dict[str, Job] = {}
 
 
 def _root() -> Path:
-    """The project root, from this file's location."""
+    """The project root, from this file's location.
+
+    Correct in a source tree, where this file sits at
+    `<root>/src/guards_report/app/main.py`. It is *not* correct in the
+    container, which installs the package -- there the same arithmetic lands in
+    `site-packages`' parent. Use `_script()` for anything on disk.
+    """
     return Path(__file__).resolve().parents[3]
+
+
+def _script(name: str) -> Path | None:
+    """Locate a file under `scripts/`, in a source tree or a container.
+
+    The refit pointed at `_root() / "scripts"`, which resolves to
+    `/usr/local/lib/python3.13/scripts` once the package is installed. Nothing
+    is there, so every refit in the container died on a missing file -- and
+    reported success, because the interpreter exits 2 when it cannot open a
+    file and 2 is the script's own code for "refit measured and rejected".
+
+    The Dockerfile copies `scripts/` beside the working directory, so the cwd
+    is checked first and the source layout second.
+    """
+    for root in (Path.cwd(), _root()):
+        candidate = root / "scripts" / name
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def _settings():
@@ -94,20 +135,19 @@ async def _run_build(job: Job, *, statcast: bool, analysis: bool) -> None:
         line = raw.decode("utf-8", errors="replace").rstrip()
         if not line:
             continue
-        job.lines.append(line)
         # The CLI prints the finished path on stdout as its last line.
         if line.endswith(".html"):
             job.output_path = line.strip()
-        await job.queue.put(line)
+        job.publish(line)
 
     await process.wait()
     if process.returncode == 0 and job.output_path:
         job.status = "done"
-        await job.queue.put(f"__DONE__ {Path(job.output_path).name}")
+        job.publish(f"__DONE__ {Path(job.output_path).name}")
     else:
         job.status = "failed"
         job.error = _why_it_died(process.returncode, job.output_path)
-        await job.queue.put(f"__FAILED__ {job.error}")
+        job.publish(f"__FAILED__ {job.error}")
 
 
 def _why_it_died(returncode: int | None, output_path: str | None) -> str:
@@ -177,7 +217,19 @@ async def _run_refit(job: Job, *, force_outcome: bool) -> None:
     measured and turned down is the guard working, and reporting it as an error
     would train the reader to ignore the one message worth reading.
     """
-    cmd = [sys.executable, str(_root() / "scripts" / "refit.py")]
+    script = _script("refit.py")
+    if script is None:
+        # Said plainly rather than left to the exit code. Python exits 2 when it
+        # cannot open a file, and 2 is this script's own code for a refit that
+        # ran and was turned down -- so a missing file reported itself as the
+        # guard working, which is the most misleading answer available.
+        job.status = "failed"
+        job.error = ("refit.py not found -- looked in "
+                     f"{Path.cwd() / 'scripts'} and {_root() / 'scripts'}")
+        job.publish(f"__FAILED__ {job.error}")
+        return
+
+    cmd = [sys.executable, str(script)]
     if force_outcome:
         cmd.append("--force-outcome")
 
@@ -186,7 +238,7 @@ async def _run_refit(job: Job, *, force_outcome: bool) -> None:
         *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
-        cwd=str(_root()),
+        cwd=str(script.parent.parent),
         env=env,
     )
 
@@ -195,21 +247,20 @@ async def _run_refit(job: Job, *, force_outcome: bool) -> None:
         line = raw.decode("utf-8", errors="replace").rstrip()
         if not line:
             continue
-        job.lines.append(line)
-        await job.queue.put(line)
+        job.publish(line)
 
     await process.wait()
     if process.returncode == 0:
         job.status = "done"
-        await job.queue.put("__DONE__ refit complete")
+        job.publish("__DONE__ refit complete")
     elif process.returncode == 2:
         job.status = "done"
-        await job.queue.put(
+        job.publish(
             "__DONE__ refit rejected — the previous model is still in place")
     else:
         job.status = "failed"
         job.error = f"refit exited with code {process.returncode}"
-        await job.queue.put(f"__FAILED__ {job.error}")
+        job.publish(f"__FAILED__ {job.error}")
 
 
 # ---------------------------------------------------------------------------
@@ -304,25 +355,37 @@ async def events(job_id: str) -> StreamingResponse:
         raise HTTPException(status_code=404, detail="unknown job")
 
     async def stream():
-        # Replay anything already emitted, so a late or reconnecting browser
-        # sees the whole run rather than joining midway.
-        for line in list(job.lines):
-            yield f"data: {line}\n\n"
-        if job.status != "running":
-            marker = "__DONE__" if job.status == "done" else "__FAILED__"
-            name = Path(job.output_path).name if job.output_path else (job.error or "")
-            yield f"data: {marker} {name}\n\n"
-            return
-
-        while True:
-            try:
-                line = await asyncio.wait_for(job.queue.get(), timeout=30)
-            except asyncio.TimeoutError:
-                yield ": keepalive\n\n"   # keeps proxies and browsers from closing
-                continue
-            yield f"data: {line}\n\n"
-            if line.startswith(("__DONE__", "__FAILED__")):
+        # Subscribed before the replay, so a line emitted while the backlog is
+        # going out is queued rather than missed.
+        queue: asyncio.Queue = asyncio.Queue()
+        job.subscribers.append(queue)
+        try:
+            # Replay anything already emitted, so a late or reconnecting browser
+            # sees the whole run rather than joining midway.
+            for line in list(job.lines):
+                yield f"data: {line}\n\n"
+            if job.status != "running":
+                marker = "__DONE__" if job.status == "done" else "__FAILED__"
+                name = (Path(job.output_path).name if job.output_path
+                        else (job.error or ""))
+                yield f"data: {marker} {name}\n\n"
                 return
+
+            while True:
+                try:
+                    line = await asyncio.wait_for(queue.get(), timeout=30)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"   # stops proxies closing the stream
+                    continue
+                yield f"data: {line}\n\n"
+                if line.startswith(("__DONE__", "__FAILED__")):
+                    return
+        finally:
+            # Dropped however we leave -- returned, cancelled or raised. A queue
+            # left behind is a slow leak on a long-lived instance.
+            if queue in job.subscribers:
+                job.subscribers.remove(queue)
+
 
     return StreamingResponse(
         stream(),
