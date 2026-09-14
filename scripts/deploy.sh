@@ -48,7 +48,14 @@ set -euo pipefail
 
 SERVICE="${SERVICE:-guards-report}"
 REGION="${REGION:-us-central1}"
+# gcloud first, then .env. A gcloud config with no project set is not
+# hypothetical here -- `configurations/config_default` is a zero-byte file, so
+# `get-value project` answers with nothing and the deploy stopped before it
+# started, while the id sat in .env all along.
 PROJECT="${PROJECT:-$(gcloud config get-value project 2>/dev/null)}"
+if [[ -z "${PROJECT}" || "${PROJECT}" == "(unset)" ]]; then
+  PROJECT="$(grep -E '^GCP_PROJECT=' .env 2>/dev/null | cut -d= -f2- | tr -d '\r')"
+fi
 BUCKET="${BUCKET:-$(grep -E '^GCS_BUCKET=' .env | cut -d= -f2- | tr -d '\r')}"
 ODDS_KEY="${ODDS_KEY:-$(grep -E '^ODDS_API_KEY=' .env | cut -d= -f2- | tr -d '\r')}"
 # Read from .env before generating one. A fresh token on every deploy is a

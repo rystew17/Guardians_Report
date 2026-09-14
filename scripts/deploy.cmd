@@ -57,9 +57,17 @@ if not exist ".env" (
 if not defined PROJECT (
   for /f "usebackq delims=" %%P in (`gcloud config get-value project 2^>nul`) do set "PROJECT=%%P"
 )
+if "%PROJECT%"=="(unset)" set "PROJECT="
 
 REM Pull the rest straight out of .env so this and deploy.sh stay identical.
+REM GCP_PROJECT is read here too, as a fallback for a gcloud config that has no
+REM project set. That is not hypothetical: `configurations/config_default` on
+REM this machine is a zero-byte file, so `gcloud config get-value project`
+REM answers with nothing and the deploy stopped before it started -- while the
+REM project id sat in .env the whole time, which is where every other setting
+REM comes from anyway.
 for /f "usebackq tokens=1,* delims==" %%A in (".env") do (
+  if /i "%%A"=="GCP_PROJECT"  if not defined PROJECT  set "PROJECT=%%B"
   if /i "%%A"=="GCS_BUCKET"   if not defined BUCKET   set "BUCKET=%%B"
   if /i "%%A"=="ODDS_API_KEY" if not defined ODDS_KEY set "ODDS_KEY=%%B"
   REM Read before generating. A fresh token on every deploy is a redeploy that
@@ -122,5 +130,9 @@ echo.
 exit /b 0
 
 :noproject
-echo No project set. Run: gcloud config set project ^<id^>
+echo No project found. Either set one for gcloud:
+echo.
+echo     gcloud config set project ^<id^>
+echo.
+echo or put GCP_PROJECT=^<id^> in .env, which this script reads as a fallback.
 exit /b 1
