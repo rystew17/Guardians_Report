@@ -44,9 +44,17 @@ TEMPLATES: dict[str, tuple[str, ...]] = {
     ),
     "bat.profile.exit_velocity": (
         "averages {velocity:.1f} mph off the bat, league {mean:.1f}",
+        "leaves the bat at {velocity:.1f} mph on average, against a league "
+        "{mean:.1f}",
+        "hits it {velocity:.1f} mph on average, where the league manages "
+        "{mean:.1f}",
     ),
     "bat.profile.spray": (
         "pulls {pull:.0%} of what he puts in play, league {mean_pct:.0%}",
+        "sends {pull:.0%} of his batted balls to the pull side, league "
+        "{mean_pct:.0%}",
+        "puts {pull:.0%} of his contact into the pull field, against "
+        "{mean_pct:.0%} league-wide",
     ),
     "bat.approach.chase": (
         "chases {chase:.1%} of pitches out of the zone, league {mean_abs:.1%}",
@@ -54,6 +62,9 @@ TEMPLATES: dict[str, tuple[str, ...]] = {
     ),
     "bat.approach.whiff": (
         "misses on {whiff:.1%} of his swings, league {mean_abs:.1%}",
+        "swings through {whiff:.1%} of what he offers at, against "
+        "{mean_abs:.1%} for the league",
+        "comes up empty on {whiff:.1%} of his cuts, league {mean_abs:.1%}",
     ),
     "bat.approach.pitchtype": (
         "has handled the {pitch} at a {xwoba3} expected wOBA, league {league3}",
@@ -62,6 +73,10 @@ TEMPLATES: dict[str, tuple[str, ...]] = {
     "bat.split.platoon": (
         "is a different hitter by hand: {vs_right3} against right-handers, "
         "{vs_left3} against left-handers",
+        "splits hard by the hand he faces — {vs_right3} against righties, "
+        "{vs_left3} against lefties",
+        "hits {vs_right3} against right-handers and {vs_left3} against "
+        "left-handers, which is two different hitters",
     ),
     "bat.luck.gap": (
         "is {direction} his contact — {actual3} actual against {expected3} expected",
@@ -73,10 +88,18 @@ TEMPLATES: dict[str, tuple[str, ...]] = {
     ),
     "pit.trend.window": (
         "has run a {value3} rate over his last {games} outings, {baseline3} on the season",
+        "sits at {value3} across his last {games} times out, against "
+        "{baseline3} for the year",
+        "has been at {value3} over {games} recent outings, {baseline3} "
+        "across the season as a whole",
     ),
     "pit.absent": (
         "has no recent record to grade — {seen} plate appearances in the window, "
         "so anything said about his form would be invented",
+        "has faced {seen} hitters in the window, which is too few to read "
+        "form from and too few to pretend otherwise",
+        "has not pitched enough lately to grade — {seen} plate appearances, "
+        "and a trend drawn from that would be invention",
     ),
     "pit.arsenal.best": (
         "leans on the {pitch} {usage:.0%} of the time and it earns it — a "
@@ -129,17 +152,31 @@ TEMPLATES: dict[str, tuple[str, ...]] = {
     "game.first_five": (
         "through five the model has {home} ahead {home_leads:.0%} of the time, "
         "{away} {away_leads:.0%}, level the other {tied:.0%}",
+        "after five innings it is {home} in front {home_leads:.0%} of the "
+        "time and {away} {away_leads:.0%}, with {tied:.0%} still level",
+        "the first five belong to {home} {home_leads:.0%} of the time and to "
+        "{away} {away_leads:.0%}; the other {tied:.0%} are level",
     ),
     "game.strikeouts": (
         "{leader} projects for {leader_k:.1f} strikeouts against {trailer_k:.1f} for "
         "{trailer}, with a line at {leader_line:g}",
+        "the model has {leader} down for {leader_k:.1f} strikeouts and "
+        "{trailer} for {trailer_k:.1f}, against a posted {leader_line:g}",
+        "{leader} figures for {leader_k:.1f} punchouts to {trailer_k:.1f} "
+        "from {trailer}, with the number set at {leader_line:g}",
     ),
     "game.key_bat": (
         "{name} is the bat the model likes most tonight — a {homer:.0%} chance to go "
         "deep batting {slot} for {team}",
+        "the model's favourite bat tonight is {name}, batting {slot} for "
+        "{team} with a {homer:.0%} chance to leave the yard",
+        "{name} carries the best home run chance on the card at {homer:.0%}, "
+        "hitting {slot} for {team}",
     ),
     "game.starters": (
         "{better} sends the better starter by the model's reckoning",
+        "the model gives {better} the edge in the pitching matchup",
+        "on the mound the model prefers {better}",
     ),
 }
 

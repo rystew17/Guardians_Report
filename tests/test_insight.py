@@ -573,3 +573,40 @@ def test_two_findings_on_one_line_do_not_reuse_a_phrasing():
     line = render_module.sentence(
         [arsenal("Slider", 0.08), arsenal("Curveball", 0.07)], subject="Sabrowski")
     assert line.count("gets results from") <= 1, line
+
+
+def test_every_season_frame_takes_every_kind_of_tier_phrase():
+    """A combinatorial grammar bug, found by trying the combinations.
+
+    VALUE_BANDS holds three kinds of phrase -- noun ("a serious bat"),
+    participial ("carrying a franchise") and prepositional ("in the MVP
+    conversation"). "Has been" is a copula and takes all three; almost nothing
+    else does. Frames tried and discarded produced "has played like carrying a
+    franchise" and "has graded out as in the MVP conversation".
+
+    So the frames vary by where the time marker sits, not by the verb. Adding
+    one with a different verb means first tagging all sixty tier phrasings by
+    kind.
+    """
+    from guards_report.insight import voice
+
+    kinds = ["a serious bat", "carrying a franchise", "in the MVP conversation"]
+    for frame in voice.SEASON_FRAMES:
+        assert "has been {tier}" in frame or "has been {tier}" in frame.replace(
+            "{name} ", ""), frame
+        for tier in kinds:
+            said = frame.format(name="Trout", tier=tier)
+            assert " has been " in said, said
+
+
+def test_no_tier_phrasing_is_left_that_cannot_follow_has_been():
+    """The two that could not: "a perennial All-Star" is a career claim from one
+    season, and "a season people will remember" made the sentence say a man was
+    a season."""
+    from guards_report.insight import voice
+
+    for _cut, _name, phrasings in voice.VALUE_BANDS:
+        for phrase in phrasings:
+            said = f"Trout has been {phrase} this season"
+            assert "perennial" not in said, phrase
+            assert not phrase.startswith("a season "), phrase

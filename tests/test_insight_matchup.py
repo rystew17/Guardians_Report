@@ -245,7 +245,11 @@ def test_the_paragraph_reads_in_reading_order_not_significance_order():
     # variant it draws is a template choice; the order they are spoken in is
     # what is under test.
     call, driver = text.index("56.7%"), text.index("team rating")
-    score, five = text.index("cle 5.7"), text.index("through five")
+    # "five" rather than "through five": the first-five finding has three
+    # phrasings and only one of them opens that way. The probe has to be content
+    # every variant carries, or this tests which template was drawn instead of
+    # the order they are spoken in.
+    score, five = text.index("cle 5.7"), text.index("five")
     assert call < driver < score < five < text.index("strikeouts")
 
 

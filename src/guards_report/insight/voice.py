@@ -153,12 +153,26 @@ def _index(*key: Any) -> int:
 #
 # All are perfect tense or explicitly dated. None can be read as a claim about
 # the player rather than the season.
+# Every frame is built on "has been", and that is a grammatical constraint
+# rather than a lack of imagination.
+#
+# The tier that substitutes in comes from VALUE_BANDS, which holds three
+# different kinds of phrase: noun ("a serious bat"), participial ("carrying a
+# franchise") and prepositional ("in the MVP conversation"). "Has been" is a
+# copula and takes all three. Almost nothing else does -- tried and discarded:
+# "has played like carrying a franchise", "has graded out as in the MVP
+# conversation", "has given his team in the MVP conversation".
+#
+# Variety therefore comes from where the time marker sits, not from the verb.
+# Adding a frame with a different verb means first tagging all sixty tier
+# phrasings by kind, which is a larger change than it looks.
 SEASON_FRAMES = (
     "{name} has been {tier} this season",
     "This season {name} has been {tier}",
-    "{name} has played like {tier} this year",
     "On the year {name} has been {tier}",
-    "{name} has given his team {tier} this season",
+    "Through this season {name} has been {tier}",
+    "So far this season {name} has been {tier}",
+    "{name} has been {tier} through this year",
 )
 
 
