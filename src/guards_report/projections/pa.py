@@ -91,8 +91,77 @@ PROP_COLUMNS = [
 ]
 
 
+def cached_pitch_frame(root, columns, cache_name, *, ended_only=False):
+    """The pitch corpus, projected to `columns`, read from as few files as it can be.
+
+    Only the current season's thirty files ever change. Every earlier season is
+    finished and its rows are fixed forever, so they are concatenated once into
+    a single cached file and read as one thereafter -- 360 opens become 31.
+
+    Locally that is seconds. On Cloud Run the corpus is on a GCS mount where the
+    price is per file opened rather than per byte, and a refit reads the whole
+    corpus three times.
+
+    The cache is rebuilt whenever any source file is newer than it. That is what
+    makes it safe rather than merely fast: a club-season can be refetched and
+    revised, and serving a copy built before the revision would hide the
+    correction behind a file that looks perfectly valid.
+
+    `ended_only` keeps just the pitches that finished a plate appearance, which
+    is the plate-appearance view; without it the frame is every pitch.
+    """
+    from pathlib import Path
+
+    root = Path(root)
+    files = sorted((root / "pitches").glob("*.parquet"))
+    if not files:
+        return None
+
+    def read(path):
+        frame = pd.read_parquet(path, columns=columns)
+        return _ended(frame) if ended_only else frame
+
+    current = max(int(path.name[:4]) for path in files)
+    prior = [p for p in files if int(p.name[:4]) < current]
+    live = [p for p in files if int(p.name[:4]) == current]
+
+    frames = []
+    if prior:
+        store = root / "models" / cache_name
+        newest = max(p.stat().st_mtime for p in prior)
+        if store.exists() and store.stat().st_mtime >= newest:
+            frames.append(pd.read_parquet(store))
+        else:
+            history = pd.concat([read(p) for p in prior], ignore_index=True)
+            store.parent.mkdir(parents=True, exist_ok=True)
+            history.to_parquet(store, index=False, compression="zstd")
+            frames.append(history)
+
+    frames.extend(read(p) for p in live)
+    return pd.concat(frames, ignore_index=True)
+
+
+def _ended(frame):
+    """Only the pitches that finished a plate appearance."""
+    return frame[frame["events"].notna() & (frame["events"] != "")]
+
+
+def _cache_path(cache_dir, columns: list[str]):
+    """Where the finished seasons are kept, for this exact column set.
+
+    Keyed by the columns because the callers ask for different projections --
+    PROP_COLUMNS and TALENT_COLUMNS -- and a cache built for one would
+    otherwise serve the wrong columns to the other.
+    """
+    import hashlib
+    from pathlib import Path
+
+    key = hashlib.sha256("|".join(sorted(columns)).encode()).hexdigest()[:12]
+    return Path(cache_dir).parent / "models" / f"pa_cache_{key}.parquet"
+
+
 def load(
-    cache_dir, *, columns: list[str] | None = None, seasons=None
+    cache_dir, *, columns: list[str] | None = None, seasons=None, cache=True
 ) -> pd.DataFrame:
     """Plate appearances read straight from the cached chunks.
 
@@ -100,6 +169,20 @@ def load(
     everything and selecting afterwards. Parquet is columnar, so the unread
     columns are never touched -- which on this corpus turns a four-minute,
     ten-gigabyte load into seconds.
+
+    Asked for every season, the finished ones come from a single cached file
+    rather than three hundred and thirty separate reads. A refit loads the whole
+    corpus three times, and on Cloud Run -- where the corpus is on a GCS mount
+    and the cost is per file opened, not per byte -- that was six minutes for
+    the props stage against forty seconds on a laptop.
+
+    The cache is rebuilt whenever any source file is newer than it, which is
+    what makes it safe rather than merely fast: a club-season can be refetched
+    and revised, and serving a copy built before the revision would hide the
+    correction behind a file that looks perfectly valid.
+
+    Asked for specific seasons the cache is skipped entirely -- that path reads
+    thirty files already and is what a report build uses.
     """
     from pathlib import Path
 
@@ -108,12 +191,34 @@ def load(
     if "events" not in columns:
         columns = columns + ["events"]
 
+    files = sorted(cache_dir.glob("*.parquet"))
     frames = []
-    for path in sorted(cache_dir.glob("*.parquet")):
+
+    if seasons is None and cache and files:
+        current = max(int(path.name[:4]) for path in files)
+        prior = [path for path in files if int(path.name[:4]) < current]
+        live = [path for path in files if int(path.name[:4]) == current]
+
+        if prior:
+            store = _cache_path(cache_dir, columns)
+            newest = max(path.stat().st_mtime for path in prior)
+            if store.exists() and store.stat().st_mtime >= newest:
+                frames.append(pd.read_parquet(store))
+            else:
+                history = pd.concat(
+                    [_ended(pd.read_parquet(path, columns=columns))
+                     for path in prior],
+                    ignore_index=True,
+                )
+                store.parent.mkdir(parents=True, exist_ok=True)
+                history.to_parquet(store, index=False, compression="zstd")
+                frames.append(history)
+        files = live
+
+    for path in files:
         if seasons is not None and int(path.name[:4]) not in seasons:
             continue
-        frame = pd.read_parquet(path, columns=columns)
-        frames.append(frame[frame["events"].notna() & (frame["events"] != "")])
+        frames.append(_ended(pd.read_parquet(path, columns=columns)))
 
     if not frames:
         return pd.DataFrame(columns=columns)

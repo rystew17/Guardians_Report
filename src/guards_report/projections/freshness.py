@@ -182,33 +182,9 @@ def _pitch_frame(root: Path, columns: list[str], cache_name: str):
     corpus file that gets refetched and revised must not be served from a cache
     built before the revision.
     """
-    directory = Path(root) / "pitches"
-    files = sorted(directory.glob("*.parquet"))
-    if not files:
-        return None
+    from guards_report.projections import pa as pa_module
 
-    current = max(int(path.name[:4]) for path in files)
-    prior = [path for path in files if int(path.name[:4]) < current]
-    live = [path for path in files if int(path.name[:4]) == current]
-
-    frames = []
-    if prior:
-        cache = Path(root) / "models" / cache_name
-        newest = max(path.stat().st_mtime for path in prior)
-        stale = (not cache.exists()) or cache.stat().st_mtime < newest
-        if stale:
-            history = pd.concat(
-                [pd.read_parquet(path, columns=columns) for path in prior],
-                ignore_index=True,
-            )
-            cache.parent.mkdir(parents=True, exist_ok=True)
-            history.to_parquet(cache, index=False, compression="zstd")
-        else:
-            history = pd.read_parquet(cache)
-        frames.append(history)
-
-    frames.extend(pd.read_parquet(path, columns=columns) for path in live)
-    return pd.concat(frames, ignore_index=True)
+    return pa_module.cached_pitch_frame(root, columns, cache_name)
 
 
 def rebuild_derived(root: Path) -> int | None:

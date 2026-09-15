@@ -233,12 +233,17 @@ def load_first5(path: Path) -> First5Artifact | None:
 
 
 def _load_pitches(directory: Path, columns: list[str]) -> pd.DataFrame:
-    """Every pitch, projected to the columns the first-five build needs."""
-    frames = [
-        pd.read_parquet(path, columns=columns)
-        for path in sorted(Path(directory).glob("*.parquet"))
-    ]
-    frame = pd.concat(frames, ignore_index=True)
+    """Every pitch, projected to the columns the first-five build needs.
+
+    The third full read of the corpus in a refit, and the last one that opened
+    all 360 files. Shares the finished-season cache with the other two.
+    """
+    from guards_report.projections import pa as pa_module
+
+    frame = pa_module.cached_pitch_frame(
+        Path(directory).parent, columns, "first5_history_cache.parquet")
+    if frame is None:
+        return pd.DataFrame(columns=columns)
     frame["game_date"] = pd.to_datetime(frame["game_date"])
     return frame
 
