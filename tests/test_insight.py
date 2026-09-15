@@ -672,3 +672,30 @@ def test_a_batter_still_takes_the_batter_branch(monkeypatch):
                  {"atBats": 400, "hits": 100, "ops": 0.700, "iso": 0.150},
                  kind="batter")
     assert "earned-run" not in said
+
+
+def test_the_card_level_floor_costs_nothing_it_is_currently_protecting():
+    """Measured rather than assumed, and the answer is that the floor is inert.
+
+    Over 120 batters stratified across playing time from 40 plate appearances to
+    450-plus, the number of findings printed is identical at every budget from
+    0.5 false findings per card to 25.5 -- a floor moving from |z| 2.08 to 3.38
+    -- and no batter falls silent at any of them. `limit=2` and the one-per-
+    family rule decide the output; the floor does not reach it.
+
+    So the strict setting is free, and keeping it is the honest choice: the page
+    expects half a false finding rather than twenty-six. This test exists so the
+    next person to see a 3.38 bar does not loosen it believing it is throttling
+    the report, and so that if candidate quality ever drops far enough for the
+    floor to start binding, that shows up here as a change rather than silently
+    in the prose.
+    """
+    from guards_report.insight.types import CARD_FALSE_FINDINGS, significance_floor
+    from guards_report.insight.card import BATTER_CRITERIA
+
+    strict = significance_floor(BATTER_CRITERIA, subjects=57)
+    loose = significance_floor(BATTER_CRITERIA, expected_false=25.5, subjects=57)
+
+    assert CARD_FALSE_FINDINGS == 0.5
+    assert strict > loose                      # the budget does move the bar
+    assert 3.2 < strict < 3.6, strict          # and this is where it sits

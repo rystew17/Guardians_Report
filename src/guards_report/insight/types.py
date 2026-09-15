@@ -139,6 +139,18 @@ Evaluator = Callable[..., list[Finding]]
 # call behaves exactly as it did. What changed is the unit it is charged
 # against: the same half a false finding now covers the whole page instead of
 # each player on it.
+#
+# Measured before being believed. Over 120 batters stratified across playing
+# time -- 40 plate appearances up to 450-plus -- the count of findings printed
+# is identical at every budget from 0.5 per card to 25.5, a bar moving from
+# |z| 2.08 to 3.38, and no batter falls silent at any of them.
+#
+# Two things follow, and the second is the less comfortable one. The strict
+# setting is free, so it stays. But the floor is not presently protecting
+# anything either: what actually decides the output is `limit` and the rule
+# against two findings from one family. The floor will begin to bite only when
+# candidate quality drops or the limit rises -- which is the moment to look at
+# this number again, not before.
 CARD_FALSE_FINDINGS = 0.5
 
 
