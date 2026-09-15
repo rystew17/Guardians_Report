@@ -610,3 +610,65 @@ def test_no_tier_phrasing_is_left_that_cannot_follow_has_been():
             said = f"Trout has been {phrase} this season"
             assert "perennial" not in said, phrase
             assert not phrase.startswith("a season "), phrase
+
+
+# ---------------------------------------------------------------------------
+# Form, for the half of the card that had none
+# ---------------------------------------------------------------------------
+
+class _FormBox:
+    def __init__(self, recent, season):
+        self._recent, self.season, self.windows = recent, season, []
+
+
+def _form(monkeypatch, recent, season, kind="pitcher"):
+    from guards_report.insight import dossier, profile as prof
+    monkeypatch.setattr(dossier, "_window", lambda box, label: recent)
+    player = prof.PlayerProfile(player_id=5, kind=kind, sample=400,
+                                tier="a solid regular")
+    return dossier.write_form(_FormBox(recent, season), player, surname="Williams")
+
+
+def test_a_pitcher_gets_a_form_section_at_all(monkeypatch):
+    """`write_form` read atBats and hits from end to end -- batter statistics --
+    so every pitcher fell through it silently. Measured on a real card: batters
+    25 of 28, pitchers 0 of 25. That single omission was the whole gap."""
+    said = _form(monkeypatch, {"outs": 60, "era": 1.80, "games": 4, "kPer9": 11.2},
+                 {"era": 4.00, "strikeoutsPer9Inn": 8.5})
+    assert said
+    assert "1.80" in said and "4.00" in said
+
+
+def test_a_pitchers_rate_is_only_called_a_change_when_it_clears_the_bar(monkeypatch):
+    """Earned runs over a few outings move a lot on their own, so a full run of
+    ERA is routine rather than news."""
+    moved = _form(monkeypatch, {"outs": 54, "era": 7.10, "games": 4, "kPer9": 6.0},
+                  {"era": 4.00, "strikeoutsPer9Inn": 8.5})
+    assert "cannot separate" not in moved
+
+    flat = _form(monkeypatch, {"outs": 63, "era": 4.20, "games": 4, "kPer9": 8.7},
+                 {"era": 4.00, "strikeoutsPer9Inn": 8.5})
+    assert "cannot separate" in flat
+
+
+def test_strikeouts_are_reported_apart_from_runs(monkeypatch):
+    """A pitcher can hold his ERA while missing far fewer bats, and that half is
+    the one that predicts what happens next."""
+    said = _form(monkeypatch, {"outs": 63, "era": 4.10, "games": 4, "kPer9": 5.4},
+                 {"era": 4.00, "strikeoutsPer9Inn": 9.0})
+    assert "fewer bats" in said
+
+
+def test_two_relief_outings_say_so_rather_than_claiming_a_trend(monkeypatch):
+    said = _form(monkeypatch, {"outs": 6, "era": 9.00, "games": 2, "kPer9": 4.0},
+                 {"era": 4.00, "strikeoutsPer9Inn": 8.5})
+    assert "too few to read anything into" in said
+    assert "9.00" not in said
+
+
+def test_a_batter_still_takes_the_batter_branch(monkeypatch):
+    said = _form(monkeypatch,
+                 {"atBats": 40, "hits": 14, "ops": 0.900, "iso": 0.200},
+                 {"atBats": 400, "hits": 100, "ops": 0.700, "iso": 0.150},
+                 kind="batter")
+    assert "earned-run" not in said

@@ -486,6 +486,9 @@ def write_form(box: Any, player: prof.PlayerProfile, *, surname: str,
     Fifteen games is the window. Five is too few for any test to fire and thirty
     is long enough that it stops being news.
     """
+    if player.kind == "pitcher":
+        return _pitcher_form(box, player, surname=surname, voice=voice)
+
     pieces: list[str] = []
 
     recent = _window(box, "L15")
@@ -558,6 +561,83 @@ def write_form(box: Any, player: prof.PlayerProfile, *, surname: str,
                     f"{walks} walk{'s' if walks != 1 else ''} in this series "
                     "without an official at-bat"
                 )
+
+    if not pieces:
+        return ""
+    return ". ".join(p[0].upper() + p[1:] for p in pieces) + "."
+
+
+# How far a pitcher's recent earned-run rate has to sit from his own season
+# before it is called a change. Earned runs over a handful of outings are noisy
+# enough that a full run of ERA is routine, so the bar is a ratio rather than a
+# difference: a third either way, which on a 4.00 season means under 2.70 or
+# over 5.30.
+PITCHER_FORM_RATIO = 1.33
+
+# Below this a recent line is quoted without any claim attached to it. Two
+# relief outings is a fact about two outings.
+PITCHER_FORM_OUTS = 15          # five innings
+
+
+def _pitcher_form(box: Any, player: prof.PlayerProfile, *, surname: str,
+                  voice=None) -> str:
+    """Part two for a pitcher: how he has thrown lately.
+
+    The batter branch above reads atBats and hits from end to end, so every
+    pitcher fell through it and said nothing -- 0 of 25 on a real card against
+    25 of 28 batters. This is the same shape of section built on the statistics
+    a pitcher actually has.
+
+    A rate is only called a change when it clears `PITCHER_FORM_RATIO`. Earned
+    runs over a few outings move a lot on their own, and "trending up" off two
+    starts is the invention this package exists to avoid.
+    """
+    pieces: list[str] = []
+    recent = _window(box, "L15")
+    season = getattr(box, "season", {}) or {}
+
+    if recent and season:
+        outs = float(recent.get("outs") or 0)
+        era, season_era = recent.get("era"), season.get("era")
+        games = int(recent.get("games") or 0)
+
+        if outs >= PITCHER_FORM_OUTS and era is not None and season_era:
+            era, season_era = float(era), float(season_era)
+            innings = outs / 3.0
+            if season_era > 0 and (era / season_era >= PITCHER_FORM_RATIO
+                                   or season_era / max(era, 0.01) >= PITCHER_FORM_RATIO):
+                way = "down" if era > season_era else "up"
+                opener = (voice.form(way, player.player_id) if voice
+                          else voice_module.form_phrase(way, player.player_id))
+                pieces.append(
+                    f"{opener} — a {era:.2f} earned-run average over "
+                    f"{innings:.1f} innings in his last {games} outings, "
+                    f"against {season_era:.2f} on the season")
+            else:
+                opener = (voice.form("flat", player.player_id) if voice
+                          else voice_module.form_phrase("flat", player.player_id))
+                pieces.append(
+                    f"{opener} — {era:.2f} over his last {games} outings "
+                    f"against {season_era:.2f} for the season, which "
+                    f"{innings:.1f} innings cannot separate")
+
+            # Strikeouts move independently of runs allowed, and the test above
+            # cannot see them: a pitcher can hold his ERA while missing far
+            # fewer bats, which is the half that predicts what happens next.
+            recent_k9, season_k9 = recent.get("kPer9"), season.get("strikeoutsPer9Inn")
+            if recent_k9 is not None and season_k9:
+                gap = float(recent_k9) - float(season_k9)
+                if abs(gap) >= 2.0:
+                    direction = "more" if gap > 0 else "fewer"
+                    pieces.append(
+                        f"missing {direction} bats than usual — "
+                        f"{float(recent_k9):.1f} strikeouts per nine against "
+                        f"{float(season_k9):.1f}")
+        elif outs > 0:
+            innings = outs / 3.0
+            pieces.append(
+                f"has thrown {innings:.1f} innings across {games} recent "
+                f"outings, too few to read anything into")
 
     if not pieces:
         return ""
