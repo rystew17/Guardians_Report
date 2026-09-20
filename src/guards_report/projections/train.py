@@ -394,7 +394,7 @@ def fit(
                 "log_loss": summary["log_loss"],
                 "log_loss_sd": summary["log_loss_sd"],
                 "accuracy": summary["accuracy"],
-                "baseline_accuracy": 0.5332,
+                "baseline_accuracy": summary["baseline_accuracy"],
                 "lift_points": summary["lift_pt"],
                 "seasons_beating_baseline": summary["seasons_beating_baseline"],
                 "seasons": summary["seasons"],
@@ -419,8 +419,17 @@ def fit(
                 "n_games": int(len(games)),
             },
             "elo_benchmark_log_loss": 0.67836,
+            # Each season carries the baseline it actually had. Without it the
+            # report has nothing to subtract but the pooled figure, which is
+            # wrong for every season except the one that happens to match.
             "per_season": {
-                str(s): {"log_loss": m.log_loss, "accuracy": m.accuracy}
+                str(s): {
+                    "log_loss": m.log_loss,
+                    "accuracy": m.accuracy,
+                    "baseline_accuracy": m.baseline_accuracy,
+                    "lift_points": m.lift,
+                    "n_games": m.n,
+                }
                 for s, m in per_season.items()
             },
         },

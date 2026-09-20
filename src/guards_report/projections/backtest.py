@@ -213,6 +213,11 @@ def summarize(per_season: dict[int, Metrics]) -> dict[str, float]:
         "log_loss": float(np.average(losses, weights=weights)),
         "log_loss_sd": float(losses.std(ddof=1)) if len(losses) > 1 else 0.0,
         "accuracy": float(np.average(accs, weights=weights)),
+        # Measured, because always-picking-home is not a constant: across these
+        # seasons it ran from 52.1% to 54.3%. Pooled the same way accuracy is,
+        # so `accuracy - baseline` and `lift_pt` cannot disagree.
+        "baseline_accuracy": float(np.average(
+            [m.baseline_accuracy for m in per_season.values()], weights=weights)),
         "lift_pt": float(np.average(lifts, weights=weights)),
         "lift_sd": float(lifts.std(ddof=1)) if len(lifts) > 1 else 0.0,
         "seasons_beating_baseline": int(sum(1 for m in per_season.values() if m.lift > 0)),

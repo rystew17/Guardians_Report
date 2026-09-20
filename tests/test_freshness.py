@@ -363,7 +363,42 @@ def test_the_history_cache_returns_the_same_rows_as_reading_every_file(tmp_path)
 
     assert len(cached) == len(direct)
     assert sorted(cached["game_pk"]) == sorted(direct["game_pk"])
-    assert (tmp_path / "models" / "cache.parquet").exists()
+    # The name is a label; the column set is hashed onto it, so the file is
+    # `cache_<hash>.parquet` rather than the name as given.
+    assert list((tmp_path / "models").glob("cache_*.parquet"))
+
+
+def test_two_column_sets_do_not_share_one_cache(tmp_path):
+    """The cache is keyed by the columns, not only by the name it was given.
+
+    Two callers asking for different projections under the same cache name used
+    to collide, and the collision was silent in the worst way: the finished
+    seasons came back without the columns they were never stored with, the
+    current season was read fresh and had them, and the concatenation was a
+    frame that was NaN for every year but the last. Nothing raised. The wrong
+    answer looked exactly like the right one.
+    """
+    import pandas as pd
+    from guards_report.projections import freshness
+
+    pitches = tmp_path / "pitches"
+    pitches.mkdir(parents=True)
+    for season in (2024, 2025, 2026):
+        pd.DataFrame({
+            "season": [season] * 2, "pitcher": [1, 2], "batter": [7, 8],
+            "game_pk": [season * 10, season * 10 + 1],
+        }).to_parquet(pitches / f"{season}_CLE.parquet", index=False)
+
+    narrow = freshness._pitch_frame(tmp_path, ["season", "pitcher"], "shared.parquet")
+    wide = freshness._pitch_frame(
+        tmp_path, ["season", "pitcher", "batter"], "shared.parquet")
+
+    # The second caller must get its own column, in every season -- not just the
+    # live one it happened to read from source.
+    assert "batter" not in narrow.columns
+    assert wide["batter"].notna().all()
+    assert sorted(wide["season"].unique()) == [2024, 2025, 2026]
+    assert len(list((tmp_path / "models").glob("shared_*.parquet"))) == 2
 
 
 def test_a_revised_prior_season_invalidates_the_cache(tmp_path):

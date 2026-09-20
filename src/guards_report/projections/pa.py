@@ -109,7 +109,16 @@ def cached_pitch_frame(root, columns, cache_name, *, ended_only=False):
 
     `ended_only` keeps just the pitches that finished a plate appearance, which
     is the plate-appearance view; without it the frame is every pitch.
+
+    `cache_name` is a label, not the key. The column set is hashed into the
+    filename because a cache built for one projection would otherwise be served
+    to a caller asking for another, and the failure is silent: the finished
+    seasons come back missing the columns they were never stored with, the
+    current season is read fresh and has them, and the concatenation is a frame
+    that is NaN for every year but the last. Nothing raises. `pa.load` has keyed
+    its cache this way from the start; this is the same guard on the shared path.
     """
+    import hashlib
     from pathlib import Path
 
     root = Path(root)
@@ -127,7 +136,10 @@ def cached_pitch_frame(root, columns, cache_name, *, ended_only=False):
 
     frames = []
     if prior:
-        store = root / "models" / cache_name
+        key = hashlib.sha256(
+            ("|".join(sorted(columns)) + f"|ended={ended_only}").encode()
+        ).hexdigest()[:12]
+        store = root / "models" / f"{Path(cache_name).stem}_{key}.parquet"
         newest = max(p.stat().st_mtime for p in prior)
         if store.exists() and store.stat().st_mtime >= newest:
             frames.append(pd.read_parquet(store))

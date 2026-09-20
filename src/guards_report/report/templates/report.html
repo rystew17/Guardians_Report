@@ -1547,7 +1547,7 @@ details.more>summary:hover{color:var(--ink)}
     Read the spread, not the center. {{ (lr.one_run_game * 100)|round(0)|int }}% of
     games are decided by a single run, which is why even a good call here sits
     close to a coin flip &mdash; the model beats always-picking-the-home-team by
-    {{ ((wm.accuracy - wm.baseline_accuracy) * 100)|round(1) }} points, a real
+    {{ wm.lift_points|round(1) }} points, a real
     edge and a small one.
   </div>
 
@@ -1877,9 +1877,14 @@ details.more>summary:hover{color:var(--ink)}
         {% for season, m in pj.metrics.per_season.items() %}
         <tr>
           <td class="l">{{ season }}</td>
+          {#- Against the baseline this season actually had, not the pooled
+              one. Always picking the home team won 52.1% of the time in 2023
+              and 54.3% in 2025, and judging both against a single number moved
+              a season's lift by more than a point in either direction. -#}
+          {%- set base = m.baseline_accuracy | default(wm.baseline_accuracy) %}
           <td>{{ (m.accuracy * 100)|round(1) }}%</td>
-          <td class="sub">{{ ((m.accuracy - wm.baseline_accuracy) * 100)|round(1) }}pt</td>
-          <td class="l">{{ accuracy_bar(m.accuracy, wm.baseline_accuracy) }}</td>
+          <td class="sub">{{ ((m.accuracy - base) * 100)|round(1) }}pt</td>
+          <td class="l">{{ accuracy_bar(m.accuracy, base) }}</td>
         </tr>
         {% endfor %}
         <tr class="tot">
