@@ -63,7 +63,33 @@ def _add_pa_block(data, games, plate, prior):
     import pandas as pd
 
     slots_by_season = lineup.slot_weights_by_season(plate)
-    sp_rows, lu_rows = [], []
+    sp_rows, lu_rows, proj_rows = [], [], []
+
+    def value_lineups(starters, batters, weights):
+        """Slot-weighted mean batter effect per team-game.
+
+        Shared by the posted card and the projected one so the two columns
+        cannot drift apart in how they are computed -- only in which nine they
+        are computed over, which is the whole point of having both.
+        """
+        merged = starters.merge(
+            batters[["batter", "_key", "score"]], on="batter", how="left"
+        )
+        merged = merged[pd.to_datetime(merged["game_date"]) > merged["_key"]]
+        merged = merged.sort_values("_key").groupby(
+            ["game_pk", "batting_team", "batter", "slot"], as_index=False
+        ).last()
+        merged["w"] = merged["slot"].map(
+            lambda n: weights[n - 1] if 1 <= n <= 9 else weights[-1]
+        )
+        merged["score"] = merged["score"].fillna(0.0)
+        return (
+            merged.groupby(["game_pk", "batting_team"], as_index=False)
+            .apply(lambda b: pd.Series({
+                "lineup_value": float((b.score * b.w).sum() / b.w.sum())
+                if b.w.sum() else 0.0,
+            }), include_groups=False)
+        )
 
     for season in sorted(plate["season"].unique()):
         before = plate[plate["season"] < season]
@@ -93,32 +119,23 @@ def _add_pa_block(data, games, plate, prior):
         starters = lineup.starting_lineups(current)
         weights = slots_by_season.get(int(season), lineup.DEFAULT_SLOT_PA)
 
-        merged = starters.merge(
-            batters[["batter", "_key", "score"]], on="batter", how="left"
-        )
-        merged = merged[pd.to_datetime(merged["game_date"]) > merged["_key"]]
-        merged = merged.sort_values("_key").groupby(
-            ["game_pk", "batting_team", "batter", "slot"], as_index=False
-        ).last()
-        merged["w"] = merged["slot"].map(
-            lambda n: weights[n - 1] if 1 <= n <= 9 else weights[-1]
-        )
-        merged["score"] = merged["score"].fillna(0.0)
-        lu_rows.append(
-            merged.groupby(["game_pk", "batting_team"], as_index=False)
-            .apply(lambda b: pd.Series({
-                "lineup_value": float((b.score * b.w).sum() / b.w.sum())
-                if b.w.sum() else 0.0,
-            }), include_groups=False)
-        )
+        lu_rows.append(value_lineups(starters, batters, weights))
+
+        # The same valuation over the nine a morning build would have GUESSED,
+        # which is what the win model is fitted on. The score model keeps the
+        # posted card it was built and validated against; changing that is a
+        # separate question with its own evidence, not a side effect of this.
+        proj_rows.append(value_lineups(
+            lineup.projected_lineups(current), batters, weights))
 
     if not sp_rows:
         for column in score.PA_COLUMNS:
             data[column] = np.nan
-        return data
+        return data, pd.DataFrame(columns=["game_pk", "home_lineup", "away_lineup"])
 
     sp = pd.concat(sp_rows, ignore_index=True)
     lu = pd.concat(lu_rows, ignore_index=True)
+    proj = pd.concat(proj_rows, ignore_index=True) if proj_rows else lu.iloc[0:0]
 
     data = data.merge(sp, on="game_pk", how="left")
     data["opp_sp_talent"] = np.where(
@@ -128,18 +145,28 @@ def _add_pa_block(data, games, plate, prior):
     # abbreviation. Pivoting to home and away sidesteps the mapping entirely and
     # matches how the starter column above is handled.
     sides = games[["game_pk", "home_team", "away_team"]]
-    home = lu.rename(columns={"batting_team": "home_team", "lineup_value": "home_lineup"})
-    away = lu.rename(columns={"batting_team": "away_team", "lineup_value": "away_lineup"})
-    wide = (
-        sides.merge(home, on=["game_pk", "home_team"], how="left")
-             .merge(away, on=["game_pk", "away_team"], how="left")
-    )[["game_pk", "home_lineup", "away_lineup"]]
+
+    def pivot(frame):
+        home = frame.rename(
+            columns={"batting_team": "home_team", "lineup_value": "home_lineup"})
+        away = frame.rename(
+            columns={"batting_team": "away_team", "lineup_value": "away_lineup"})
+        return (
+            sides.merge(home, on=["game_pk", "home_team"], how="left")
+                 .merge(away, on=["game_pk", "away_team"], how="left")
+        )[["game_pk", "home_lineup", "away_lineup"]]
+
+    wide = pivot(lu)
 
     data = data.merge(wide, on="game_pk", how="left")
     data["own_lineup"] = np.where(
         data["is_home"] == 1, data["home_lineup"], data["away_lineup"]
     )
-    return data
+    # Per game rather than per team-game, which is the shape the win model's
+    # frame is in. Returned rather than recomputed because the talent fit behind
+    # it is the most expensive step in a refit. Built from the PROJECTED nine,
+    # so the coefficient is fitted at the noise level the build serves at.
+    return data, pivot(proj) if len(proj) else wide.iloc[0:0]
 
 
 def _win_covariance(
@@ -210,10 +237,33 @@ def fit(
     # signature of a feature that works by knowing who is playing.
     plate = pa.load(pa_dir)
     talent_prior = talent.fit(plate, alpha=TALENT_ALPHA)
-    data = _add_pa_block(data, games, plate, talent_prior)
+    data, lineup_by_game = _add_pa_block(data, games, plate, talent_prior)
     score_pa = [c for c in score.PA_COLUMNS if data[c].notna().mean() > 0.5]
 
+    # -- lineup block, win model -------------------------------------------
+    # The one plate-appearance block the win model keeps. The others failed
+    # because Elo already summarises the outcomes they describe; this one says
+    # who is playing TONIGHT, which no rating built from past results can know.
+    #
+    # It is carried on that reasoning rather than on a measured edge: held out
+    # over 2022-26 it was worth +0.31 points with the posted card, +0.20 with
+    # the projected one the morning build actually has, and neither clears its
+    # own standard error. The sign was positive in every variant tried and in
+    # four seasons of five. `significant` records that plainly so the report can
+    # say so too.
     win_cols = list(features.CORE_COLUMNS)
+    lineup_fitted = False
+    if len(lineup_by_game):
+        frame = frame.merge(lineup_by_game, on="game_pk", how="left")
+        covered = frame[features.LINEUP_COLUMNS].notna().all(axis=1).mean()
+        # Below half the games the column is mostly the imputed mean, which is
+        # not a feature -- it is noise wearing one's name.
+        if covered > 0.5:
+            win_cols = win_cols + list(features.LINEUP_COLUMNS)
+            lineup_fitted = True
+        if verbose:
+            print(f"  lineup value on {covered * 100:.1f}% of games"
+                  f"{'' if lineup_fitted else ' -- too thin, left out'}")
     score_cols = (
         list(score.SCORE_COLUMNS) + list(score.STRENGTH_COLUMNS)
         + ["sp_known"] + score_pa

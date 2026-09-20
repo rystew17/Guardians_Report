@@ -169,6 +169,74 @@ def value_of(
     )
 
 
+def projected_lineups(
+    pa_corpus: pd.DataFrame, *, lookback: int = 10
+) -> pd.DataFrame:
+    """What each club's nine would have been GUESSED to be, for every game.
+
+    Same shape as `starting_lineups`, and the leak-free counterpart to it: the
+    modal occupant of each slot over the club's previous `lookback` games, using
+    only games already played.
+
+    This exists because the model has to be fitted on what the build will
+    actually have. Official cards post about three hours before first pitch and
+    the report is built in the morning, so training on the posted nine and
+    serving a guess at it fits a coefficient to a clean signal and then applies
+    it to a noisy one. Measured over 2022-26 that mismatch cost about a third of
+    the block's value -- +0.12 points against +0.20 when training and serving
+    agree.
+
+    `recent_regulars` answers the same question for one club on one date and
+    rescans the corpus to do it. This walks every club once and indexes, because
+    the fitting path asks for all thirty clubs on every date in the corpus.
+    """
+    posted = starting_lineups(pa_corpus)
+    if posted.empty:
+        return posted
+
+    nine = {
+        key: list(block.sort_values("slot")["batter"])
+        for key, block in posted.groupby(["game_pk", "batting_team"], sort=False)
+    }
+    ordered = posted.sort_values("game_date").drop_duplicates(
+        ["game_pk", "batting_team"])
+
+    rows = []
+    for team, block in ordered.groupby("batting_team", sort=False):
+        games = list(zip(block["game_pk"], block["game_date"], block["season"]))
+        for index, (game_pk, game_date, season) in enumerate(games):
+            if not index:
+                continue          # nothing to look back on
+            counts: dict[int, dict[int, int]] = {}
+            for prior_pk, _, _ in games[max(0, index - lookback):index]:
+                for slot, batter in enumerate(
+                    nine.get((prior_pk, team), []), start=1
+                ):
+                    counts.setdefault(slot, {})
+                    counts[slot][batter] = counts[slot].get(batter, 0) + 1
+            used: set[int] = set()
+            for slot in range(1, 10):
+                # Most frequent occupant of this slot who is not already in the
+                # card. A regular who moved in the order would otherwise be
+                # listed twice and one slot would go empty.
+                for batter, _ in sorted(
+                    counts.get(slot, {}).items(), key=lambda kv: -kv[1]
+                ):
+                    if batter in used:
+                        continue
+                    used.add(batter)
+                    rows.append({
+                        "game_pk": game_pk, "batting_team": team,
+                        "batter": int(batter), "slot": slot,
+                        "game_date": game_date, "season": season,
+                    })
+                    break
+
+    if not rows:
+        return posted.iloc[0:0]
+    return pd.DataFrame(rows)
+
+
 def recent_regulars(
     pa_corpus: pd.DataFrame, team: str, *, before, games: int = 10
 ) -> list[int]:

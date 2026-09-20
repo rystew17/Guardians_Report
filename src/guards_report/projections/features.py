@@ -203,6 +203,21 @@ CORE_COLUMNS = (
 )
 
 
+# Slot-weighted value of each club's starting nine, from the plate-appearance
+# talent fit. Kept separate from CORE_COLUMNS because it is the one block in the
+# feature set whose measured gain does not clear its own standard error, and the
+# separation is what lets the report say which columns are which.
+#
+# The case for it is structural rather than statistical: the rest of the block
+# rates CLUBS, and clubs do not bat -- nine named hitters do, and Elo has no way
+# to learn that tonight the three best are resting. Held out over 2022-26 it was
+# worth +0.31 points with the posted card and +0.20 with the projected one,
+# neither significant, against roughly +1.5 points of headroom that an oracle on
+# final records says exists at all. It is carried on that reasoning and on a
+# consistently positive sign, not on a measured edge.
+LINEUP_COLUMNS = ["home_lineup", "away_lineup"]
+
+
 def design_matrix(frame, columns: list[str]) -> tuple[np.ndarray, np.ndarray]:
     """Model matrix and target, with missing starter values mean-imputed.
 

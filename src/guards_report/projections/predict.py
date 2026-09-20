@@ -38,6 +38,8 @@ FEATURE_LABELS = {
     "team_rest_diff": "Team rest",
     "starter_known": "Starter announced",
     "park_factor": "Park",
+    "home_lineup": "Home lineup",
+    "away_lineup": "Away lineup",
 }
 
 
@@ -331,6 +333,19 @@ def project(
         "team_rest_diff": 0.0,
         "sp_rest_diff": 0.0,
         "park_factor": park,
+        # Who is actually batting. `lineup_value` is on the same centred scale
+        # the training column is built from, and returns None for a card too
+        # incomplete to value -- which `win_probability` reads as the fitted
+        # mean, so a missing lineup leaves the projection where the rest of the
+        # block puts it rather than dragging it.
+        #
+        # `lineup_source` says whether this is the posted card or a guess at it.
+        # The morning build usually has the guess: official lineups post about
+        # three hours before first pitch, and the feature was worth +0.20 points
+        # held out that way against +0.31 with the posted one. Both are inside
+        # their own standard errors.
+        "home_lineup": _clean(home.lineup_value),
+        "away_lineup": _clean(away.lineup_value),
     }
     win_probability = model.win_probability(win_features)
     contributions = model.win_contributions(win_features)
