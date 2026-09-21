@@ -45,6 +45,10 @@ import numpy as np
 
 # Fitted on the training seasons and held fixed thereafter. Re-estimating alpha
 # per run would make two reports of the same game disagree for no reason.
+#
+# Re-checked against the corpus: on 54,874 team-games this is exactly the
+# profile-likelihood optimum over 0.20 to 0.42, and method of moments on the
+# residuals gives 0.2595. It was already right, so it stays.
 NB_ALPHA = 0.275
 
 # Per-half-inning dispersion, solved from the corpus rather than searched.
@@ -57,6 +61,27 @@ NB_ALPHA = 0.275
 # independent -- less variable, not more -- and odd innings correlate with even
 # ones at r = +0.071. The missing spread was inside a single inning.
 HALF_INNING_ALPHA = 2.215
+
+# One dispersion for every park and club, and that is a measured choice rather
+# than a convenience.
+#
+# Measured per park it looks like a real effect -- 1.887 at Coors against 2.514
+# at American Family, split-half r = +0.46 over 37 parks. It is not. Those two
+# parks have variance-to-mean ratios of 2.22 and 2.19: nearly identical. NB2
+# holds var = mu + alpha*mu^2, so at a fixed ratio alpha MUST fall as scoring
+# rises, and alpha correlates with a park's scoring rate at r = -0.78. Fitting
+# thirty park alphas would have enshrined the wrong variance law as a park
+# effect. On the law that fits better across parks, what is left per park does
+# not survive: split-half r = +0.19 (p = 0.26), 30% worth believing.
+#
+# The better law was then tested where it counts and rejected. Across parks the
+# variance follows var = 2.4345 * mu^1.2106 (b = 1.21 +/- 0.04, r^2 0.962),
+# clearly not NB2's b = 2. Drawing innings with alpha set per rate to match it
+# made every held-out price slightly WORSE -- moneyline log loss 0.67878
+# against 0.67805, and worse at all five totals lines. The park-level law
+# describes variance pooled across games of differing quality, which is not the
+# conditional dispersion a single game's simulation needs. A better description
+# of one thing, a worse prediction of another.
 
 # Extra innings score at twice the ordinary rate, because since 2020 they start
 # with a runner on second. Measured over 2021-26: 0.9957 runs a half-inning
