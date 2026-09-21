@@ -176,6 +176,29 @@ STRENGTH_COLUMNS = ["elo_diff", "od_exp_runs"]
 # The bullpen block failed in Model A because Elo had already priced it. Runs
 # allowed late is where it should actually bite, with no Elo competing for the
 # same variance.
+#
+# Tested there too, and it does not. Left out of the fit deliberately -- this
+# constant names the block so the result below has somewhere to live, not
+# because anything uses it.
+#
+# Relievers throw 40.7% of plate appearances and this model's only pitching
+# input is the starter, so the case for it was strong. Held out over 2022-26,
+# 23,928 team-games, paired per game on NB log-likelihood (deterministic -- the
+# simulated market metrics carry Monte Carlo noise as large as the effects):
+#
+#   + available FIP        -0.000013 per row, z = -0.33, p = 0.74
+#   + FIP and top-3        -0.000109,         z = -1.29, p = 0.20
+#   + full block           -0.000150,         z = -1.36, p = 0.17
+#
+# Every variant slightly worse, worst in 2025-26, none near the 2.39 needed for
+# three tests. Restricted to the 69.5% of rows that carry pen data the answer is
+# the same (z -0.57 to -1.26), so thin coverage does not explain it. A first
+# run through the simulation showed the simplest variant improving all seven
+# market metrics; the identical base configuration moved by as much between two
+# runs, which is how that turned out to be noise.
+#
+# Measured on `bullpen.availability_table` after its season-wide rescaling was
+# made leak-free, so this is the honest version rather than a flattered one.
 PEN_COLUMNS = ["opp_pen_fip"]
 
 # Who is actually pitching and hitting tonight, from the plate-appearance corpus.
