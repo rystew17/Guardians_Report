@@ -305,6 +305,10 @@ def _score_backtest(data, columns, first_test: int) -> dict:
         per_season[str(season)] = {
             "n_team_games": int(len(y_te)),
             "mae": float(np.mean(np.abs(y_te - mu))),
+            # Root mean squared miss: how far one club's runs in one game land
+            # from any projection of them. The report quotes it so the size of
+            # the irreducible scatter is a measurement, not a figure of speech.
+            "rmse": float(np.sqrt(np.mean((y_te - mu) ** 2))),
             "mae_league": float(np.mean(np.abs(y_te - league))),
             "mae_own_form": float(np.mean(np.abs(y_te - own))),
             "loglik": float(np.mean(loglik)),
@@ -323,6 +327,8 @@ def _score_backtest(data, columns, first_test: int) -> dict:
     return {
         "per_season": per_season,
         "mae": pooled("mae"),
+        "rmse": float(np.sqrt(np.average(
+            [m["rmse"] ** 2 for m in per_season.values()], weights=weights))),
         "mae_league": pooled("mae_league"),
         "mae_own_form": pooled("mae_own_form"),
         "loglik": pooled("loglik"),

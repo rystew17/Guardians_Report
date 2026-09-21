@@ -1904,15 +1904,77 @@ details.more>summary:hover{color:var(--ink)}
   {%- set this_year = bundle.season|string %}
   {%- if pj.metrics.per_season.get(this_year) or pj.metrics.per_season.get(bundle.season) %}
   {%- set now = pj.metrics.per_season.get(this_year) or pj.metrics.per_season.get(bundle.season) %}
-  {%- set now_lift = (now.accuracy - wm.baseline_accuracy) * 100 %}
+  {#- The season's own baseline, as the table rows above use. Subtracting the
+      pooled figure here gave the note a different edge from the row it sits
+      under. -#}
+  {%- set now_base = now.baseline_accuracy | default(wm.baseline_accuracy) %}
+  {%- set now_lift = (now.accuracy - now_base) * 100 %}
   <div class="note">
     <strong>This season:</strong> {{ (now.accuracy * 100)|round(1) }}% against a
-    {{ (wm.baseline_accuracy * 100)|round(1) }}% baseline, an edge of
+    {{ (now_base * 100)|round(1) }}% baseline, an edge of
     {{ now_lift|round(1) }} points where the model has averaged
     {{ wm.lift_points|round(1) }}.
     {%- if now_lift < wm.lift_points - 1.0 %}
     It is having a worse year than usual, on a season that is not finished
     &mdash; worth watching rather than concluding from.
+    {%- endif %}
+  </div>
+  {%- endif %}
+
+  {#- ---------- score model track record ---------- -#}
+  {#- The runs model prices every total, run line and first-five figure on this
+      page, and for its first months in production it carried no held-out
+      record at all. This is that record: each season scored by a fit that
+      never saw it, against the two baselines it has to beat to be worth its
+      inputs. Errors are per team per game, on the fitted rate with the innings
+      each club actually batted, so the home side is not charged for the ninth
+      it never came up in. Older model files have no such record, and the
+      section stays out rather than printing blanks. -#}
+  {%- set sm = pj.metrics.score_model if pj.metrics.score_model is defined else none %}
+  {%- set sho = sm.held_out if sm and sm.held_out is defined else none %}
+  {%- if sho and sho.per_season %}
+  <h3 class="lab">How the runs model has actually done</h3>
+  <div class="scroll">
+  <table class="ptrack">
+      <thead>
+        <tr><th class="l">Season</th><th>Error</th>
+          <th>vs league scoring</th><th>vs club's own average</th>
+          <th>Bias</th></tr>
+      </thead>
+      <tbody>
+        {%- set ns = namespace(beat=0, n=0) %}
+        {% for season, m in sho.per_season.items() %}
+        {%- set ns.n = ns.n + 1 %}
+        {%- if m.mae < m.mae_own_form %}{% set ns.beat = ns.beat + 1 %}{% endif %}
+        <tr>
+          <td class="l">{{ season }}</td>
+          <td>{{ '%.3f'|format(m.mae) }}</td>
+          <td class="sub">{{ '%+.3f'|format(m.mae_league - m.mae) }}</td>
+          <td class="sub">{{ '%+.3f'|format(m.mae_own_form - m.mae) }}</td>
+          <td class="sub">{{ '%+.2f'|format(m.mean_predicted - m.mean_actual) }}</td>
+        </tr>
+        {% endfor %}
+        <tr class="tot">
+          <td class="l"><strong>All held-out</strong></td>
+          <td><strong>{{ '%.3f'|format(sho.mae) }}</strong></td>
+          <td><strong>{{ '%+.3f'|format(sho.mae_league - sho.mae) }}</strong></td>
+          <td><strong>{{ '%+.3f'|format(sho.mae_own_form - sho.mae) }}</strong></td>
+          <td><strong>{{ '%+.2f'|format(sho.bias_runs) }}</strong></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note">
+    Error is the average miss in runs per team per game. The two comparison
+    columns are how many runs a game the model saves over simply using the
+    league's scoring level, and over using the club's own season average;
+    positive means the model is closer. It beat the club's own average in
+    {{ ns.beat }}/{{ ns.n }} seasons. Bias is predicted minus actual runs.
+    {%- if sho.rmse is defined %}
+    The margins are small by the nature of the problem: one club's runs in one
+    game land {{ '%.1f'|format(sho.rmse) }} runs from the projection on a
+    typical night (root mean square), so most of the miss is the game rather
+    than the model.
     {%- endif %}
   </div>
   {%- endif %}
