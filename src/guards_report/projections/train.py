@@ -209,6 +209,70 @@ def _win_covariance(
     return [[float(v) for v in row] for row in cov]
 
 
+def _score_backtest(data, columns, first_test: int) -> dict:
+    """Walk-forward scores for Model B, one season held out at a time.
+
+    Until this existed the artifact carried three numbers for the score model
+    and none of them compared a prediction with an outcome. Totals, run lines
+    and first-five prices all come from this model.
+
+    Per team-game, against two baselines it has to beat to be worth anything:
+    the run environment alone (the offset with no predictors) and the club's
+    own season-to-date scoring. Log-likelihood is the NB2 density at the
+    observed runs, so it grades the whole distribution rather than the centre.
+    """
+    from scipy import stats as sp_stats
+
+    per_season: dict[str, dict] = {}
+    for season in range(first_test, int(data["season"].max()) + 1):
+        train_rows = data[data["season"] < season]
+        test_rows = data[data["season"] == season]
+        if not len(train_rows) or not len(test_rows):
+            continue
+        x_tr, y_tr, off_tr, _ = score.design(train_rows, columns)
+        fitted = sm.GLM(
+            y_tr, x_tr,
+            family=sm.families.NegativeBinomial(alpha=model.NB_ALPHA),
+            offset=off_tr,
+        ).fit()
+        x_te, y_te, off_te, kept = score.design(test_rows, columns)
+        mu = np.asarray(fitted.predict(x_te, offset=off_te), dtype=float)
+
+        league = np.exp(off_te)
+        own = kept["off_rpg"].to_numpy(dtype=float)
+        own = np.where(np.isnan(own), league, own)
+
+        n = 1.0 / model.NB_ALPHA
+        loglik = sp_stats.nbinom.logpmf(y_te.astype(int), n, n / (n + mu))
+
+        per_season[str(season)] = {
+            "n_team_games": int(len(y_te)),
+            "mae": float(np.mean(np.abs(y_te - mu))),
+            "mae_league": float(np.mean(np.abs(y_te - league))),
+            "mae_own_form": float(np.mean(np.abs(y_te - own))),
+            "loglik": float(np.mean(loglik)),
+            "mean_predicted": float(mu.mean()),
+            "mean_actual": float(y_te.mean()),
+        }
+
+    if not per_season:
+        return {}
+    weights = np.array([m["n_team_games"] for m in per_season.values()], float)
+
+    def pooled(key):
+        return float(np.average(
+            [m[key] for m in per_season.values()], weights=weights))
+
+    return {
+        "per_season": per_season,
+        "mae": pooled("mae"),
+        "mae_league": pooled("mae_league"),
+        "mae_own_form": pooled("mae_own_form"),
+        "loglik": pooled("loglik"),
+        "bias_runs": pooled("mean_predicted") - pooled("mean_actual"),
+    }
+
+
 def fit(
     *, corpus_dir: Path, pitcher_dir: Path, pa_dir: Path, seasons: range,
     verbose: bool = True,
@@ -365,6 +429,17 @@ def fit(
         family=sm.families.NegativeBinomial(alpha=model.NB_ALPHA),
         offset=offset,
     ).fit()
+    score_held_out = _score_backtest(data, score_cols, FIRST_TEST_SEASON)
+    # Pearson dispersion of the fitted mean under a Poisson variance. This was
+    # stored as the literal 2.19; it is now computed from the fit it describes.
+    score_dispersion = score.dispersion(
+        y_score, np.asarray(negbin.fittedvalues, dtype=float),
+        x_score.shape[1])
+    if verbose and score_held_out:
+        print(f"  score model held out: MAE {score_held_out['mae']:.3f} "
+              f"(league {score_held_out['mae_league']:.3f}, "
+              f"own form {score_held_out['mae_own_form']:.3f}), "
+              f"bias {score_held_out['bias_runs']:+.3f} runs")
 
     # -- reference distributions --------------------------------------------
     # A projection means nothing on its own. 60% is a strong call or a routine
@@ -452,8 +527,9 @@ def fit(
             },
             "score_model": {
                 "alpha": model.NB_ALPHA,
-                "dispersion_measured": 2.19,
+                "dispersion_measured": round(score_dispersion, 3),
                 "n_team_games": int(len(y_score)),
+                "held_out": score_held_out,
             },
             # Measured over the corpus, not simulated for any one game. The
             # report quotes these when it makes a claim about baseball rather

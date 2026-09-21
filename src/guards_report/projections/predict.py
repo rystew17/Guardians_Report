@@ -71,6 +71,41 @@ def live_talent(model: OutcomeModel, plate, *, on: date):
     }
 
 
+def rest_days(plate, *, on, team=None, pitcher=None):
+    """Days since a club last played, or a pitcher last threw.
+
+    Training builds these from the corpus in `features.team_rest` and
+    `features.starter_rest`; serving had been sending a literal 0.0 for both,
+    which is not "unknown" -- it is the assertion that both clubs and both
+    starters are on identical rest, in every game ever projected. The
+    coefficients were fitted on real spread and then only ever multiplied by
+    zero.
+
+    The caps and fallbacks here mirror those two functions exactly. They are
+    not cosmetic: six days and five days are the values training imputes, so
+    any other choice would serve a number from a different distribution than
+    the one the coefficient was fitted on.
+    """
+    if plate is None or not len(plate):
+        return 6.0 if pitcher is None else 5.0
+
+    import pandas as pd
+
+    column, value = ("batting_team", team) if team is not None else ("pitcher", pitcher)
+    if column not in plate.columns or value is None:
+        return 6.0 if pitcher is None else 5.0
+
+    dates = pd.to_datetime(
+        plate.loc[plate[column] == value, "game_date"], errors="coerce").dropna()
+    earlier = dates[dates.dt.date < on]
+    if earlier.empty:
+        return 6.0 if pitcher is None else 5.0
+
+    gap = (pd.Timestamp(on) - earlier.max()).days
+    # `team_rest` caps above at six; `starter_rest` clips to one through ten.
+    return float(min(gap, 6)) if pitcher is None else float(min(max(gap, 1), 10))
+
+
 def lineup_value(batters, talent, *, weights, stands=None):
     """Slot-weighted mean of the lineup's batter *effects*.
 
@@ -277,8 +312,9 @@ def project(
     park = model.park_factors.get(str(venue_id), 1.0) if venue_id else 1.0
 
     # -- plate-appearance block -------------------------------------------
+    as_of = on or date.today()
     fitted_talent, talent_note = live_talent(
-        model, plate_appearances, on=on or date.today()
+        model, plate_appearances, on=as_of
     )
     stands = {}
     if plate_appearances is not None and len(plate_appearances):
@@ -330,8 +366,17 @@ def project(
         "sp_bb_pct": diff("starter_bb_pct", False),
         "sp_ip_per_start": diff("starter_ip_per_start", True),
         "starter_known": 1.0 if not any("starter" in m for m in missing) else 0.0,
-        "team_rest_diff": 0.0,
-        "sp_rest_diff": 0.0,
+        # Measured, not asserted. These were literal zeros, which told the
+        # model that every club and every starter in every game was on
+        # identical rest.
+        "team_rest_diff": (
+            rest_days(plate_appearances, on=as_of, team=home_team)
+            - rest_days(plate_appearances, on=as_of, team=away_team)),
+        "sp_rest_diff": (
+            rest_days(plate_appearances, on=as_of,
+                      pitcher=getattr(home_starter, "player_id", None))
+            - rest_days(plate_appearances, on=as_of,
+                        pitcher=getattr(away_starter, "player_id", None))),
         "park_factor": park,
         # Who is actually batting. `lineup_value` is on the same centred scale
         # the training column is built from, and returns None for a card too
