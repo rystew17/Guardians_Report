@@ -36,6 +36,18 @@ REM                        included -- and when that stream ends with nothing el
 REM                        in flight the instance is reclaimed and the build inside
 REM                        it is killed. At the 900s default every build died at
 REM                        almost exactly fifteen minutes, whatever else was fixed.
+REM   --max-instances 1    one instance, because the job table lives in that
+REM                        process's memory. At two, a POST to /api/generate
+REM                        could create the job on one instance and the
+REM                        /api/events stream for it land on the other, which
+REM                        has never heard of that job id -- so the stream ends
+REM                        at once and the phone shows a failure while the
+REM                        build it started runs happily on the other instance.
+REM                        That is the "first attempt always fails, second
+REM                        always works" bug: after the first request an
+REM                        instance is warm, so both halves land together.
+REM                        Session affinity is best-effort and would only make
+REM                        it rarer. One instance removes the class.
 REM   --min-instances 0    scale to nothing when idle; a cold start costs a
 REM                        slower first request and no money in between
 REM   --no-cpu-throttling  the one that is not optional. Cloud Run allocates CPU
@@ -107,7 +119,7 @@ call gcloud run deploy "%SERVICE%" ^
   --cpu 2 ^
   --timeout 3600 ^
   --min-instances 0 ^
-  --max-instances 2 ^
+  --max-instances 1 ^
   --concurrency 4 ^
   --add-volume "name=data,type=cloud-storage,bucket=%BUCKET%" ^
   --add-volume-mount "volume=data,mount-path=/gcs" ^

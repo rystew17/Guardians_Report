@@ -30,6 +30,18 @@
 #                        in flight the instance is reclaimed and the build inside
 #                        it is killed. At the 900s default every build died at
 #                        almost exactly fifteen minutes, whatever else was fixed.
+#   --max-instances 1     one instance, because the job table lives in that
+#                         process's memory. At two, a POST to /api/generate
+#                         could create the job on one instance and the
+#                         /api/events stream for it land on the other, which
+#                         has never heard of that job id -- so the stream ends
+#                         at once and the phone shows a failure while the build
+#                         it started runs happily on the other instance. That
+#                         is the "first attempt always fails, second always
+#                         works" bug: after the first request an instance is
+#                         warm, so both halves land together. Session affinity
+#                         is best-effort and would only make it rarer. One
+#                         instance removes the class.
 #   --min-instances 0     scale to nothing when unused; a cold start costs a
 #                         slower first request and no money in between
 #   --no-cpu-throttling   the one that is not optional. Cloud Run allocates
@@ -95,7 +107,7 @@ gcloud run deploy "${SERVICE}" \
   --cpu 2 \
   --timeout 3600 \
   --min-instances 0 \
-  --max-instances 2 \
+  --max-instances 1 \
   --concurrency 4 \
   --add-volume "name=data,type=cloud-storage,bucket=${BUCKET}" \
   --add-volume-mount "volume=data,mount-path=/gcs" \
