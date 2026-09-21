@@ -78,12 +78,27 @@ def _as_of_quality(relief: pd.DataFrame) -> pd.DataFrame:
     thin = prior["outs"] < MIN_PRIOR_OUTS
     relief.loc[thin, ["rp_fip", "rp_k_pct"]] = np.nan
 
-    # Put FIP on the ERA scale per season so magnitudes are comparable and the
-    # numbers mean something to a reader.
-    for season in relief["season"].unique():
+    # Put FIP on the ERA scale so magnitudes are comparable and the numbers mean
+    # something to a reader.
+    #
+    # The shift comes from seasons already finished, never from the season being
+    # described. The first version averaged the whole season, so a game in April
+    # carried a constant computed from September -- a season-wide peek at the
+    # very season a walk-forward fold is holding out. That was harmless while
+    # nothing fitted these columns, and a leak the moment something did.
+    #
+    # The earliest season has nothing before it and is left unshifted rather
+    # than shifted by itself, which would reintroduce exactly the same peek for
+    # that season.
+    for season in sorted(relief["season"].unique()):
+        earlier = relief.loc[relief["season"] < season, "rp_fip"]
+        if not len(earlier):
+            continue
+        reference = earlier.mean(skipna=True)
+        if not np.isfinite(reference):
+            continue
         mask = relief["season"] == season
-        constant = 3.10 - relief.loc[mask, "rp_fip"].mean(skipna=True)
-        relief.loc[mask, "rp_fip"] = relief.loc[mask, "rp_fip"] + constant
+        relief.loc[mask, "rp_fip"] = relief.loc[mask, "rp_fip"] + (3.10 - reference)
 
     return relief
 
