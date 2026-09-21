@@ -179,16 +179,62 @@ def sync() -> bool:
     return result.returncode == 0
 
 
+def refresh() -> bool:
+    """Bring the local corpora up to date before anything is fitted or pushed.
+
+    This exists because of a regression it would have prevented. The daily
+    report builds run in the cloud and refresh the corpus on the bucket; the
+    sync only ever pushes the other way, local to bucket, and nothing pulls
+    down. So a machine that has not refreshed in a week holds a week-old corpus
+    while the bucket is current -- and a refit run there trains on the stale
+    copy and then uploads it over the fresh one. Both happened: a corpus
+    through 13 September was pushed over one through the 20th.
+
+    Refreshing first makes the push safe by making the local copy the newer of
+    the two, rather than by trying to work out which file to skip. It is also
+    what a refit wants anyway: fitting on data a week older than available is
+    not a saving.
+    """
+    from datetime import date
+
+    _say("refreshing the corpora before fitting")
+    result = subprocess.run(
+        [sys.executable, "-c",
+         "import sys; sys.path.insert(0, 'src');"
+         "from datetime import date; from pathlib import Path;"
+         "from guards_report.projections import freshness;"
+         "r = freshness.refresh_all(Path('data'), on=date.today(), verbose=False);"
+         "print('refreshed ' + (', '.join(r.refreshed) or 'nothing'));"
+         "[print('WARNING ' + w) for w in r.warnings]"],
+        cwd=str(ROOT), capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
+    )
+    for line in [l.strip() for l in (result.stdout or "").splitlines() if l.strip()]:
+        _say(f"  {line[:160]}")
+    if result.returncode != 0:
+        # Not fatal: every step inside `refresh_all` is independently guarded,
+        # and a refit on yesterday's corpus beats no refit at all. It is said
+        # out loud rather than swallowed.
+        _say("  refresh did not complete; fitting on what is on disk")
+    return result.returncode == 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--force-outcome", action="store_true",
                         help="refit the game-outcome model regardless of age")
     parser.add_argument("--no-sync", action="store_true",
                         help="skip the upload to cloud storage")
+    parser.add_argument("--no-refresh", action="store_true",
+                        help="fit on the corpus as it stands, without topping "
+                             "it up first")
     args = parser.parse_args(argv)
 
     _say("=" * 60)
     _say("refit starting")
+
+    if not args.no_refresh:
+        refresh()
 
     ok = refit_props()
     outcome = refit_outcome(force=args.force_outcome)
