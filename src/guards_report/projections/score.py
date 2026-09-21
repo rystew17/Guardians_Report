@@ -193,12 +193,25 @@ PEN_COLUMNS = ["opp_pen_fip"]
 PA_COLUMNS = ["opp_sp_talent", "own_lineup"]
 
 
-def design(data: pd.DataFrame, columns: list[str]):
+def design(data: pd.DataFrame, columns: list[str], *, exposure: bool = False):
     """Model matrix, response and offset, with missing predictors mean-imputed.
 
     The offset carries the trailing league run level on the log scale, which is
     what makes the fitted coefficients relative to the run environment rather
     than absolute.
+
+    `exposure` adds log(innings_batted / 9), which is what turns runs per GAME
+    into runs per nine innings batted. It matters because the home club does
+    not bat in the bottom of the ninth when it is already ahead: over 27,436
+    games it batted 8.677 innings to the visitor's 9.124 and skipped the ninth
+    entirely in 49% of nine-inning games, winning every one of those. Its runs
+    are censored by the very outcome being predicted.
+
+    Without the term the home coefficient is fitted on runs the club was never
+    given the chance to score, and any simulation that then compares the two
+    sides as independent draws prices the home side about two points light.
+    With it, mu is an uncensored scoring rate and the simulation applies the
+    rules itself.
     """
     frame = data.dropna(subset=["runs"]).copy()
     # `to_numpy` hands back a read-only view when the frame is a single
@@ -214,6 +227,11 @@ def design(data: pd.DataFrame, columns: list[str]):
 
     y = frame["runs"].to_numpy(dtype=float)
     offset = np.log(np.clip(frame["league_rpg"].to_numpy(dtype=float), 0.5, None))
+    if exposure and "innings_batted" in frame.columns:
+        innings = frame["innings_batted"].to_numpy(dtype=float)
+        # A club that batted a fraction of an inning is a data fault, not a
+        # short game; the clip keeps one row from dominating the fit.
+        offset = offset + np.log(np.clip(innings / 9.0, 0.2, None))
     return X, y, offset, frame
 
 

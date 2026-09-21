@@ -47,6 +47,28 @@ import numpy as np
 # per run would make two reports of the same game disagree for no reason.
 NB_ALPHA = 0.275
 
+# Per-half-inning dispersion, solved from the corpus rather than searched.
+# 480,211 half-innings in innings 1-9 have mean 0.5021 runs and variance
+# 1.0604, and NB2's var = mu + alpha*mu^2 gives alpha = 2.215.
+#
+# A grid search for this hit its own upper bound at 1.3 and I read the
+# too-narrow result as innings being correlated within a game. They are not: a
+# side's nine-inning total has variance 8.779 against 9.543 if its innings were
+# independent -- less variable, not more -- and odd innings correlate with even
+# ones at r = +0.071. The missing spread was inside a single inning.
+HALF_INNING_ALPHA = 2.215
+
+# Extra innings score at twice the ordinary rate, because since 2020 they start
+# with a runner on second. Measured over 2021-26: 0.9957 runs a half-inning
+# against 0.4955 in regulation. Before the rule it ran 0.833x, so this constant
+# is era-specific and would have to be re-measured if the rule changed.
+EXTRA_INNING_RATE = 2.01
+
+# The home club wins 50.41% of extra-inning games (n=2,325, z=+0.39 against a
+# fair coin), so a tie that survives the simulation is settled by a coin flip.
+# Batting last stops mattering once both sides get the same outs in a frame.
+EXTRA_INNING_HOME_EDGE = 0.5
+
 # Simulations per projection. 20k keeps the Monte Carlo error on a win
 # probability near +/-0.0035, which is far below the model's own error and small
 # enough to be invisible at the precision the report displays.
@@ -313,39 +335,62 @@ class OutcomeModel:
     ) -> dict[str, Any]:
         """Full joint score distribution, and everything derived from it.
 
-        Sampling rather than solving analytically is deliberate: once the two
-        sides are drawn, any question about the game -- who wins, by how much,
-        the chance of a shutout, the most likely scoreline -- is answered by
-        counting, with no further approximation.
+        Half-innings under the actual rules, rather than two game totals drawn
+        independently and compared. The two are not independent: the home club
+        does not bat in the bottom of the ninth when it is already ahead, and it
+        stops the moment it takes the lead, so its runs are censored by the
+        outcome being predicted. Drawing them as independent totals priced the
+        home side 50.9% against an actual 53.0% over 11,964 held-out games.
+        Generating the censoring instead brings that to 53.6%.
 
-        Ties are resolved by re-drawing the tied games rather than splitting
-        them, because baseball has no ties: extra innings are played until
-        somebody leads.
+        `expected_runs` is an uncensored rate per nine innings batted, which is
+        what the exposure term in `score.design` fits. The runs reported back
+        are the simulated means -- what is actually scored once the rules apply
+        -- so the page still shows the number a total settles on.
+
+        Sampling rather than solving analytically is deliberate: once the sides
+        are drawn, any question about the game is answered by counting.
         """
         mu_home = self.expected_runs(home_features)
         mu_away = self.expected_runs(away_features)
 
         rng = np.random.default_rng(20260819)
-        n = 1.0 / self.alpha
+        k = 1.0 / HALF_INNING_ALPHA
 
-        def draw(mu: float, size: int) -> np.ndarray:
-            return rng.negative_binomial(n, n / (n + mu), size=size)
+        def frame(rate: float, cols: int) -> np.ndarray:
+            """Runs in `cols` half-innings, one row per draw."""
+            return rng.negative_binomial(k, k / (k + rate), size=(draws, cols))
 
-        home = draw(mu_home, draws)
-        away = draw(mu_away, draws)
+        rate_home = mu_home / 9.0
+        rate_away = mu_away / 9.0
 
-        # Extra innings: keep re-drawing the tied subset until it resolves.
+        away = frame(rate_away, 9).sum(axis=1)
+        home_8 = frame(rate_home, 8).sum(axis=1)
+
+        # The ninth is played only when the home club is tied or behind, and a
+        # rally there ends the moment it leads. Capping at the deficit plus one
+        # is not exact -- a walk-off home run clears the cap -- but it is far
+        # closer than letting a club that needed one run score five.
+        needs_ninth = home_8 <= away
+        cap = np.maximum(away - home_8 + 1, 1)
+        home = home_8 + np.where(needs_ninth,
+                                 np.minimum(frame(rate_home, 1)[:, 0], cap), 0)
+
+        # Extra innings, one at a time, at the measured elevated rate.
         for _ in range(20):
             tied = home == away
             if not tied.any():
                 break
-            # Extra innings are low-scoring; sample a short additional frame
-            # rather than a whole second game.
-            home = home + tied * draw(mu_home / 9.0, draws)
-            away = away + tied * draw(mu_away / 9.0, draws)
+            add_away = frame(rate_away * EXTRA_INNING_RATE, 1)[:, 0]
+            add_home = frame(rate_home * EXTRA_INNING_RATE, 1)[:, 0]
+            cap_extra = np.maximum(away + add_away - home + 1, 1)
+            away = away + tied * add_away
+            home = home + tied * np.minimum(add_home, cap_extra)
+
         still_tied = home == away
         if still_tied.any():
-            home = home + still_tied * rng.integers(0, 2, size=draws)
+            home = home + still_tied * (
+                rng.random(draws) < EXTRA_INNING_HOME_EDGE)
 
         margin = home - away
         p_home = float((home > away).mean())
@@ -357,8 +402,13 @@ class OutcomeModel:
         modal = max(grid.items(), key=lambda kv: kv[1])[0] if grid else (4, 3)
 
         return {
-            "exp_home_runs": mu_home,
-            "exp_away_runs": mu_away,
+            # The simulated means, not the uncensored rates: this is what is
+            # scored once the ninth-inning rule applies, and what a total
+            # settles on.
+            "exp_home_runs": float(home.mean()),
+            "exp_away_runs": float(away.mean()),
+            "exp_home_rate": mu_home,
+            "exp_away_rate": mu_away,
             "home_win_probability": p_home,
             "away_win_probability": 1.0 - p_home,
             "modal_score": {"home": modal[0], "away": modal[1]},

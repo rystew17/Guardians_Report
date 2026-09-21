@@ -209,6 +209,46 @@ def _win_covariance(
     return [[float(v) for v in row] for row in cov]
 
 
+def _innings_batted(root: Path, data):
+    """How many innings each club actually batted, per team-game.
+
+    The exposure the score model is fitted against. Read from the pitch corpus
+    rather than assumed to be nine, because the home club's last turn is
+    skipped whenever it is already ahead -- which is half of all nine-inning
+    games.
+    """
+    import pandas as pd
+
+    columns = ["game_pk", "season", "inning", "inning_topbot", "events"]
+    pitch = pa.cached_pitch_frame(
+        root, columns, "innings_batted_cache.parquet", ended_only=True)
+    if pitch is None or not len(pitch):
+        data["innings_batted"] = 9.0
+        return data
+
+    last = (pitch.groupby(["game_pk", "inning_topbot"])["inning"]
+            .max().unstack(fill_value=0))
+    last.columns = [str(c) for c in last.columns]
+    if "Top" not in last.columns or "Bot" not in last.columns:
+        data["innings_batted"] = 9.0
+        return data
+
+    sides = []
+    for is_home, column in ((1, "Bot"), (0, "Top")):
+        block = last[[column]].rename(
+            columns={column: "innings_batted"}).reset_index()
+        block["is_home"] = is_home
+        sides.append(block)
+
+    data = data.merge(pd.concat(sides, ignore_index=True),
+                      on=["game_pk", "is_home"], how="left")
+    # A zero means the corpus has no pitches for that side, not a side that
+    # never batted; nine is the neutral exposure and leaves the row unchanged.
+    data["innings_batted"] = (
+        data["innings_batted"].replace(0, np.nan).fillna(9.0))
+    return data
+
+
 def _score_backtest(data, columns, first_test: int) -> dict:
     """Walk-forward scores for Model B, one season held out at a time.
 
@@ -229,17 +269,34 @@ def _score_backtest(data, columns, first_test: int) -> dict:
         test_rows = data[data["season"] == season]
         if not len(train_rows) or not len(test_rows):
             continue
-        x_tr, y_tr, off_tr, _ = score.design(train_rows, columns)
+        x_tr, y_tr, off_tr, _ = score.design(train_rows, columns, exposure=True)
         fitted = sm.GLM(
             y_tr, x_tr,
             family=sm.families.NegativeBinomial(alpha=model.NB_ALPHA),
             offset=off_tr,
         ).fit()
-        x_te, y_te, off_te, kept = score.design(test_rows, columns)
+        # Scored WITH the same exposure the fit used. The model now predicts a
+        # rate per nine innings batted, so grading it against runs scored in a
+        # game the home club often leaves early would charge it for the rule
+        # rather than for its own error. Innings batted are known for a game
+        # already played, so the honest question here is: given that this club
+        # batted these innings, were its runs predicted well?
+        #
+        # How the rate turns into a price -- where the censoring has to be
+        # generated rather than conditioned on -- is what `model.simulate`
+        # answers, and it is judged on the derived markets instead.
+        x_te, y_te, off_te, kept = score.design(test_rows, columns, exposure=True)
         mu = np.asarray(fitted.predict(x_te, offset=off_te), dtype=float)
 
+        # Both baselines carry the same exposure as the model, or the contest
+        # is decided by which side is quoted per game and which per inning.
+        # `off_te` already includes it; the club's own form is per game, so it
+        # is scaled the same way.
         league = np.exp(off_te)
-        own = kept["off_rpg"].to_numpy(dtype=float)
+        share = np.clip(
+            kept["innings_batted"].to_numpy(dtype=float) / 9.0, 0.2, None
+        ) if "innings_batted" in kept.columns else 1.0
+        own = kept["off_rpg"].to_numpy(dtype=float) * share
         own = np.where(np.isnan(own), league, own)
 
         n = 1.0 / model.NB_ALPHA
@@ -422,7 +479,8 @@ def fit(
         float(logistic.intercept_[0]),
     )
 
-    x_score, y_score, offset, _ = score.design(data, score_cols)
+    data = _innings_batted(Path(pa_dir).parent, data)
+    x_score, y_score, offset, _ = score.design(data, score_cols, exposure=True)
     negbin = sm.GLM(
         y_score,
         x_score,
