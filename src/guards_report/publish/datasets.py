@@ -31,7 +31,13 @@ from typing import Iterable
 # that record is the only scoreboard this project has -- left out of the sync,
 # a laptop and a deployment each keep their own half of it and neither is the
 # history. Nothing converges them later; the timestamps are what they are.
-DATASETS = ("corpus", "pitchers", "pitches", "models", "odds")
+#
+# `weather` is here because the runs model is fitted on it. Measured first-pitch
+# conditions for every past game take an hour of rate-limited requests to
+# rebuild; left out of the sync, a refit started from the app would find no
+# history, fall below the coverage threshold, and fit without the feature --
+# silently, with every test still passing.
+DATASETS = ("corpus", "pitchers", "pitches", "models", "odds", "weather")
 
 
 @dataclass

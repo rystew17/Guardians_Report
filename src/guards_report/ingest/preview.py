@@ -1248,6 +1248,18 @@ def build_preview(
                 return None
 
             home_section, away_section = sections["home"], sections["away"]
+            # Tonight's first-pitch conditions for the runs model. A forecast,
+            # where the model was fitted on measured weather -- a gap of a
+            # degree or two, recorded in `weather.py`. None when unavailable,
+            # which the model reads as an average night rather than failing.
+            from guards_report.projections import weather as weather_module
+            first_pitch = None
+            if game.get("gameDate"):
+                first_pitch = datetime.fromisoformat(
+                    game["gameDate"].replace("Z", "+00:00"))
+            tonight = weather_module.forecast(
+                settings.raw_archive_dir.parent,
+                (game.get("venue") or {}).get("id"), first_pitch)
             projection = projection_predict.project(
                 fitted,
                 home_team_id=home_section.team_id,
@@ -1268,6 +1280,7 @@ def build_preview(
                 away_lineup=_posted_lineup(away_section),
                 lineup_source=home_section.lineup_source,
                 on=on,
+                weather=tonight,
             )
             projection.ratings_note = ratings_note
             projection.freshness = {

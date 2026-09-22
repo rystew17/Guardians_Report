@@ -2007,6 +2007,21 @@ details.more>summary:hover{color:var(--ink)}
     stale.</strong>
     {% endif %}
     {% endif %}
+    {#- The conditions the runs model was given, and where they came from, so
+        the one game-day input it reads is on the page rather than implied. -#}
+    {%- if pj.weather and pj.weather.temp_f is not none %}
+    {%- if pj.weather.source == 'dome' %}
+    Played under a dome, so the runs model reads indoor conditions.
+    {%- else %}
+    First pitch forecast: {{ pj.weather.temp_f|round|int }}&deg;F, wind
+    {{ pj.weather.wind_mph|round|int }} mph{% if pj.weather.roof == 'Retractable' %}
+    (a retractable roof, whose position tonight is not known){% endif %}, which
+    the runs model reads.
+    {%- endif %}
+    {%- else %}
+    No first-pitch forecast was available, so the runs model reads an average
+    night.
+    {%- endif %}
     No figure on this page is written or estimated by a language model.
   </div>
 

@@ -194,6 +194,10 @@ class Projection:
     win_features: dict[str, float] = field(default_factory=dict)
     confidence_percentile: float = 50.0
     reference: dict[str, Any] = field(default_factory=dict)
+    # First-pitch conditions the runs model was given, with where they came
+    # from ("forecast" or "dome"), or empty when none were available and the
+    # model read average weather.
+    weather: dict[str, Any] = field(default_factory=dict)
 
     @property
     def coherent(self) -> bool:
@@ -302,6 +306,7 @@ def project(
     away_lineup: list[int] | None = None,
     lineup_source: str = "none",
     on: date | None = None,
+    weather: dict[str, Any] | None = None,
 ) -> Projection:
     """Run both models against one upcoming game."""
     home = _side(model, home_team_id, home_team, home_starter)
@@ -426,6 +431,11 @@ def project(
             # this side is actually sending up.
             "opp_sp_talent": _clean(fielding.starter_talent),
             "own_lineup": _clean(batting.lineup_value),
+            # One reading for both sides: the same air, the same wind. Absent
+            # conditions come through as None and are read as the fitted mean
+            # -- average weather, never a zero-degree night.
+            "temp_f": _clean((weather or {}).get("temp_f")),
+            "wind_mph": _clean((weather or {}).get("wind_mph")),
         }
 
     simulation = model.simulate(
@@ -435,6 +445,7 @@ def project(
     return Projection(
         home=home,
         away=away,
+        weather=dict(weather or {}),
         park_factor=park,
         league_rpg=model.league_rpg,
         win_probability=win_probability,

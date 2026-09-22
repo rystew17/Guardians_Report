@@ -219,6 +219,39 @@ def refresh() -> bool:
     return result.returncode == 0
 
 
+def refresh_weather() -> bool:
+    """Measured first-pitch weather for games completed since the last fit.
+
+    Here rather than in the corpus refresh that every report build runs: the
+    report only needs tonight's forecast, and a rate-limit wait on the weather
+    service must never stall a build on the phone. The fit is what needs the
+    history, so the fit is what fetches it. A failure is reported, not fatal --
+    games without a reading are fitted as average weather.
+    """
+    _say("topping up first-pitch weather")
+    result = subprocess.run(
+        [sys.executable, "-c",
+         "import sys; sys.path.insert(0, 'src');"
+         "from pathlib import Path;"
+         "from guards_report.projections import corpus, weather;"
+         "g = corpus.build(range(corpus.FIRST_SEASON, 2100), cache_dir=Path('data/corpus'))"
+         ".query(\"game_type == 'R'\");"
+         "before = weather.history(Path('data'), g, fetch=False);"
+         "after = weather.history(Path('data'), g, fetch=True, attempts=3);"
+         "print(f'weather on {after.temp_f.notna().sum():,} of {len(g):,} games "
+         "(+{after.temp_f.notna().sum() - before.temp_f.notna().sum():,})')"],
+        cwd=str(ROOT), capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
+    )
+    for line in [l.strip() for l in (result.stdout or "").splitlines() if l.strip()]:
+        _say(f"  {line[:160]}")
+    if result.returncode != 0:
+        tail = (result.stderr or "").strip().splitlines()[-1:] or ["no detail"]
+        _say(f"  weather top-up did not complete ({tail[0][:120]}); "
+             "fitting on the cache as it stands")
+    return result.returncode == 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--force-outcome", action="store_true",
@@ -235,6 +268,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.no_refresh:
         refresh()
+        refresh_weather()
 
     ok = refit_props()
     outcome = refit_outcome(force=args.force_outcome)

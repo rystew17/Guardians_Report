@@ -22,7 +22,7 @@ from sklearn.preprocessing import StandardScaler
 
 from guards_report.projections import (
     backtest, corpus, elo, features, lineup, model, pa, pitchers, ratings,
-    score, talent,
+    score, talent, weather,
 )
 
 ELO_PARAMS = elo.EloParams(k=4, hfa=24, carry=0.70, mov=True)
@@ -395,6 +395,21 @@ def fit(
         list(score.SCORE_COLUMNS) + list(score.STRENGTH_COLUMNS)
         + ["sp_known"] + score_pa
     )
+
+    # -- weather, runs model ------------------------------------------------
+    # The one game-day input that cleared the bar when seven were tested
+    # together: z = +3.53 on held-out log-likelihood, better in all five
+    # held-out seasons. See `weather.py` for the evidence and the sources.
+    # Read from the cache without reaching the network here -- the refit's
+    # refresh step is what tops the cache up -- so a fit never stalls on an
+    # outside service.
+    data = weather.attach(data, Path(pa_dir).parent, games, fetch=False)
+    weather_cols = [c for c in weather.WEATHER_COLUMNS
+                    if data[c].notna().mean() > 0.5]
+    if verbose:
+        print(f"  weather on {data['temp_f'].notna().mean() * 100:.1f}% of team-games"
+              f"{'' if weather_cols else ' -- too thin, left out'}")
+    score_cols = score_cols + weather_cols
 
     # -- held-out metrics, season by season, before the final fit -----------
     # Each fold's coefficients are kept as well as its score. Predicting one
