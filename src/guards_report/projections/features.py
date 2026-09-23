@@ -196,6 +196,29 @@ def build_core(corpus_frame, logs, asof, *, elo_params: elo.EloParams) -> pd.Dat
     return frame
 
 
+# The starter is described by his season-to-date rates, and a proper projection
+# was tried in their place and did not beat them.
+#
+# The prompt was an outside benchmark: FiveThirtyEight's published MLB model
+# beat this one by 1.49 points (z = +2.61) on 3,483 shared games in 2022-23,
+# while their team-only Elo merely matched it (58.28% against 58.63%). Their
+# whole margin came from what they added on top -- starting pitchers and
+# preseason projections -- so the starter block was the obvious suspect.
+#
+# Built as a projection rather than a running total: this season to date, last
+# season and the one before at 1.0 / 0.8 / 0.6, each component regressed to the
+# league by a constant measured from the corpus rather than chosen --
+# k = p(1-p)/true variance, giving 79 batters faced for strikeouts, 202 for
+# walks and 575 for home runs, which is the published stabilisation order.
+# Combined on the FIP weights. Held out 2022-26, paired per game:
+#
+#   added to the season block      +0.000236 per game, z = +0.76
+#   replacing the season block     -0.000227 per game, z = -0.40
+#
+# So the gap to their model is not a better transformation of what we already
+# hold. The likelier source is the part we cannot reproduce from free data:
+# preseason projections of roster talent, which is outside information rather
+# than a smarter use of ours.
 CORE_COLUMNS = (
     ["elo_logit"]
     + [f"sp_{m}" for m in STARTER_METRICS]
