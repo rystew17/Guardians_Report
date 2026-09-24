@@ -271,3 +271,35 @@ def test_the_stored_date_is_read_without_loading_the_season(tmp_path):
 
     assert pitches._last_stored_date(path) == date(2026, 4, 9)
     assert pitches._last_stored_date(tmp_path / "nope.parquet") is None
+
+
+def test_a_season_with_no_games_is_not_cached_as_having_none(tmp_path, monkeypatch):
+    """Caching an empty season is how a season becomes permanently empty.
+
+    `refit.py` asked the corpus for every year through 2100, so 73 files sat
+    there stating those seasons held no baseball. Nothing raises on that: a
+    later caller asking for one is served the answer from cache, with no
+    request going out and no way to tell an unplayed season from a season
+    someone failed to fetch. It is the same failure the refresh layer exists to
+    prevent, one level down.
+    """
+    from guards_report.projections import corpus
+
+    asked = []
+
+    def fetch(season, archiver=None):
+        asked.append(season)
+        rows = [] if season > 2026 else [{c: None for c in corpus.COLUMNS}]
+        return rows, corpus.SeasonFetch(season, len(rows), 0, 0)
+
+    monkeypatch.setattr(corpus, "fetch_season", fetch)
+
+    corpus.build(range(2026, 2029), cache_dir=tmp_path)
+    cached = sorted(p.name for p in tmp_path.glob("games-*.parquet"))
+    assert cached == ["games-2026.parquet"]
+
+    # And the seasons that were not cached are asked for again rather than
+    # answered from a file that says "none".
+    corpus.build(range(2026, 2029), cache_dir=tmp_path)
+    assert asked.count(2027) == 2
+    assert asked.count(2026) == 1

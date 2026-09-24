@@ -185,7 +185,15 @@ def build(
 
         rows, report = fetch_season(season, archiver=archiver)
         frame = pd.DataFrame(rows, columns=list(COLUMNS))
-        frame.to_parquet(path, index=False)
+        if rows:
+            frame.to_parquet(path, index=False)
+        # A season with no games has not been played, and caching that is how a
+        # season becomes permanently empty. `refit.py` asked for every year to
+        # 2100, so 73 files sat in the corpus saying those seasons held no
+        # baseball -- and a later caller asking for one of them would have been
+        # served the answer from cache without a single request going out, the
+        # same failure this module's own refresh exists to prevent. Not writing
+        # it costs one schedule request the next time somebody asks.
         frames.append(frame)
         reports.append(report)
 
