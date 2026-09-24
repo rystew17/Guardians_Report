@@ -40,6 +40,37 @@ class EloParams:
 
     k: float = 4.0
     hfa: float = 24.0          # in rating points, not probability
+    # Season-to-season carryover. A roster-aware replacement for it was built
+    # and tested, and could not be shown to help.
+    #
+    # The motivation was an outside benchmark: FiveThirtyEight's model beat
+    # ours by 1.49 points while its team-only Elo merely matched ours, and the
+    # gap was widest in April and May (+2.27) -- the shape of a better
+    # preseason prior, which theirs had and this has never had.
+    #
+    # So one was built from the 40-man roster the day before opening day (MLB's
+    # API), each player valued by the ridge talent fit on EARLIER seasons and
+    # weighted by last season's workload. It is a real season-level signal: it
+    # predicts a club's win rate better than last season's record (r = +0.587
+    # against +0.576) and explains part of what that record misses (r = +0.175,
+    # p = 0.007), lifting R^2 from 0.332 to 0.382.
+    #
+    # It does not convert into game-level edge. Held out 2022-26, paired per
+    # game, in three forms: blended into the season-start rating at weights
+    # 0.25/0.5/0.75/1.0 (primary w = 0.5: z = -1.37; w = 1.0: z = -2.30), as a
+    # flat feature (z = -0.32), and as a feature fading over a club's first
+    # thirty games (z = -0.86). Every form lost a little log loss.
+    #
+    # Worth reading as "too small to detect" rather than "absent": accuracy
+    # moved the right way in all three (+0.19, +0.12, +0.29 in April-May, and
+    # nowhere else), which is where the mechanism says it should. April and May
+    # hold about 1,500 held-out games, so the standard error on that split is
+    # near half a point and a quarter-point effect is invisible either way.
+    #
+    # The scale was not the problem: one standard deviation of the prior is
+    # 36.6 rating points against the 33.9 that Elo's own carry spreads clubs
+    # over. If a projection feed is ever bought, the scaffolding to carry it is
+    # the roster weighting and this blend, and the test to repeat is this one.
     carry: float = 0.75        # season-to-season rating carryover
     mov: bool = True           # scale updates by margin of victory
 
