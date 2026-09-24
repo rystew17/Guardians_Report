@@ -447,6 +447,20 @@ MATCHUP_SHRINK = 0.75
 # depth (4.46 at 19.7 projected batters faced, 3.74 at 25.8).
 STARTER_BF_SD = 4.09
 
+# How much a pitcher's strikeout rate itself moves from start to start, beyond
+# what the binomial allows. Measured over 42,142 starts with 300 or more prior
+# batters faced: the strikeout count varies 1.255 times more than a binomial at
+# the pitcher's own prior rate, which is a start-to-start spread of 0.0445 on a
+# mean rate of 0.221 -- a fifth of the rate.
+#
+# Corrected for the obvious confound: the prior rate is itself an estimate, and
+# its error inflates the residual. That component is 0.086 of an observed 5.057,
+# so it is small but it is taken out rather than assumed away.
+#
+# Expressed relative, because a pitcher at 30% and one at 15% do not swing by
+# the same absolute amount.
+STARTER_RATE_SD = 0.201
+
 # Held-out calibration on the game-level totals, fitted on 2023 and judged on
 # 2024-2025. Home runs run about 5% high and a single factor fixes most of it.
 #
@@ -582,6 +596,24 @@ def batters_faced_distribution(
     return {n: w / total for n, w in weights.items()}
 
 
+def rate_multipliers(spread: float = STARTER_RATE_SD, points: int = 5
+                     ) -> dict[float, float]:
+    """A start's strikeout rate against the pitcher's own average, as a mixture.
+
+    Five points of a discretised normal on the multiplier, mean one. A pitcher
+    is not the same pitcher every night -- his stuff, the zone he gets, who is
+    catching -- and treating him as though he were leaves the distribution too
+    narrow at both ends however well the mean is projected.
+    """
+    if spread <= 0 or points < 2:
+        return {1.0: 1.0}
+    edge = 2.0
+    steps = np.linspace(-edge, edge, points)
+    weights = np.exp(-0.5 * steps ** 2)
+    weights /= weights.sum()
+    return {float(1.0 + spread * s): float(w) for s, w in zip(steps, weights)}
+
+
 def starter_strikeouts(
     rates: RateModel,
     *,
@@ -655,15 +687,24 @@ def starter_strikeouts(
     # the batter props already do and this did not: holding batters faced fixed
     # gives the right mean and a distribution too narrow at both ends, which is
     # measurable -- the 8.5 line came in at 4.5% against a real 8.0%.
-    running = np.zeros(len(probabilities) + 1)
-    running[0] = 1.0
+    # Two sources of spread, not one: how long the start runs, and how sharp
+    # the pitcher is on the night. Each rate multiplier gets its own pass, and
+    # the length mixture below runs across all of them at once.
+    mixture = rate_multipliers()
     snapshots: dict[int, np.ndarray] = {}
-    for i, p in enumerate(probabilities, start=1):
-        running[1:] = running[1:] * (1 - p) + running[:-1] * p
-        running[0] *= (1 - p)
-        # Every length, not only the ones the centred weights name: the
-        # mean-preserving shift below reads lengths on either side of them.
-        snapshots[i] = running.copy()
+    for multiplier, share in mixture.items():
+        running = np.zeros(len(probabilities) + 1)
+        running[0] = 1.0
+        for i, p in enumerate(probabilities, start=1):
+            q = adjust(p, multiplier)
+            running[1:] = running[1:] * (1 - q) + running[:-1] * q
+            running[0] *= (1 - q)
+            # Every length, not only the ones the centred weights name: the
+            # mean-preserving shift below reads lengths on either side of them.
+            if i in snapshots:
+                snapshots[i] = snapshots[i] + share * running
+            else:
+                snapshots[i] = share * running.copy()
 
     # Mean-preserving. Mixing over length widens the distribution, which is the
     # point, but it also lowers the mean: the batters that a longer start adds
@@ -683,7 +724,18 @@ def starter_strikeouts(
                   for n, w in weights.items() if n in snapshots)
         return out / total
 
-    target = float(counts @ snapshots[fixed_length]) if fixed_length in snapshots         else mean_of(chances)
+    # The mean to hold: the projection as it stands before either mixture --
+    # one rate, one length. Anchoring to the mixed figure instead would let the
+    # odds-space nonlinearity in the rate mixture walk the mean down, and a
+    # mean that drifts is what made the first attempt at this measure worse.
+    plain = np.zeros(len(probabilities) + 1)
+    plain[0] = 1.0
+    for i, p in enumerate(probabilities, start=1):
+        plain[1:] = plain[1:] * (1 - p) + plain[:-1] * p
+        plain[0] *= (1 - p)
+        if i == fixed_length:
+            break
+    target = float(counts @ plain)
     lo, hi = -6.0, 6.0
     for _ in range(24):
         mid = (lo + hi) / 2.0

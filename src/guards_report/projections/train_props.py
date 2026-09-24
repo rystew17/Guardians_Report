@@ -25,7 +25,8 @@ import pandas as pd
 import statsmodels.api as sm
 
 from guards_report.projections import (
-    corpus, elo, features, first5 as f5_module, pa, pitchers, props, ratings, score,
+    corpus, elo, features, first5 as f5_module, pa, pitchers, props, ratings,
+    score, weather,
 )
 
 FIRST5_ALPHA = f5_module.FIRST5_ALPHA
@@ -176,6 +177,19 @@ def fit_first5(*, corpus_dir: Path, pitcher_dir: Path, first5: pd.DataFrame,
             data["is_home"] == 1, data["home_lineup"], data["away_lineup"]
         )
         columns += ["opp_sp_talent", "own_lineup"]
+
+    # First-pitch conditions. The same physics as the full game -- warm air is
+    # thin and the ball carries -- and the first five innings are played in it.
+    # Held out 2022-26, paired per team-game on the first-five model's own
+    # log-likelihood: +0.000565 a row, z = +3.09, better in four seasons of
+    # five. Read from the cache without reaching the network; a fit must not
+    # stall on an outside service.
+    data = weather.attach(data, Path(corpus_dir).parent, games, fetch=False)
+    weather_cols = [c for c in weather.WEATHER_COLUMNS
+                    if data[c].notna().mean() > 0.5]
+    columns += weather_cols
+    if verbose and weather_cols:
+        print(f"  weather on {data['temp_f'].notna().mean() * 100:.1f}% of team-games")
 
     if starter_history is not None:
         data = f5_module.add_features(data, starter_history)

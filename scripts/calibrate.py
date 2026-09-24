@@ -40,15 +40,23 @@ def _say(message: str) -> None:
     print(message, flush=True)
 
 
-def _walk_forward_scores(data: pd.DataFrame, columns: list[str], seasons: list[int]):
-    """Per-season expected runs for both sides, fitted only on prior seasons."""
+def _walk_forward_scores(data: pd.DataFrame, columns: list[str], seasons: list[int],
+                         *, exposure: bool = True):
+    """Per-season expected runs for both sides, fitted only on prior seasons.
+
+    Fitted with the innings exposure and predicted without it, exactly as
+    production does: the coefficients come off a rate per nine innings batted,
+    and the figure handed to the simulation is that rate for a full nine, with
+    the simulation applying the ninth-inning rule itself.
+    """
     out: dict[int, dict] = {}
     for season in seasons:
         train = data[data["season"] < season]
         test = data[data["season"] == season]
         if not len(train) or not len(test):
             continue
-        x_train, y_train, off_train, _ = score.design(train, columns)
+        x_train, y_train, off_train, _ = score.design(
+            train, columns, exposure=exposure)
         x_test, _, off_test, frame = score.design(test, columns)
         fitted = sm.GLM(
             y_train, x_train,
@@ -143,8 +151,27 @@ def main() -> int:
             games, ratings.OffDefParams(0.010, 0.010, 0.16, 0.70, 0.40)))
     data["sp_known"] = (
         data["opp_sp_prior"].notna() & (data["opp_sp_prior"] >= 10)).astype(int)
-    columns = list(score.SCORE_COLUMNS) + list(score.STRENGTH_COLUMNS) + ["sp_known"]
-    _say(f"  {len(data):,} team-games")
+
+    # The same columns production fits on, or this grades a model nobody
+    # serves. The plate-appearance block and the weather block were both
+    # missing here, and so was the innings exposure the fit is built around --
+    # without it `mu` is runs per GAME, and feeding a censored figure to a
+    # simulation that then applies the censoring itself counts the ninth
+    # inning twice.
+    from guards_report.projections import talent, train, weather as weather_module
+
+    plate_full = pa_module.load(root / "pitches")
+    data, _ = train._add_pa_block(
+        data, games, plate_full, talent.fit(plate_full, alpha=train.TALENT_ALPHA))
+    data = train._innings_batted(root, data)
+    data = weather_module.attach(data, root, games, fetch=False)
+    score_pa = [c for c in score.PA_COLUMNS if data[c].notna().mean() > 0.5]
+    weather_cols = [c for c in weather_module.WEATHER_COLUMNS
+                    if data[c].notna().mean() > 0.5]
+    columns = (list(score.SCORE_COLUMNS) + list(score.STRENGTH_COLUMNS)
+               + ["sp_known"] + score_pa + weather_cols)
+    _say(f"  {len(data):,} team-games; fitting on {len(columns)} columns "
+         f"({len(score_pa)} plate-appearance, {len(weather_cols)} weather)")
 
     # -- game totals, one record per posted line ---------------------------
     _say("Calibrating totals, per line ...")
@@ -201,7 +228,7 @@ def main() -> int:
     # absorbs the difference.
     f5_data["league_rpg"] = f5_data["league_rpg"] * train_props.FIRST5_SHARE
 
-    f5_blocks = _walk_forward_scores(f5_data, columns, seasons)
+    f5_blocks = _walk_forward_scores(f5_data, columns, seasons, exposure=False)
     outcomes = f5.set_index("game_pk")[["f5_home_win", "f5_tie"]]
     for season, block in f5_blocks.items():
         joined = outcomes.reindex(block["game_pk"])

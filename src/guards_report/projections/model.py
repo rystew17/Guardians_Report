@@ -116,6 +116,65 @@ class FitMetrics:
         return (self.accuracy - self.baseline_accuracy) * 100
 
 
+def simulate_counts(mu_home, mu_away, *, draws: int, rng, chunk: int = 400):
+    """Runs for both sides, half-inning by half-inning, under the real rules.
+
+    Vectorised over games and shared by the serving path and the calibration,
+    which is the point of it being here. They used to differ: the report priced
+    totals through this simulation while the measurement drew two independent
+    negative binomials and resolved ties by redrawing, so the record on the page
+    described a model nobody was serving.
+
+    `mu_*` are runs per nine innings batted, uncensored -- what the score model
+    fits once the exposure term is in it. The rules are applied here: the home
+    club bats the ninth only when tied or behind, and a rally there stops when
+    it takes the lead.
+
+    Chunked over games because the full array is games x draws x innings, which
+    at a season's worth of games and a couple of thousand draws is gigabytes.
+    """
+    mu_home = np.atleast_1d(np.asarray(mu_home, dtype=float))
+    mu_away = np.atleast_1d(np.asarray(mu_away, dtype=float))
+    k = 1.0 / HALF_INNING_ALPHA
+    homes, aways = [], []
+
+    for start in range(0, len(mu_home), chunk):
+        h_mu = mu_home[start:start + chunk]
+        a_mu = mu_away[start:start + chunk]
+        rate_h = np.repeat((h_mu / 9.0)[:, None], draws, axis=1)
+        rate_a = np.repeat((a_mu / 9.0)[:, None], draws, axis=1)
+
+        def frame(rate, cols):
+            return rng.negative_binomial(
+                k, k / (k + rate[:, :, None]), size=(len(rate), draws, cols))
+
+        away = frame(rate_a, 9).sum(axis=2)
+        home_8 = frame(rate_h, 8).sum(axis=2)
+        needs_ninth = home_8 <= away
+        cap = np.maximum(away - home_8 + 1, 1)
+        home = home_8 + np.where(
+            needs_ninth, np.minimum(frame(rate_h, 1)[:, :, 0], cap), 0)
+
+        for _ in range(20):
+            tied = home == away
+            if not tied.any():
+                break
+            add_away = frame(rate_a * EXTRA_INNING_RATE, 1)[:, :, 0]
+            add_home = frame(rate_h * EXTRA_INNING_RATE, 1)[:, :, 0]
+            cap_extra = np.maximum(away + add_away - home + 1, 1)
+            away = away + tied * add_away
+            home = home + tied * np.minimum(add_home, cap_extra)
+
+        still = home == away
+        if still.any():
+            home = home + still * (
+                rng.random(home.shape) < EXTRA_INNING_HOME_EDGE)
+        homes.append(home)
+        aways.append(away)
+
+    return np.concatenate(homes), np.concatenate(aways)
+
+
 @dataclass
 class OutcomeModel:
     """Both fitted models plus everything needed to apply them to a new game."""
@@ -380,42 +439,8 @@ class OutcomeModel:
         mu_away = self.expected_runs(away_features)
 
         rng = np.random.default_rng(20260819)
-        k = 1.0 / HALF_INNING_ALPHA
-
-        def frame(rate: float, cols: int) -> np.ndarray:
-            """Runs in `cols` half-innings, one row per draw."""
-            return rng.negative_binomial(k, k / (k + rate), size=(draws, cols))
-
-        rate_home = mu_home / 9.0
-        rate_away = mu_away / 9.0
-
-        away = frame(rate_away, 9).sum(axis=1)
-        home_8 = frame(rate_home, 8).sum(axis=1)
-
-        # The ninth is played only when the home club is tied or behind, and a
-        # rally there ends the moment it leads. Capping at the deficit plus one
-        # is not exact -- a walk-off home run clears the cap -- but it is far
-        # closer than letting a club that needed one run score five.
-        needs_ninth = home_8 <= away
-        cap = np.maximum(away - home_8 + 1, 1)
-        home = home_8 + np.where(needs_ninth,
-                                 np.minimum(frame(rate_home, 1)[:, 0], cap), 0)
-
-        # Extra innings, one at a time, at the measured elevated rate.
-        for _ in range(20):
-            tied = home == away
-            if not tied.any():
-                break
-            add_away = frame(rate_away * EXTRA_INNING_RATE, 1)[:, 0]
-            add_home = frame(rate_home * EXTRA_INNING_RATE, 1)[:, 0]
-            cap_extra = np.maximum(away + add_away - home + 1, 1)
-            away = away + tied * add_away
-            home = home + tied * np.minimum(add_home, cap_extra)
-
-        still_tied = home == away
-        if still_tied.any():
-            home = home + still_tied * (
-                rng.random(draws) < EXTRA_INNING_HOME_EDGE)
+        home, away = simulate_counts([mu_home], [mu_away], draws=draws, rng=rng)
+        home, away = home[0], away[0]
 
         margin = home - away
         p_home = float((home > away).mean())

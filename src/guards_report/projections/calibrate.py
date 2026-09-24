@@ -32,7 +32,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from guards_report.projections import backtest, props
+from guards_report.projections import backtest, model as model_module, props
 
 # The lines each market is measured at.
 #
@@ -512,22 +512,23 @@ def totals(
         if not len(mu_home):
             continue
 
-        def draw(mu: np.ndarray) -> np.ndarray:
-            return rng.negative_binomial(
-                n, n / (n + mu[:, None]), size=(len(mu), DRAWS))
-
-        home, away = draw(mu_home), draw(mu_away)
-        # Only a full game plays on. Five innings end level all the time, so
-        # resolving the tie there would add runs to the total that the game
-        # never produced -- and a first-five total is a bet on exactly that
-        # number.
         if extra_innings:
-            for _ in range(20):
-                tied = home == away
-                if not tied.any():
-                    break
-                home = home + tied * draw(mu_home / 9.0)
-                away = away + tied * draw(mu_away / 9.0)
+            # The same half-innings the report prices from, rules and all. This
+            # used to draw two independent game totals and redraw ties, which
+            # measured a model the page had stopped serving -- and the home
+            # side's runs are censored by the score, so independent draws put
+            # the total about two points high.
+            home, away = model_module.simulate_counts(
+                mu_home, mu_away, draws=DRAWS, rng=rng)
+        else:
+            # Five innings are always played out by both sides, so there is no
+            # ninth-inning rule to apply and no tie to resolve: a first-five
+            # total is a bet on exactly the number both clubs reached.
+            def draw(mu: np.ndarray) -> np.ndarray:
+                return rng.negative_binomial(
+                    n, n / (n + mu[:, None]), size=(len(mu), DRAWS))
+
+            home, away = draw(mu_home), draw(mu_away)
 
         # A total landing exactly on a whole number is a push: refunded, not
         # lost. The serving path has always priced it that way; this did not,
@@ -579,17 +580,9 @@ def runline(
         if not len(mu_home):
             continue
 
-        def draw(mu: np.ndarray) -> np.ndarray:
-            return rng.negative_binomial(
-                n, n / (n + mu[:, None]), size=(len(mu), DRAWS))
-
-        home, away = draw(mu_home), draw(mu_away)
-        for _ in range(20):
-            tied = home == away
-            if not tied.any():
-                break
-            home = home + tied * draw(mu_home / 9.0)
-            away = away + tied * draw(mu_away / 9.0)
+        # The margin comes out of the same simulation the report prices from.
+        home, away = model_module.simulate_counts(
+            mu_home, mu_away, draws=DRAWS, rng=rng)
 
         # A whole-number line pushes on an exact margin, and a push is neither
         # a win nor a loss. Books post halves so this is rare, but scoring one
