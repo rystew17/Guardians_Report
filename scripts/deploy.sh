@@ -15,15 +15,23 @@
 #                         the corpus readable and the odds record durable --
 #                         Cloud Run's own filesystem does not survive the
 #                         request that wrote to it
-#   --memory 4Gi          measured, not guessed. The build process itself peaks
-#                         near 440MB, but files read through the GCS mount are
-#                         cached by the kernel, and that cache counts against the
-#                         container's limit -- so memory climbs for the whole run
-#                         rather than settling. At 2Gi it crossed the limit about
-#                         fifteen minutes in and the container was killed, twice.
-#                         That reaches the phone only as "lost connection": the
-#                         kill takes down the event stream that would have
-#                         carried the reason.
+#   --memory 8Gi          measured, not guessed -- and measured again once the
+#                         first figure turned out to describe the wrong build.
+#                         The report itself peaks near 440MB, but files read
+#                         through the GCS mount are cached by the kernel and
+#                         that cache counts against the container's limit, so
+#                         memory climbs for the whole run rather than settling.
+#                         At 2Gi it crossed the limit about fifteen minutes in
+#                         and the container was killed, twice.
+#                         4Gi then held for every build that changed nothing --
+#                         and not for the first build of each day, which is the
+#                         one that folds in new pitches and so rebuilds the two
+#                         derived tables. Each reads the whole pitch corpus into
+#                         a single frame: 8.1 million rows, peaking near 1.1GiB
+#                         for the first table and 1.8GiB for the second, on top
+#                         of a page cache holding the gigabyte it read them
+#                         from. That is what killed the first build every day
+#                         and let the second through.
 #   --timeout 3600       the platform cap, and not optional here. Cloud Run ends
 #                        every request at this limit, the build's event stream
 #                        included -- and when that stream ends with nothing else
@@ -57,6 +65,7 @@
 # five-hundred-credit-a-month odds quota that anybody can drain.
 
 set -euo pipefail
+
 
 SERVICE="${SERVICE:-guards-report}"
 REGION="${REGION:-us-central1}"
@@ -96,6 +105,39 @@ fi
 
 echo "Deploying ${SERVICE} to ${REGION} in ${PROJECT}, bucket ${BUCKET} ..."
 
+# The flags carrying absolute paths go through a file rather than the command
+# line.
+#
+# Git Bash on Windows rewrites anything inside an argument that looks like a
+# unix path, so `mount-path=/gcs` reached gcloud as `mount-path=C:/Program
+# Files/Git/gcs` and the deploy was rejected for a mount path that is not
+# absolute. The same rewrite hits the first path in --set-env-vars and leaves
+# the rest alone, so DATA_DIR would have pointed into the Git installation
+# while OUTPUT_DIR still pointed at the bucket -- a deploy that succeeds and
+# serves nothing. Doubling the slash fixes the mount and not the environment;
+# MSYS_NO_PATHCONV fixes both and breaks gcloud's own launcher, which resolves
+# its library path the same way. A flags file is not an argument, so nothing
+# rewrites it, and a real unix shell reads it identically.
+FLAGS="$(mktemp -t guards-deploy-XXXXXX.yaml)"
+trap 'rm -f "${FLAGS}"' EXIT
+cat > "${FLAGS}" <<YAML
+--add-volume:
+  name: data
+  type: cloud-storage
+  bucket: ${BUCKET}
+--add-volume-mount:
+  volume: data
+  mount-path: /gcs
+--set-env-vars:
+  GCP_PROJECT: ${PROJECT}
+  GCS_BUCKET: ${BUCKET}
+  DATA_DIR: /gcs/data
+  RAW_ARCHIVE_DIR: /gcs/data/raw
+  OUTPUT_DIR: /gcs/out
+  ODDS_API_KEY: ${ODDS_KEY}
+  ACCESS_TOKEN: ${TOKEN}
+YAML
+
 gcloud run deploy "${SERVICE}" \
   --source . \
   --project "${PROJECT}" \
@@ -103,15 +145,13 @@ gcloud run deploy "${SERVICE}" \
   --platform managed \
   --allow-unauthenticated \
   --no-cpu-throttling \
-  --memory 4Gi \
+  --memory 8Gi \
   --cpu 2 \
   --timeout 3600 \
   --min-instances 0 \
   --max-instances 1 \
   --concurrency 4 \
-  --add-volume "name=data,type=cloud-storage,bucket=${BUCKET}" \
-  --add-volume-mount "volume=data,mount-path=/gcs" \
-  --set-env-vars "GCP_PROJECT=${PROJECT},GCS_BUCKET=${BUCKET},DATA_DIR=/gcs/data,RAW_ARCHIVE_DIR=/gcs/data/raw,OUTPUT_DIR=/gcs/out,ODDS_API_KEY=${ODDS_KEY},ACCESS_TOKEN=${TOKEN}"
+  --flags-file "${FLAGS}"
 
 URL="$(gcloud run services describe "${SERVICE}" \
   --project "${PROJECT}" --region "${REGION}" --format='value(status.url)')"

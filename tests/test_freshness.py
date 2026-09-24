@@ -434,3 +434,67 @@ def test_a_revised_prior_season_invalidates_the_cache(tmp_path):
 
     again = freshness._pitch_frame(tmp_path, columns, "cache.parquet")
     assert sorted(again["game_pk"]) == [1, 2, 99], "served a stale cache"
+
+
+def test_the_derived_rebuild_really_runs_in_another_process(tmp_path, monkeypatch):
+    """The two rebuilds are the only steps whose failure could not be caught.
+
+    Both read the whole pitch corpus into one frame, and on Cloud Run that
+    corpus is a network mount whose page cache counts against the same memory
+    limit. Going over it earns a SIGKILL, which raises nothing and runs no
+    `except` -- the build process just stops. That is why the first report of
+    each day failed and the second, which had no new pitches to fold in and so
+    skipped the rebuild, always worked.
+
+    Patching the worker in THIS process and still getting an answer is what
+    shows the work is happening somewhere else, where it can be killed without
+    taking the report with it.
+    """
+    from guards_report.projections import freshness
+
+    def must_not_run(root):
+        raise AssertionError("the rebuild ran in the parent process")
+
+    monkeypatch.setattr(freshness, "_rebuild_derived_inline", must_not_run)
+    (tmp_path / "pitches").mkdir(parents=True)
+
+    assert freshness.rebuild_derived(tmp_path) is None
+
+
+def test_a_killed_rebuild_names_the_signal_rather_than_an_exit_code(monkeypatch):
+    """A bare "exit -9" is unreadable from a phone: the log ends mid-run with
+    nothing wrong in it, because the process was shot rather than allowed to
+    complain."""
+    from guards_report.projections import freshness
+
+    class _Killed:
+        returncode = -9
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(freshness.subprocess, "run",
+                        lambda *a, **k: _Killed())
+    with pytest.raises(RuntimeError) as raised:
+        freshness.rebuild_profiles("nowhere")
+    assert "signal 9" in str(raised.value)
+    assert "memory limit" in str(raised.value)
+
+
+def test_a_rebuild_that_dies_costs_the_tables_and_not_the_refresh(tmp_path,
+                                                                  monkeypatch):
+    from guards_report.projections import freshness
+
+    _full(tmp_path, through="2026-08-01")
+
+    def killed(root, task):
+        raise RuntimeError(f"{task} rebuild: killed by signal 9")
+
+    monkeypatch.setattr(freshness, "_in_child", killed)
+    monkeypatch.setattr(freshness.corpus, "build", lambda *a, **k: pd.DataFrame(
+        {"game_type": [], "season": []}))
+
+    result = freshness.refresh_all(
+        tmp_path, on=date(2026, 8, 22), verbose=False, skip_pitches=True)
+
+    assert any("signal 9" in w for w in result.warnings), result.warnings
+    assert result.corpus_through is not None

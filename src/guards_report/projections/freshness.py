@@ -25,6 +25,10 @@ fetches only the days since it was last written.
 
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
@@ -187,7 +191,7 @@ def _pitch_frame(root: Path, columns: list[str], cache_name: str):
     return pa_module.cached_pitch_frame(root, columns, cache_name)
 
 
-def rebuild_derived(root: Path) -> int | None:
+def _rebuild_derived_inline(root: Path) -> int | None:
     """Recompute the first-five starter table from the pitch corpus.
 
     A full recompute rather than an append, because each row's value is a
@@ -217,7 +221,7 @@ def rebuild_derived(root: Path) -> int | None:
     return len(history)
 
 
-def rebuild_profiles(root: Path) -> int | None:
+def _rebuild_profiles_inline(root: Path) -> int | None:
     """Recompute the batter and pitcher reference populations.
 
     A tool grade is a percentile among this season's qualified players, so the
@@ -241,6 +245,73 @@ def rebuild_profiles(root: Path) -> int | None:
     batters.to_parquet(models / "batter_profiles.parquet", index=False)
     pitchers_frame.to_parquet(models / "pitcher_profiles.parquet", index=False)
     return len(batters) + len(pitchers_frame)
+
+
+# How long a rebuild is allowed to take before it is abandoned.
+#
+# Generous: the two together take about a hundred seconds locally and rather
+# longer over a network mount. This exists so that a child which hangs -- a
+# stalled read against the mount, say -- costs the derived tables rather than
+# the whole report.
+REBUILD_TIMEOUT_SECONDS = 900
+
+_TASKS = {
+    "derived": _rebuild_derived_inline,
+    "profiles": _rebuild_profiles_inline,
+}
+
+
+def _in_child(root: Path, task: str) -> int | None:
+    """Run one rebuild in a separate process and return what it produced.
+
+    Every step of `refresh_all` is wrapped so that its failure is reported and
+    the rest of the refresh carries on. That promise was not true of these two.
+
+    Both read the entire pitch corpus into a single frame -- 8.1 million rows,
+    peaking near 1.1 GiB for the first and 1.8 GiB for the second -- and on
+    Cloud Run that corpus is a GCS mount, so the bytes also sit in a page cache
+    that counts against the same container limit. They run only when the pitch
+    corpus gained something, which is true of the first report of a day and
+    false of every one after it. The first report of each day was therefore the
+    one that went over the limit, and the kernel answers that with SIGKILL: no
+    exception is raised, no `except` runs, the build process simply stops. The
+    log ended mid-run with nothing wrong in it, and pressing the button again
+    always worked -- by then the pitches were in, so the rebuild was skipped.
+
+    A process boundary is what makes the existing promise true. A child that is
+    killed is a non-zero exit code, which is a warning; and running the two in
+    sequence as separate processes returns the first one's memory before the
+    second one asks for its own.
+    """
+    command = [sys.executable, "-m", "guards_report.projections.freshness",
+               "--task", task, "--root", str(root)]
+    # The parent may itself have been started with a pinned encoding; the child
+    # prints JSON, so this only has to be a decodable one.
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+    finished = subprocess.run(
+        command, capture_output=True, text=True, env=env,
+        timeout=REBUILD_TIMEOUT_SECONDS)
+    if finished.returncode != 0:
+        detail = (finished.stderr or "").strip().splitlines()
+        tail = detail[-1] if detail else f"exit {finished.returncode}"
+        if finished.returncode < 0:
+            tail = (f"killed by signal {-finished.returncode} -- most likely "
+                    "the container's memory limit")
+        raise RuntimeError(f"{task} rebuild: {tail}")
+    for row in reversed((finished.stdout or "").splitlines()):
+        if row.startswith("{"):
+            return json.loads(row).get("result")
+    raise RuntimeError(f"{task} rebuild said nothing")
+
+
+def rebuild_derived(root: Path) -> int | None:
+    """Recompute the first-five starter table, in a child process."""
+    return _in_child(root, "derived")
+
+
+def rebuild_profiles(root: Path) -> int | None:
+    """Recompute the batter and pitcher reference populations, in a child."""
+    return _in_child(root, "profiles")
 
 
 def survey(root: Path, season: int) -> Freshness:
@@ -401,3 +472,21 @@ def refresh_all(
             )
 
     return result
+
+
+def _main(argv: list[str] | None = None) -> int:
+    """The child process `_in_child` starts. One rebuild, one line of JSON."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--task", required=True, choices=sorted(_TASKS))
+    parser.add_argument("--root", required=True)
+    args = parser.parse_args(argv)
+
+    result = _TASKS[args.task](Path(args.root))
+    print(json.dumps({"task": args.task, "result": result}))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())
