@@ -141,3 +141,38 @@ def test_a_missing_innings_column_leaves_the_offset_alone():
     _, _, plain, _ = score.design(frame, ["is_home"])
     _, _, exposed, _ = score.design(frame, ["is_home"], exposure=True)
     assert exposed == pytest.approx(plain)
+
+
+def test_the_game_rate_factor_widens_the_spread_without_moving_the_mean(monkeypatch):
+    """`GAME_RATE_SD` says the fitted rate is an estimate, not the night's truth.
+
+    Nine independent half-innings at one fixed rate are measurably narrower
+    than real games: the simulated margin had sd 4.3099 against an actual
+    4.5007 over 12,092 walk-forward games, which is what made the home side
+    cover -1.5 less often than it does.
+
+    The factor has to buy that spread without buying runs -- a lognormal
+    centred anywhere but -s^2/2 would quietly raise every total.
+    """
+    def run(spread):
+        monkeypatch.setattr(model_module, "GAME_RATE_SD", spread)
+        rng = np.random.default_rng(404)
+        return model_module.simulate_counts(
+            [4.6], [4.4], draws=120_000, rng=rng)
+
+    flat_home, flat_away = run(0.0)
+    wide_home, wide_away = run(0.1313)
+
+    # The visiting side bats nine full innings whatever the score, so its mean
+    # is the clean read on whether the factor moved anything it should not.
+    assert abs(wide_away.mean() - flat_away.mean()) < 0.05
+    assert abs(wide_home.mean() - flat_home.mean()) < 0.05
+
+    assert (wide_home - wide_away).std() > (flat_home - flat_away).std() + 0.05
+
+
+def test_the_game_rate_constant_is_the_measured_one():
+    """0.1313 is measured on 2015-2021 and 0.20 is what minimises the bias on
+    2022-26. The second is not the answer, and the gap between them is the
+    whole reason the first is written down."""
+    assert model_module.GAME_RATE_SD == 0.1313

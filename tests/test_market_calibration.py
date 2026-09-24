@@ -252,20 +252,44 @@ def test_giving_away_a_run_and_a_half_is_not_the_same_bet_as_getting_one(
     assert taking > 0.60, taking
 
 
-def test_five_innings_do_not_go_to_extras(monkeypatch):
+def test_five_innings_are_played_out_and_nine_are_not(monkeypatch):
     """`extra_innings=False` is what makes the first-five total its own
-    measurement rather than a nine-inning one wearing a smaller line.
+    measurement rather than a nine-inning one wearing a smaller line. Both
+    sides bat their five out: no ninth-inning rule, no tie to resolve.
 
-    Playing out the tie only ever adds runs, so leaving it on inflates every
-    over -- and the first-five total is a bet on precisely that number.
+    Tested on lopsided games, and that is the whole point. Across even ones the
+    two branches differ by 0.0163 runs in the mean -- extras add runs, the
+    ninth-inning rule takes them away, and the two very nearly cancel. This
+    used to assert a sign on that difference at a line of 8.5, where the gap in
+    over-rate is 0.0009: smaller than the Monte Carlo error of the draw
+    deciding it. It passed for four months and then flipped when an unrelated
+    constant widened both distributions, which is the only kind of notice a
+    test like that ever gives.
+
+    Where one club is far ahead the tie never happens, so only the ninth-inning
+    rule is left and its direction is unambiguous: the home side stops batting,
+    and nine innings score less than five-plus-four played out in full.
     """
     monkeypatch.setattr(calibrate, "DRAWS", _TEST_DRAWS)
-    frames = _score_frames()
-    played_out = calibrate.totals(frames, alpha=0.20, line=8.5)
-    stopped = calibrate.totals(frames, alpha=0.20, line=8.5,
-                               extra_innings=False, market="first_five_total")
-    assert _mean_prediction(stopped) < _mean_prediction(played_out)
-    assert stopped.market == "first_five_total"
+    rng = np.random.default_rng(3)
+    n = 1500
+    mu_home = np.full(n, 6.5)
+    mu_away = np.full(n, 2.5)
+    k = 1.0 / 0.20
+    home = rng.negative_binomial(k, k / (k + mu_home))
+    away = rng.negative_binomial(k, k / (k + mu_away))
+    frames = {2025: {
+        "mu_home": mu_home, "mu_away": mu_away,
+        "margin": (home - away).astype(float),
+        "total": (home + away).astype(float),
+    }}
+
+    with_rules = calibrate.totals(frames, alpha=0.20, line=8.5)
+    played_out = calibrate.totals(frames, alpha=0.20, line=8.5,
+                                  extra_innings=False,
+                                  market="first_five_total")
+    assert _mean_prediction(with_rules) < _mean_prediction(played_out) - 0.01
+    assert played_out.market == "first_five_total"
 
 # ---------------------------------------------------------------------------
 # The shipped record

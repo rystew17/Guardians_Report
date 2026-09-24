@@ -87,6 +87,54 @@ HALF_INNING_ALPHA = 2.215
 # with a runner on second. Measured over 2021-26: 0.9957 runs a half-inning
 # against 0.4955 in regulation. Before the rule it ran 0.833x, so this constant
 # is era-specific and would have to be re-measured if the rule changed.
+
+# A club's scoring rate moves from game to game by more than the model sees.
+#
+# The simulation draws nine half-innings at one fixed rate a side, so the only
+# spread it can make is the spread of nine independent draws. Real games carry
+# a rate the features do not reach -- which reliever took the sixth, how the
+# wind turned after seven, who was behind the plate -- and the runs scatter
+# wider around the same expectation than nine draws can scatter them. On the
+# 12,092 walk-forward games the simulated margin had sd 4.3099 against an
+# actual 4.5007, which is what made the home side cover -1.5 less often than
+# it does and +1.5 more often.
+#
+# So each side's rate gets a factor of its own per game, mean one, drawn fresh
+# for every simulation. The width is measured the way every other constant
+# here is, by taking the sampling part out of the observed spread:
+#
+#     var(runs - simulated mean) = simulated var + E[mu^2] * s^2
+#
+# On 15,473 games from 2015-2021: 19.7762 observed against 19.0220 from nine
+# independent half-innings, leaving 0.7542 over E[mu^2] of 43.7469. Positive
+# in all seven seasons, from 0.070 to 0.180.
+#
+# Measured there and nowhere else on purpose. 2022-26 is the window every
+# market is graded on, and the value that MINIMISES the graded bias is 0.20 --
+# half again as large as the truth. Fitting it against the scoreboard would
+# have looked like a better answer and been a tuned parameter wearing a
+# measurement's clothes.
+#
+# Held out, it moves the totals bias from 1.37 points to 0.89 and the run
+# line's from 1.56 to 1.42, with log loss better in both markets and the bias
+# smaller at every one of the seven posted totals.
+GAME_RATE_SD = 0.1313
+
+# What this is NOT: a fix for extra innings, which are separately and
+# measurably wrong and must be left alone.
+#
+# The ghost runner makes an extra half-inning score 1.1330 with variance
+# 1.9830 over 1,481 uncensored halves, 2021-25 -- a dispersion of 0.662 at
+# 2.2687 times the regulation rate, where this draws them at 2.01 times with
+# regulation's 2.215. That puts 3.0% of the mass at six runs or more where the
+# truth is 0.8%, and 18% at exactly one run where the truth is 35%.
+#
+# Correcting both constants makes every price worse: the totals bias goes from
+# 1.37 points to 1.59 and the run line's from 1.56 to 1.76, and it still loses
+# with the game-rate factor alongside it. A better description of extra
+# innings, a worse prediction of the game -- the same verdict the park-level
+# variance law got above, and for the same reason: these constants are doing
+# work beyond what they are named for.
 EXTRA_INNING_RATE = 2.01
 
 # The home club wins 50.41% of extra-inning games (n=2,325, z=+0.39 against a
@@ -130,6 +178,11 @@ def simulate_counts(mu_home, mu_away, *, draws: int, rng, chunk: int = 400):
     club bats the ninth only when tied or behind, and a rally there stops when
     it takes the lead.
 
+    `mu_*` is also an estimate rather than the night's true rate, so each side
+    gets a factor of its own per simulated game -- see `GAME_RATE_SD`. Without
+    it the only spread available is that of nine independent draws, which is
+    measurably narrower than real games are.
+
     Chunked over games because the full array is games x draws x innings, which
     at a season's worth of games and a couple of thousand draws is gigabytes.
     """
@@ -143,6 +196,17 @@ def simulate_counts(mu_home, mu_away, *, draws: int, rng, chunk: int = 400):
         a_mu = mu_away[start:start + chunk]
         rate_h = np.repeat((h_mu / 9.0)[:, None], draws, axis=1)
         rate_a = np.repeat((a_mu / 9.0)[:, None], draws, axis=1)
+
+        # One rate factor per side per simulated game, drawn fresh each time
+        # and carried through that game's extra innings as well: it stands for
+        # what this particular night was, not for a property of the club. The
+        # lognormal is centred so its mean is exactly one, which leaves the
+        # expected runs alone and moves only the spread.
+        if GAME_RATE_SD:
+            rate_h = rate_h * rng.lognormal(
+                -0.5 * GAME_RATE_SD ** 2, GAME_RATE_SD, rate_h.shape)
+            rate_a = rate_a * rng.lognormal(
+                -0.5 * GAME_RATE_SD ** 2, GAME_RATE_SD, rate_a.shape)
 
         def frame(rate, cols):
             return rng.negative_binomial(
