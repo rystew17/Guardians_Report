@@ -16,6 +16,7 @@ import asyncio
 import os
 import secrets
 import sys
+import traceback
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -62,6 +63,109 @@ class Job:
 
 
 JOBS: dict[str, Job] = {}
+
+# Every background task lives here for as long as it runs.
+#
+# `asyncio.create_task` keeps only a weak reference to the task it hands back.
+# A build whose task is stored nowhere can be collected mid-run, and a
+# collected task ends with no exit code and no error -- the stream simply stops
+# carrying lines. Discarding the reference when it finishes is what keeps this
+# from growing over a long-lived instance.
+_TASKS: set[asyncio.Task] = set()
+
+
+def _spawn(job: Job, coro) -> None:
+    task = asyncio.create_task(_guarded(job, coro))
+    _TASKS.add(task)
+    task.add_done_callback(_TASKS.discard)
+
+
+async def _guarded(job: Job, coro) -> None:
+    """Run a job's body, and make sure a crash inside it ends the job.
+
+    Without this an unexpected exception left `status` at "running" for the
+    life of the instance: the browser's stream sat on keepalives with nothing
+    coming, and every later build was turned away with "a report is already
+    building" by a job that had died minutes before.
+    """
+    try:
+        await coro
+    except asyncio.CancelledError:
+        job.status = "failed"
+        job.error = ("the run was cancelled -- the instance was most likely "
+                     "reclaimed with the build still inside it")
+        job.publish(f"__FAILED__ {job.error}")
+        raise
+    except Exception as exc:  # noqa: BLE001 -- the job has to report its own death
+        traceback.print_exc()
+        job.status = "failed"
+        job.error = f"{type(exc).__name__}: {exc}"
+        job.publish(f"__FAILED__ {job.error}")
+    finally:
+        _archive(job)
+
+
+def _archive(job: Job) -> None:
+    """Keep a finished job's log beside the reports.
+
+    An instance that goes away takes `JOBS` with it, and the run worth reading
+    is usually the one that failed hours ago. Never fatal: a log that cannot be
+    written must not turn a finished build into a failed one.
+    """
+    try:
+        directory = _settings().output_dir / "logs"
+        directory.mkdir(parents=True, exist_ok=True)
+        stamp = job.started_at.strftime("%Y%m%d-%H%M%S")
+        name = f"{stamp}-{job.game_date}-{job.status}-{job.id}.log"
+        (directory / name).write_text(
+            "\n".join(job.lines) + "\n", encoding="utf-8")
+    except Exception:  # noqa: BLE001 -- a record of the run, not part of it
+        pass
+
+
+# One line of a subprocess's output can be arbitrarily long: a traceback
+# carrying a long path, a frame printed inside a warning. asyncio's default
+# stream limit is 64 KiB, and past it `readline` raises instead of returning
+# the line -- which killed the relay and left the job running forever.
+STREAM_LIMIT = 4 * 1024 * 1024
+
+
+async def _relay(job: Job, cmd: list[str], *, cwd: str) -> int | None:
+    """Run a command, relay each line to the job, and return its exit code.
+
+    Every line also goes to this process's stderr, which is what the platform's
+    log collects. Held on a pipe and nowhere else, a failed build's explanation
+    lived only in the browser that happened to be watching -- so the single run
+    worth reading was the one run with no record of it anywhere.
+    """
+    # Windows defaults child stdio to the ANSI code page, so the separators and
+    # accented names the CLI prints would arrive as mojibake once decoded as
+    # UTF-8. Pinning the child's encoding is the fix; decoding leniently only
+    # hides it.
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        cwd=cwd,
+        env=env,
+        limit=STREAM_LIMIT,
+    )
+
+    assert process.stdout is not None
+    async for raw in process.stdout:
+        line = raw.decode("utf-8", errors="replace").rstrip()
+        if not line:
+            continue
+        print(f"[{job.game_date} {job.id}] {line}", file=sys.stderr, flush=True)
+        # The CLI prints the finished path on stdout as its last line.
+        if line.endswith(".html"):
+            job.output_path = line.strip()
+        job.publish(line)
+
+    await process.wait()
+    return process.returncode
+
 
 
 def _root() -> Path:
@@ -116,37 +220,13 @@ async def _run_build(job: Job, *, statcast: bool, analysis: bool) -> None:
     if not analysis:
         cmd.append("--no-analysis")
 
-    # Windows defaults child stdio to the ANSI code page, so the separators and
-    # accented names the CLI prints would arrive as mojibake once decoded as
-    # UTF-8. Pinning the child's encoding is the fix; decoding leniently only
-    # hides it.
-    env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
-
-    process = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-        cwd=str(Path(__file__).resolve().parents[3]),
-        env=env,
-    )
-
-    assert process.stdout is not None
-    async for raw in process.stdout:
-        line = raw.decode("utf-8", errors="replace").rstrip()
-        if not line:
-            continue
-        # The CLI prints the finished path on stdout as its last line.
-        if line.endswith(".html"):
-            job.output_path = line.strip()
-        job.publish(line)
-
-    await process.wait()
-    if process.returncode == 0 and job.output_path:
+    returncode = await _relay(job, cmd, cwd=str(_root()))
+    if returncode == 0 and job.output_path:
         job.status = "done"
         job.publish(f"__DONE__ {Path(job.output_path).name}")
     else:
         job.status = "failed"
-        job.error = _why_it_died(process.returncode, job.output_path)
+        job.error = _why_it_died(returncode, job.output_path)
         job.publish(f"__FAILED__ {job.error}")
 
 
@@ -195,12 +275,13 @@ async def generate(request: Request) -> JSONResponse:
     job = Job(id=uuid.uuid4().hex[:12], game_date=game_date)
     JOBS[job.id] = job
 
-    asyncio.create_task(
+    _spawn(
+        job,
         _run_build(
             job,
             statcast=bool(body.get("statcast", True)),
             analysis=bool(body.get("analysis", True)),
-        )
+        ),
     )
     return JSONResponse({"job_id": job.id})
 
@@ -233,33 +314,17 @@ async def _run_refit(job: Job, *, force_outcome: bool) -> None:
     if force_outcome:
         cmd.append("--force-outcome")
 
-    env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
-    process = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-        cwd=str(script.parent.parent),
-        env=env,
-    )
-
-    assert process.stdout is not None
-    async for raw in process.stdout:
-        line = raw.decode("utf-8", errors="replace").rstrip()
-        if not line:
-            continue
-        job.publish(line)
-
-    await process.wait()
-    if process.returncode == 0:
+    returncode = await _relay(job, cmd, cwd=str(script.parent.parent))
+    if returncode == 0:
         job.status = "done"
         job.publish("__DONE__ refit complete")
-    elif process.returncode == 2:
+    elif returncode == 2:
         job.status = "done"
         job.publish(
             "__DONE__ refit rejected — the previous model is still in place")
     else:
         job.status = "failed"
-        job.error = f"refit exited with code {process.returncode}"
+        job.error = f"refit exited with code {returncode}"
         job.publish(f"__FAILED__ {job.error}")
 
 
@@ -342,7 +407,8 @@ async def refit(request: Request) -> JSONResponse:
 
     job = Job(id=uuid.uuid4().hex[:12], game_date="refit")
     JOBS[job.id] = job
-    asyncio.create_task(
+    _spawn(
+        job,
         _run_refit(job, force_outcome=bool(body.get("force_outcome", False))))
     return JSONResponse({"job_id": job.id})
 
