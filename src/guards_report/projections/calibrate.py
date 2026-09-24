@@ -81,16 +81,100 @@ class Calibrated:
     bins: list[dict] = field(default_factory=list)
     seasons: list[int] = field(default_factory=list)
     note: str = ""
+    # A headline score beside the bins. The bins show WHERE a market is off;
+    # these say whether it is worth anything at all, which nothing recorded
+    # until now -- the props artifact shipped with an empty metrics block and
+    # the page quoted a strikeout figure that was a literal in the template.
+    log_loss: float | None = None
+    baseline_log_loss: float | None = None
+    brier: float | None = None
+    mean_predicted: float | None = None
+    actual_rate: float | None = None
 
     @property
     def measured(self) -> bool:
         return bool(self.bins)
 
+    @property
+    def gain(self) -> float | None:
+        """How much better than knowing only the base rate."""
+        if self.log_loss is None or self.baseline_log_loss is None:
+            return None
+        return self.baseline_log_loss - self.log_loss
+
     def as_dict(self) -> dict:
         return {
             "market": self.market, "line": self.line, "n": self.n,
             "bins": self.bins, "seasons": self.seasons, "note": self.note,
+            "log_loss": self.log_loss,
+            "baseline_log_loss": self.baseline_log_loss,
+            "brier": self.brier, "mean_predicted": self.mean_predicted,
+            "actual_rate": self.actual_rate,
         }
+
+
+def _scored(market: str, line: float, realized, predicted,
+            seasons: list[int]) -> "Calibrated":
+    """One market's record: the bins, and a score against the base rate.
+
+    The baseline is the held-out sample's own rate of the outcome -- the best a
+    model can do knowing nothing about the game. A market that cannot beat it
+    is not a projection, whatever its calibration looks like.
+    """
+    y = np.asarray(realized, dtype=float)
+    p = np.clip(np.asarray(predicted, dtype=float), 1e-9, 1 - 1e-9)
+    base = float(np.clip(y.mean(), 1e-9, 1 - 1e-9))
+    return Calibrated(
+        market=market, line=line, n=int(len(y)),
+        bins=backtest.calibration_bins(y, p),
+        seasons=seasons,
+        log_loss=float(-np.mean(y * np.log(p) + (1 - y) * np.log(1 - p))),
+        baseline_log_loss=float(
+            -(base * np.log(base) + (1 - base) * np.log(1 - base))),
+        brier=float(np.mean((p - y) ** 2)),
+        mean_predicted=float(p.mean()), actual_rate=float(y.mean()),
+    )
+
+
+def scoreboard(record: dict) -> list[dict]:
+    """Every measured market, flattened, for a page to print.
+
+    The stored record nests markets that were measured at several lines under
+    `by_line`. This returns one row per market and line, newest measurement
+    first in the order the markets are listed, with the headline score and the
+    gain over knowing only the base rate.
+
+    Markets measured before the score was added carry no figures and are left
+    out rather than shown blank -- a market with nothing to report should not
+    take a row on the page.
+    """
+    rows: list[dict] = []
+
+    def add(entry: dict) -> None:
+        if not isinstance(entry, dict) or entry.get("log_loss") is None:
+            return
+        rows.append({
+            "market": entry.get("market"),
+            "line": entry.get("line"),
+            "n": entry.get("n"),
+            "log_loss": entry.get("log_loss"),
+            "baseline_log_loss": entry.get("baseline_log_loss"),
+            "gain": (entry.get("baseline_log_loss") or 0.0)
+            - (entry.get("log_loss") or 0.0),
+            "mean_predicted": entry.get("mean_predicted"),
+            "actual_rate": entry.get("actual_rate"),
+            "seasons": entry.get("seasons") or [],
+        })
+
+    for entry in (record or {}).values():
+        if not isinstance(entry, dict):
+            continue
+        if "by_line" in entry:
+            for sub in (entry.get("by_line") or {}).values():
+                add(sub)
+        else:
+            add(entry)
+    return rows
 
 
 # ---------------------------------------------------------------------------
@@ -267,13 +351,8 @@ def batter_counts(
     if not predicted:
         return Calibrated(market=outcome, line=line,
                           note="no held-out games to measure")
-    return Calibrated(
-        market=outcome, line=line,
-        n=int(sum(len(p) for p in predicted)),
-        bins=backtest.calibration_bins(
-            np.concatenate(realized), np.concatenate(predicted)),
-        seasons=used,
-    )
+    return _scored(outcome, line, np.concatenate(realized),
+                   np.concatenate(predicted), used)
 
 
 # ---------------------------------------------------------------------------
@@ -357,11 +436,8 @@ def strikeouts(
     if not predicted:
         return Calibrated(market="strikeout", line=line,
                           note="no held-out starts to measure")
-    return Calibrated(
-        market="strikeout", line=line, n=len(predicted),
-        bins=backtest.calibration_bins(np.array(realized), np.array(predicted)),
-        seasons=used,
-    )
+    return _scored("strikeout", line, np.array(realized),
+                   np.array(predicted), used)
 
 
 # ---------------------------------------------------------------------------
@@ -404,11 +480,8 @@ def first_five(
     if not predicted:
         return Calibrated(market="first_five", line=0.0,
                           note="no held-out games to measure")
-    return Calibrated(
-        market="first_five", line=0.0, n=len(predicted),
-        bins=backtest.calibration_bins(np.array(realized), np.array(predicted)),
-        seasons=used,
-    )
+    return _scored("first_five", 0.0, np.array(realized),
+                   np.array(predicted), used)
 
 
 # ---------------------------------------------------------------------------
@@ -456,18 +529,27 @@ def totals(
                 home = home + tied * draw(mu_home / 9.0)
                 away = away + tied * draw(mu_away / 9.0)
 
-        predicted.extend(((home + away) > line).mean(axis=1).tolist())
-        realized.extend((actual > line).astype(float).tolist())
+        # A total landing exactly on a whole number is a push: refunded, not
+        # lost. The serving path has always priced it that way; this did not,
+        # which is why 9 and 9.5 came back with identical figures to five
+        # decimals -- the measurement was grading a bet nobody can place, and
+        # the staking sigma read off it described the wrong wager.
+        #
+        # Half-point lines cannot push, so nothing below changes them.
+        drawn = home + away
+        over = (drawn > line).mean(axis=1)
+        pushed = (drawn == line).mean(axis=1)
+        live = np.clip(1.0 - pushed, 1e-9, None)
+        played = actual != line
+        predicted.extend((over / live)[played].tolist())
+        realized.extend((actual[played] > line).astype(float).tolist())
         used.append(int(season))
 
     if not predicted:
         return Calibrated(market=market, line=line,
                           note="no held-out games to measure")
-    return Calibrated(
-        market=market, line=line, n=len(predicted),
-        bins=backtest.calibration_bins(np.array(realized), np.array(predicted)),
-        seasons=used,
-    )
+    return _scored(market, line, np.array(realized),
+                   np.array(predicted), used)
 
 
 def runline(
@@ -520,8 +602,5 @@ def runline(
     if not predicted:
         return Calibrated(market="runline", line=line,
                           note="no held-out games to measure")
-    return Calibrated(
-        market="runline", line=line, n=len(predicted),
-        bins=backtest.calibration_bins(np.array(realized), np.array(predicted)),
-        seasons=used,
-    )
+    return _scored("runline", line, np.array(realized),
+                   np.array(predicted), used)

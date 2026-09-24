@@ -1282,6 +1282,15 @@ def build_preview(
                 on=on,
                 weather=tonight,
             )
+            # The held-out record for every market, measured by
+            # `scripts/calibrate.py` and stored beside the models.
+            try:
+                from guards_report.betting import uncertainty as _unc
+                from guards_report.projections import calibrate as _cal
+                projection.markets = _cal.scoreboard(
+                    _unc.load_market_calibration(root))
+            except Exception:  # noqa: BLE001
+                projection.markets = []
             projection.ratings_note = ratings_note
             projection.freshness = {
                 "corpus_through": str(freshness_note.corpus_through),

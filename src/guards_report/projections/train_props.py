@@ -43,7 +43,20 @@ class PropsArtifact:
     park: dict[str, dict[str, float]] = field(default_factory=dict)
     slot_pa: dict[str, dict[str, float]] = field(default_factory=dict)
     starter_bf_mean: float = 21.9
+    # The spread of batters faced across ALL starts, which mixes a pitcher
+    # who goes deep with one who does not. For how far a single start
+    # strays from its own projection -- what a game's distribution needs --
+    # the figure is 4.09, measured over 50,574 starts and kept as
+    # `props.STARTER_BF_SD`. Using this one there widens every start by
+    # about a sixth too much.
     starter_bf_sd: float = 4.77
+    # Empty here on purpose. This model's held-out record lives in
+    # `market_calibration.json`, written by `scripts/calibrate.py`, which
+    # walks forward season by season and refits on what came before -- the
+    # figures the report prints. Copying a summary in here as well would
+    # put two records in two files that a refit can pull apart: this file
+    # is rewritten on every refit and that one is not, so the copy would
+    # go stale while still reading as current.
     metrics: dict[str, Any] = field(default_factory=dict)
     fitted_at: str = ""
     corpus_through: str = ""

@@ -198,6 +198,10 @@ class Projection:
     # from ("forecast" or "dome"), or empty when none were available and the
     # model read average weather.
     weather: dict[str, Any] = field(default_factory=dict)
+    # Every market's held-out record, so the page can state what each one is
+    # worth instead of asserting it. Empty when nothing has been measured,
+    # which the page must read as "not measured" rather than as agreement.
+    markets: list[dict] = field(default_factory=list)
 
     @property
     def coherent(self) -> bool:

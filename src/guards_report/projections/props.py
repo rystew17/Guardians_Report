@@ -433,6 +433,20 @@ STARTER_LEAGUE_FACTOR = 0.9758
 # probabilities the report actually publishes.
 MATCHUP_SHRINK = 0.75
 
+# How far a start's batters faced strays from its projection, measured over
+# 50,574 starts as the spread left after a pitcher's own trailing average is
+# accounted for.
+#
+# The unconditional spread of batters faced is 4.85 and the artifact stores
+# 4.77, but that number mixes two things: a pitcher who goes deep against one
+# who does not, and one start against the next for the same pitcher. Only the
+# second belongs in a single game's distribution, and it is 4.09. Using the
+# unconditional figure would widen every start by about a sixth too much.
+#
+# Absolute rather than proportional: the spread barely moves with projected
+# depth (4.46 at 19.7 projected batters faced, 3.74 at 25.8).
+STARTER_BF_SD = 4.09
+
 # Held-out calibration on the game-level totals, fitted on 2023 and judged on
 # 2024-2025. Home runs run about 5% high and a single factor fixes most of it.
 #
@@ -546,6 +560,28 @@ def batter_projection(
     return projection
 
 
+def batters_faced_distribution(
+    expected_bf: float, *, spread: float = STARTER_BF_SD, width: float = 2.5,
+) -> dict[int, float]:
+    """How many batters a starter actually faces, around the projection.
+
+    A discretised normal about the projected number, truncated at `width`
+    standard deviations and at a floor of five -- below that the outing is a
+    different event from the start being projected, and giving it weight would
+    put mass on strikeout totals that only happen when a pitcher is pulled in
+    the second.
+    """
+    centre = max(float(expected_bf), 1.0)
+    lo = max(5, int(round(centre - width * spread)))
+    hi = max(lo, int(round(centre + width * spread)))
+    weights: dict[int, float] = {}
+    for n in range(lo, hi + 1):
+        z = (n - centre) / spread
+        weights[n] = float(np.exp(-0.5 * z * z))
+    total = sum(weights.values()) or 1.0
+    return {n: w / total for n, w in weights.items()}
+
+
 def starter_strikeouts(
     rates: RateModel,
     *,
@@ -569,17 +605,23 @@ def starter_strikeouts(
     single binomial.
     """
     stands = stands or {}
+    chances = batters_faced_distribution(expected_bf)
     if not lineup_ids:
         rate = rates.pitcher_rate(pitcher_id) * STARTER_LEAGUE_FACTOR
-        return count_distribution(rate, {int(round(expected_bf)): 1.0}, limit=limit)
+        return count_distribution(rate, chances, limit=limit)
 
-    # Times through the order: whole passes, then a partial one at the top.
-    passes, remainder = divmod(max(expected_bf, 0.0), len(lineup_ids))
-    probabilities: list[float] = []
+    # Built out to the longest start worth considering, then read off at every
+    # length: a start that ends early is a prefix of one that does not. A few
+    # extra batters beyond the widest weight leave room for the mean-preserving
+    # shift below.
+    fixed_length = max(1, int(round(expected_bf)))
+    longest = max(max(chances) + 6, fixed_length)
+
     def toward_league(value: float) -> float:
         return rates.league + MATCHUP_SHRINK * (value - rates.league)
 
-    for index, batter in enumerate(lineup_ids):
+    per_slot: list[float] = []
+    for batter in lineup_ids:
         rate = log5(
             toward_league(rates.batter_rate(batter)),
             toward_league(rates.pitcher_rate(pitcher_id)),
@@ -589,19 +631,76 @@ def starter_strikeouts(
             rate = adjust(rate, platoon.get(f"{stands.get(batter, 'R')}{throws}", 1.0))
         # The league rate this was built from blends starters with relievers,
         # who strike out more; a starting pitcher sits below it.
-        rate = adjust(rate, STARTER_LEAGUE_FACTOR)
-        turns = int(passes) + (1 if index < int(round(remainder)) else 0)
-        for turn in range(1, turns + 1):
+        per_slot.append(adjust(rate, STARTER_LEAGUE_FACTOR))
+
+    # In the order the plate appearances actually happen -- through the lineup,
+    # then round again -- not all of one batter's turns before the next man
+    # bats. For a single convolution over the whole start the order made no
+    # difference, which is why it was written the other way. It matters here:
+    # a start that ends early is the FIRST so many plate appearances, and
+    # reading a prefix of a batter-major list would end it in the wrong place.
+    probabilities: list[float] = []
+    turn = 1
+    while len(probabilities) < longest:
+        for rate in per_slot:
+            if len(probabilities) >= longest:
+                break
             probabilities.append(
                 adjust(rate, TIMES_THROUGH_FACTOR.get(turn, TIMES_THROUGH_FACTOR[3]))
             )
+        turn += 1
 
-    # Convolve, which is exact and cheap at this size.
-    distribution = np.zeros(len(probabilities) + 1)
-    distribution[0] = 1.0
-    for p in probabilities:
-        distribution[1:] = distribution[1:] * (1 - p) + distribution[:-1] * p
-        distribution[0] *= (1 - p)
+    # Convolve, which is exact and cheap at this size, and snapshot the running
+    # distribution at every length a start might end at. Mixing those is what
+    # the batter props already do and this did not: holding batters faced fixed
+    # gives the right mean and a distribution too narrow at both ends, which is
+    # measurable -- the 8.5 line came in at 4.5% against a real 8.0%.
+    running = np.zeros(len(probabilities) + 1)
+    running[0] = 1.0
+    snapshots: dict[int, np.ndarray] = {}
+    for i, p in enumerate(probabilities, start=1):
+        running[1:] = running[1:] * (1 - p) + running[:-1] * p
+        running[0] *= (1 - p)
+        # Every length, not only the ones the centred weights name: the
+        # mean-preserving shift below reads lengths on either side of them.
+        snapshots[i] = running.copy()
+
+    # Mean-preserving. Mixing over length widens the distribution, which is the
+    # point, but it also lowers the mean: the batters that a longer start adds
+    # come late, where the times-through-order penalty is heaviest, so they are
+    # worth fewer strikeouts than the ones a shorter start removes. Left
+    # uncorrected that turned "too high at low lines, too low at high ones"
+    # into "too low at all of them" -- measured, and worse than before.
+    #
+    # The centre is therefore shifted until the mixture's mean matches the
+    # fixed-length projection, which was already about right. Only the spread
+    # was wrong, so only the spread changes.
+    counts = np.arange(len(running))
+
+    def mean_of(weights: dict[int, float]) -> float:
+        total = sum(w for n, w in weights.items() if n in snapshots) or 1.0
+        out = sum(w * float(counts @ snapshots[n])
+                  for n, w in weights.items() if n in snapshots)
+        return out / total
+
+    target = float(counts @ snapshots[fixed_length]) if fixed_length in snapshots         else mean_of(chances)
+    lo, hi = -6.0, 6.0
+    for _ in range(24):
+        mid = (lo + hi) / 2.0
+        trial = batters_faced_distribution(expected_bf + mid)
+        trial = {n: w for n, w in trial.items() if n in snapshots}
+        if not trial:
+            break
+        if mean_of(trial) < target:
+            lo = mid
+        else:
+            hi = mid
+    chances = {n: w for n, w in
+               batters_faced_distribution(expected_bf + (lo + hi) / 2.0).items()
+               if n in snapshots}
+
+    total_weight = sum(chances.values()) or 1.0
+    distribution = sum(w * snapshots[n] for n, w in chances.items()) / total_weight
 
     out = {k: float(v) for k, v in enumerate(distribution) if v > 1e-6 and k <= limit}
     expected = float(sum(k * v for k, v in out.items()))
@@ -611,5 +710,6 @@ def starter_strikeouts(
         per_chance=float(np.mean(probabilities)) if probabilities else 0.0,
         expected_chances=float(len(probabilities)),
         evidence=rates.evidence(pitcher_id, side="pitcher"),
-        note=f"{len(probabilities)} batters faced assumed",
+        note=f"{expected_bf:.0f} batters faced projected, spread over "
+             f"{min(chances)}-{max(chances)}",
     )

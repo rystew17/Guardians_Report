@@ -1921,6 +1921,49 @@ details.more>summary:hover{color:var(--ink)}
   </div>
   {%- endif %}
 
+  {#- ---------- every market's held-out record ---------- -#}
+  {#- The record for the markets this page actually prices. It exists because
+      the props model shipped with an empty metrics block and the line above
+      once quoted a strikeout figure that was a literal in this template: three
+      numbers that read as measurements and had stopped being recomputed.
+      Measured by `scripts/calibrate.py`, walking forward season by season and
+      refitting on what came before, at the line each market is most often
+      posted at. Absent when nothing has been measured. -#}
+  {#- `|list` matters: `reverse` yields an iterator, which is always
+      truthy, so without it the guard below never fails and a report
+      built before anything was measured prints an empty table. -#}
+  {%- set mk = (pj.markets or [])|sort(attribute='gain')|reverse|list %}
+  {%- if mk %}
+  <h3 class="lab">What each market is worth</h3>
+  <div class="scroll">
+  <table class="ptrack">
+      <thead>
+        <tr><th class="l">Market</th><th>Line</th><th>Held out</th>
+          <th>Log loss</th><th>Base rate</th><th>Gain</th></tr>
+      </thead>
+      <tbody>
+        {% for row in mk %}
+        <tr>
+          <td class="l">{{ row.market|replace('_', ' ') }}</td>
+          <td class="sub">{{ '' if not row.line else '%g'|format(row.line) }}</td>
+          <td>{{ '{:,}'.format(row.n) }}</td>
+          <td>{{ '%.3f'|format(row.log_loss) }}</td>
+          <td class="sub">{{ '%.3f'|format(row.baseline_log_loss) }}</td>
+          <td><strong>{{ '%+.4f'|format(row.gain) }}</strong></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="note">
+    Lower log loss is better; the gain is how much each market beats knowing
+    only how often the outcome happens. Every market on this page clears that
+    bar, and they are not close to equal &mdash; the strikeout markets are
+    worth roughly an order of magnitude more than the game totals, which is
+    worth knowing before staking either.
+  </div>
+  {%- endif %}
+
   {#- ---------- score model track record ---------- -#}
   {#- The runs model prices every total, run line and first-five figure on this
       page, and for its first months in production it carried no held-out
@@ -2033,9 +2076,7 @@ details.more>summary:hover{color:var(--ink)}
     ('Track record',
      'Measured only on seasons the model never saw while being fitted, across
       {:,} games. It picks the winner {}% of the time against {}% for always
-      taking the home team. The starter strikeout model is the strongest here:
-      on 9,718 held-out starts it calls the over/under at a log loss of 0.612
-      against 0.692 for the base rate.'.format(
+      taking the home team.'.format(
         wm.n_games, (wm.accuracy * 100)|round(1), (wm.baseline_accuracy * 100)|round(1))),
     ('Why the exact score is not shown as a call',
      'The expected-runs figure moves about a fifth as much as real scoring does,

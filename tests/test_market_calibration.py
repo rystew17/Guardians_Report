@@ -526,3 +526,51 @@ def test_the_measured_error_really_does_differ_by_line():
     assert gap("4.5") < 0 < gap("8.5"), (
         f"expected the bias to flip sign: 4.5 {gap('4.5'):+.4f}, "
         f"8.5 {gap('8.5'):+.4f}")
+
+
+def test_a_total_landing_on_a_whole_number_is_a_push_not_a_loss():
+    """A 9.0 total and a 9.5 total are different bets.
+
+    Nine runs on a 9.0 line is refunded; on 9.5 it loses. The serving path has
+    always priced that distinction, and the measurement did not -- which is how
+    the scoreboard came back with identical log loss to five decimals for 9 and
+    9.5, on a record that the staking sigma is read from.
+    """
+    import numpy as np
+
+    from guards_report.projections import calibrate
+
+    # Two games: one lands on nine, one goes over every line here.
+    frames = {
+        2024: {
+            "mu_home": np.array([4.5, 4.5]),
+            "mu_away": np.array([4.5, 4.5]),
+            "total": np.array([9.0, 12.0]),
+        }
+    }
+    whole = calibrate.totals(frames, alpha=0.275, line=9.0)
+    half = calibrate.totals(frames, alpha=0.275, line=9.5)
+
+    # The pushed game is dropped from the whole-number line and kept for 9.5.
+    assert whole.n == 1
+    assert half.n == 2
+    # And the stated probabilities differ, because one excludes the push.
+    assert whole.mean_predicted != half.mean_predicted
+
+
+def test_a_half_point_line_is_unchanged_by_the_push_rule():
+    """Totals are whole numbers, so a half-point line can never push."""
+    import numpy as np
+
+    from guards_report.projections import calibrate
+
+    frames = {
+        2024: {
+            "mu_home": np.array([4.4, 5.1, 3.9]),
+            "mu_away": np.array([4.6, 4.2, 5.0]),
+            "total": np.array([7.0, 11.0, 8.0]),
+        }
+    }
+    got = calibrate.totals(frames, alpha=0.275, line=8.5)
+    assert got.n == 3          # nothing dropped
+    assert 0.0 <= got.mean_predicted <= 1.0
