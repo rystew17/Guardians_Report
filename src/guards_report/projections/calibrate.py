@@ -499,8 +499,9 @@ def totals(
     innings add runs to tied games, which is fiddly to convolve and trivial to
     draw. Monte Carlo error here sits below what the calibration can report.
     """
+    from guards_report.projections import first5 as f5_module
+
     rng = np.random.default_rng(seed)
-    n = 1.0 / max(alpha, 1e-9)
     predicted: list[float] = []
     realized: list[float] = []
     used: list[int] = []
@@ -524,11 +525,14 @@ def totals(
             # Five innings are always played out by both sides, so there is no
             # ninth-inning rule to apply and no tie to resolve: a first-five
             # total is a bet on exactly the number both clubs reached.
-            def draw(mu: np.ndarray) -> np.ndarray:
-                return rng.negative_binomial(
-                    n, n / (n + mu[:, None]), size=(len(mu), DRAWS))
-
-            home, away = draw(mu_home), draw(mu_away)
+            #
+            # Drawn through `first5.draw_scores`, which is what the page prices
+            # from. A bare negative binomial here would grade a shape nobody
+            # serves, which is the failure this whole module exists to catch.
+            home = f5_module.draw_scores(
+                mu_home, draws=DRAWS, rng=rng, alpha=alpha)
+            away = f5_module.draw_scores(
+                mu_away, draws=DRAWS, rng=rng, alpha=alpha)
 
         # A total landing exactly on a whole number is a push: refunded, not
         # lost. The serving path has always priced it that way; this did not,

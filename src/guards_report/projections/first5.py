@@ -41,12 +41,125 @@ FIRST5_SHARE = 5.100 / 8.99
 # share of a shorter game.
 FIRST5_ALPHA = 0.45
 
+# How often a side is blanked through five, as a law against its own
+# projected runs.
+#
+# A negative binomial gets the mean and the spread of a five-inning score
+# right -- 5.0079 against 4.9982 and sd 3.3273 against 3.3303 over 11,605
+# held-out games -- and the shutout wrong. A side is held scoreless 20.38%
+# of the time and the distribution says 18.06%, and the missing mass lands
+# on one run and two. That is what leaned every posted line: the over ran
+# 1.14 points light at 5 and 1.11 at 5.5.
+#
+# Four other explanations were measured first and none survived. The
+# per-side game rate factor that fixed the full-game markets is 0.0555 here
+# and exactly zero in three of seven seasons. The covariance between the two
+# sides is -0.0063, so there is no shared park-and-weather factor to find.
+# Drawing five negative-binomial half-innings instead of one negative
+# binomial over five changes nothing. Putting the measured half-inning
+# hurdle underneath that moves the bias 0.69 points to 0.66 and log loss the
+# wrong way -- because conditioned on a game's rate, five independent
+# half-innings are blanked 17.5% of the time. Compounding the pooled
+# half-inning figure appears to work only because pooling smuggles in the
+# variation between games; within a game the innings are not independent,
+# and the same pitcher is the reason.
+#
+# So the shape is measured where the bet settles. Fitted on 28,846
+# team-halves from 2015-2021, never on the 2022-26 window the market is
+# graded against, across ten bands of projected runs:
+#
+#     logit P(blanked) = +0.1167 - 1.5999 * log(mu)
+#
+# holding to 1.09 points at worst. It takes the shutout rate from 0.1806 to
+# 0.1987 against a realised 0.2038, and the mean |bias| across the five
+# posted lines from 0.69 points to 0.66 with log loss very slightly better.
+# A small gain, and it is the only one of five candidates that was a gain at
+# all.
+BLANK_INTERCEPT = 0.1167
+BLANK_SLOPE = -1.5999
+
+# Runs past which a five-inning score is not worth enumerating. The most
+# either side has managed through five in the corpus is well inside this.
+MAX_FIVE_INNING_RUNS = 16
+
 # Starts before a pitcher's first-five history says anything. Below this the
 # columns are left null rather than imputed, so the model learns from the
 # `known` flag instead of from a number nobody measured.
 MIN_PRIOR_STARTS = 5
 
 STARTER_COLUMNS = ("opp_f5_ra", "opp_f5_bf")
+
+
+def blank_chance(mu):
+    """Measured chance a side is held scoreless through five."""
+    mu = np.maximum(np.asarray(mu, dtype=float), 1e-6)
+    return 1.0 / (1.0 + np.exp(-(BLANK_INTERCEPT + BLANK_SLOPE * np.log(mu))))
+
+
+def _nb_pmf(lam, alpha, kmax):
+    from scipy.special import gammaln
+
+    k = 1.0 / alpha
+    lam = np.maximum(np.asarray(lam, dtype=float), 1e-9)[:, None]
+    counts = np.arange(kmax + 1)[None, :]
+    log = (gammaln(counts + k) - gammaln(counts + 1) - gammaln(k)
+           + k * np.log(k / (k + lam)) + counts * np.log(lam / (k + lam)))
+    return np.exp(log)
+
+
+def score_pmf(mu, *, alpha: float = FIRST5_ALPHA,
+              kmax: int = MAX_FIVE_INNING_RUNS):
+    """Five-inning runs for one side: measured shutout, the rest negative binomial.
+
+    The zero comes from `blank_chance`. The positive part is a zero-truncated
+    negative binomial whose parameter is moved until the whole distribution has
+    the mean it was handed, so correcting the shape never quietly changes the
+    run environment -- the same mean-preserving construction the strikeout
+    distribution uses.
+    """
+    mu = np.atleast_1d(np.asarray(mu, dtype=float))
+    p0 = blank_chance(mu)
+    target = mu / np.maximum(1.0 - p0, 1e-9)
+
+    counts = np.arange(1, kmax + 1)
+    low = np.full_like(mu, 1e-4)
+    high = np.maximum(mu * 8.0, 1.0)
+    for _ in range(60):
+        mid = 0.5 * (low + high)
+        pmf = _nb_pmf(mid, alpha, kmax)
+        mean_positive = (pmf[:, 1:] @ counts) / np.maximum(1.0 - pmf[:, 0], 1e-12)
+        below = mean_positive < target
+        low = np.where(below, mid, low)
+        high = np.where(below, high, mid)
+
+    pmf = _nb_pmf(0.5 * (low + high), alpha, kmax)
+    out = np.empty_like(pmf)
+    out[:, 0] = p0
+    out[:, 1:] = (pmf[:, 1:] / np.maximum(1.0 - pmf[:, 0:1], 1e-12)
+                  * (1.0 - p0)[:, None])
+    return out / out.sum(axis=1, keepdims=True)
+
+
+def draw_scores(mu, *, draws: int, rng, alpha: float = FIRST5_ALPHA,
+                chunk: int = 400):
+    """Sample five-inning runs for each entry of `mu`.
+
+    Shared by the calibration and the page on purpose. Drawn separately they
+    drifted once already -- the measurement played ties out and the page did
+    not -- and a record describing a model nobody serves is worse than no
+    record.
+    """
+    mu = np.atleast_1d(np.asarray(mu, dtype=float))
+    kmax = MAX_FIVE_INNING_RUNS
+    out = np.empty((len(mu), draws), dtype=np.int64)
+    for start in range(0, len(mu), chunk):
+        block = mu[start:start + chunk]
+        cdf = np.cumsum(score_pmf(block, alpha=alpha, kmax=kmax), axis=1)
+        cdf[:, -1] = 1.0
+        uniform = rng.random((len(block), draws))
+        out[start:start + chunk] = (
+            uniform[:, :, None] > cdf[:, None, :]).sum(axis=2)
+    return np.clip(out, 0, kmax)
 
 
 def build_dataset(pitch_corpus: pd.DataFrame) -> pd.DataFrame:
@@ -155,9 +268,12 @@ def outcome_probabilities(
     outcome in six.
     """
     rng = np.random.default_rng(seed)
-    n = 1.0 / alpha
-    home = rng.negative_binomial(n, n / (n + np.asarray(home_mu)[:, None]), size=(len(home_mu), draws))
-    away = rng.negative_binomial(n, n / (n + np.asarray(away_mu)[:, None]), size=(len(away_mu), draws))
+    # `draw_scores` rather than a bare negative binomial, so the three-way
+    # result and the first-five total come out of one distribution. A side is
+    # blanked through five more often than a negative binomial allows, and the
+    # three-way result is mostly a question about exactly that.
+    home = draw_scores(home_mu, draws=draws, rng=rng, alpha=alpha)
+    away = draw_scores(away_mu, draws=draws, rng=rng, alpha=alpha)
     margin = home - away
     return {
         "home_leads": (margin > 0).mean(axis=1),

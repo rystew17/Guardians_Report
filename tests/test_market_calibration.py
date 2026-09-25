@@ -252,24 +252,24 @@ def test_giving_away_a_run_and_a_half_is_not_the_same_bet_as_getting_one(
     assert taking > 0.60, taking
 
 
-def test_five_innings_are_played_out_and_nine_are_not(monkeypatch):
-    """`extra_innings=False` is what makes the first-five total its own
-    measurement rather than a nine-inning one wearing a smaller line. Both
-    sides bat their five out: no ninth-inning rule, no tie to resolve.
+def test_the_two_branches_price_different_games(monkeypatch):
+    """`extra_innings=False` is the first-five model, not a shortened one.
 
-    Tested on lopsided games, and that is the whole point. Across even ones the
-    two branches differ by 0.0163 runs in the mean -- extras add runs, the
-    ninth-inning rule takes them away, and the two very nearly cancel. This
-    used to assert a sign on that difference at a line of 8.5, where the gap in
-    over-rate is 0.0009: smaller than the Monte Carlo error of the draw
-    deciding it. It passed for four months and then flipped when an unrelated
-    constant widened both distributions, which is the only kind of notice a
-    test like that ever gives.
+    It used to be the same negative binomial with the tie left unresolved, and
+    this test compared the two branches' over-rates to prove the flag did
+    something. That comparison is gone because the branches no longer differ by
+    one rule: five-inning runs now come from `first5.draw_scores`, whose zero
+    is a measured law rather than whatever a negative binomial happens to put
+    there. A side is blanked through five 20.38% of the time and the negative
+    binomial said 18.06%.
 
-    Where one club is far ahead the tie never happens, so only the ninth-inning
-    rule is left and its direction is unambiguous: the home side stops batting,
-    and nine innings score less than five-plus-four played out in full.
+    So each branch is tested for the thing that defines it. The five-inning
+    branch has to reproduce the measured shutout rate; the nine-inning branch
+    has to apply the ninth-inning rule, which on lopsided games is the only
+    mechanism in play and unmistakable in direction.
     """
+    from guards_report.projections import first5, model
+
     monkeypatch.setattr(calibrate, "DRAWS", _TEST_DRAWS)
     rng = np.random.default_rng(3)
     n = 1500
@@ -285,11 +285,41 @@ def test_five_innings_are_played_out_and_nine_are_not(monkeypatch):
     }}
 
     with_rules = calibrate.totals(frames, alpha=0.20, line=8.5)
-    played_out = calibrate.totals(frames, alpha=0.20, line=8.5,
-                                  extra_innings=False,
-                                  market="first_five_total")
-    assert _mean_prediction(with_rules) < _mean_prediction(played_out) - 0.01
-    assert played_out.market == "first_five_total"
+    five = calibrate.totals(frames, alpha=0.20, line=8.5,
+                            extra_innings=False, market="first_five_total")
+    assert five.market == "first_five_total"
+    assert _mean_prediction(with_rules) != _mean_prediction(five)
+
+    # The ninth-inning rule, where it is the only thing happening: the home
+    # side is far ahead, so it stops batting and scores less than it would
+    # playing the inning out.
+    played_out = rng.negative_binomial(
+        k, k / (k + mu_home[:, None]), size=(n, 400)).mean()
+    simulated, _ = model.simulate_counts(
+        mu_home, mu_away, draws=400, rng=np.random.default_rng(4))
+    assert simulated.mean() < played_out - 0.05
+
+
+def test_five_inning_scores_carry_the_measured_shutout_rate():
+    """The shape is the point, and the mean must survive it.
+
+    Raising the chance of a shutout and renormalising what is left would lower
+    every projected total by a quarter of a run, which is a correction to the
+    shape quietly becoming a correction to the run environment.
+    """
+    from guards_report.projections import first5
+
+    mu = np.array([1.8, 2.6, 3.5])
+    pmf = first5.score_pmf(mu)
+    counts = np.arange(pmf.shape[1])
+
+    assert pmf[:, 0] == pytest.approx(first5.blank_chance(mu), abs=1e-3)
+    assert pmf @ counts == pytest.approx(mu, abs=0.02)
+    # And it is a real correction, not a rounding one.
+    k = 1.0 / first5.FIRST5_ALPHA
+    negative_binomial_zero = (k / (k + mu)) ** k
+    assert (pmf[:, 0] > negative_binomial_zero + 0.005).all()
+
 
 # ---------------------------------------------------------------------------
 # The shipped record

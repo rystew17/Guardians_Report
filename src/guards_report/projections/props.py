@@ -461,16 +461,37 @@ STARTER_BF_SD = 4.09
 # the same absolute amount.
 STARTER_RATE_SD = 0.201
 
-# Held-out calibration on the game-level totals, fitted on 2023 and judged on
-# 2024-2025. Home runs run about 5% high and a single factor fixes most of it.
+# Held-out calibration on the game-level totals. Home runs run about 5% high
+# and a single factor fixes most of it.
 #
-# Hits are left alone deliberately. The sweep chose 1.00 because their bias is
-# not a constant but a gradient -- +0.00 at the top of the order rising to +0.05
-# at the ninth spot -- and no single multiplier addresses that. The cause is
-# real rather than a defect: shrinking every rate toward the league mean must
-# over-rate below-average hitters, and the bottom of the order is where they
-# bat. A per-slot fudge would hide that instead of showing it.
-CALIBRATION = {"hit": 1.00, "home_run": 0.98}
+# Hits were left at 1.00 on the reasoning that their bias "is not a constant but
+# a gradient -- +0.00 at the top of the order rising to +0.05 at the ninth". The
+# gradient is real; the rest of that sentence was not. Measured over 217,643
+# held-out batter-games the bias is +1.77 points at the top of the order, +2.77
+# at the ninth, and never below +1.23 -- a level with a tilt on it, not a tilt
+# from nothing.
+#
+# It is also not the shrinkage. It is +1.96 points for hitters with 2,000 prior
+# plate appearances behind them, where shrinkage barely applies, and
+# integrating over the posterior that shrinkage implies recovers 0.10 of the
+# 1.92. A batter's turns are not over-dispersed within a game either: the
+# variance left over a binomial at his own projected rate is -0.0081 on 234,605
+# batter-games, which is nothing.
+#
+# What is left is the level. The modelled rate is 0.2227 hits a turn against a
+# realised 0.2195, and the league has been falling under the prior's feet --
+# 0.2289 in 2015, 0.2163 in 2026, with the prior averaging every season ever
+# played. Anchoring the prior on the last three or five seasons instead was
+# tried and is worse on both bias and log loss, so the factor stands where the
+# drift does not.
+#
+# 0.9751 is realised over modelled on 2016-2021, measured nowhere near the
+# 2022-26 window it is graded on. Held out it takes the bias from +1.92 points
+# to +1.12 and log loss from 0.66208 to 0.66155 -- better on both, which is the
+# bar. Correcting the turns-at-bat table alongside it reaches +0.43 points and
+# costs log loss, so it was left out: the measured table counts substitutions
+# and pitchers batting, which is a different population from the nine who start.
+CALIBRATION = {"hit": 0.9751, "home_run": 0.98}
 
 
 @dataclass

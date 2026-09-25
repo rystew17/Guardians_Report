@@ -54,9 +54,12 @@ def first_five_total(projection, line: float,
     """P(the first five innings go over the posted number).
 
     The first-five model carries expected runs per side rather than a joint
-    distribution, so the total is drawn from two negative binomials with the
-    same dispersion the model was fitted under. Same shape as the full-game
-    total, over five innings instead of nine.
+    distribution, so the total is drawn per side and added.
+
+    Through `first5.draw_scores`, which is the same function the calibration
+    grades and the three-way result is built from. Drawn here with its own
+    negative binomial it would price a shape nothing else in the project
+    serves, and the record on the page would describe the other one.
     """
     if projection is None:
         return {}
@@ -69,12 +72,10 @@ def first_five_total(projection, line: float,
 
     from guards_report.projections import first5 as f5_module
 
-    alpha = f5_module.FIRST5_ALPHA
-    n = 1.0 / alpha
     rng = np.random.default_rng(20260825)
     draws = 20_000
-    total = (rng.negative_binomial(n, n / (n + home), draws)
-             + rng.negative_binomial(n, n / (n + away), draws))
+    total = (f5_module.draw_scores([home], draws=draws, rng=rng)[0]
+             + f5_module.draw_scores([away], draws=draws, rng=rng)[0])
 
     over = float((total > line).mean())
     push = float((total == line).mean())
